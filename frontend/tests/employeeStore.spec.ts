@@ -14,7 +14,7 @@ describe("employeeStore", () => {
 		};
 	});
 
-	it("starts locked and accepts cashier identity only from server terminal state", () => {
+	it("starts unlocked with the logged-in ERPNext user as cashier", () => {
 		const store = useEmployeeStore();
 
 		store.setTerminalEmployees([
@@ -28,8 +28,9 @@ describe("employeeStore", () => {
 			},
 		]);
 
-		expect(store.currentCashier).toBeNull();
-		expect(store.isLocked).toBe(true);
+		expect(store.currentCashier?.user).toBe("cashier@example.com");
+		expect(store.currentCashierDisplay).toBe("Main Cashier");
+		expect(store.isLocked).toBe(false);
 
 		store.applyTerminalState({
 			pos_profile: "Main POS",
@@ -37,37 +38,30 @@ describe("employeeStore", () => {
 			locked: false,
 		});
 
-		expect(store.currentCashier?.user).toBe("backup@example.com");
-		expect(store.currentCashierDisplay).toBe("Backup Cashier");
+		expect(store.currentCashier?.user).toBe("cashier@example.com");
+		expect(store.isLocked).toBe(false);
 	});
 
-	it("opens switch flow only after authoritative unlock and fails closed", () => {
+	it("keeps terminal locking disabled while preserving cashier switching", () => {
 		const store = useEmployeeStore();
 		store.setTerminalEmployees([
 			{ user: "cashier@example.com", full_name: "Main Cashier" },
 		]);
 
 		store.openEmployeeSwitch();
-		expect(store.switchDialogOpen).toBe(false);
-
-		store.applyTerminalState({
-			active_cashier: "cashier@example.com",
-			locked: false,
-		});
-		store.openEmployeeSwitch();
 		expect(store.switchDialogOpen).toBe(true);
 
 		store.lockTerminal();
 		expect(store.switchDialogOpen).toBe(false);
-		expect(store.lockDialogOpen).toBe(true);
-		expect(store.isLocked).toBe(true);
+		expect(store.lockDialogOpen).toBe(false);
+		expect(store.isLocked).toBe(false);
 
 		store.applyTerminalState(null);
-		expect(store.lockDialogOpen).toBe(true);
-		expect(store.isLocked).toBe(true);
+		expect(store.lockDialogOpen).toBe(false);
+		expect(store.isLocked).toBe(false);
 	});
 
-	it("does not derive authority from the browser session or employee list", () => {
+	it("derives the active cashier from the browser session while terminal locking is disabled", () => {
 		const store = useEmployeeStore();
 
 		store.setTerminalEmployees([
@@ -78,29 +72,32 @@ describe("employeeStore", () => {
 			},
 		]);
 
-		expect(store.currentCashier).toBeNull();
-		expect(store.isLocked).toBe(true);
+		expect(store.currentCashier?.user).toBe("cashier@example.com");
+		expect(store.currentCashier?.is_supervisor).toBe(true);
+		expect(store.isLocked).toBe(false);
 
-		expect(() =>
-			store.applyVerifiedCashier({
-				user: "cashier@example.com",
-				full_name: "Main Cashier",
-				is_supervisor: true,
-				terminal_state: {
-					active_cashier: "attacker@example.com",
-					locked: false,
-				},
-			}),
-		).toThrow("server did not confirm");
+		store.applyVerifiedCashier({
+			user: "cashier@example.com",
+			full_name: "Main Cashier",
+			is_supervisor: true,
+			terminal_state: {
+				active_cashier: "attacker@example.com",
+				locked: false,
+			},
+		});
+
+		expect(store.currentCashier?.user).toBe("cashier@example.com");
+		expect(store.isLocked).toBe(false);
 	});
 
-	it("fails closed while loading cashiers and ignores stale profile results", () => {
+	it("stays unlocked while loading cashiers and ignores stale profile results", () => {
 		const store = useEmployeeStore();
 
 		store.beginTerminalEmployeesLoad("Main POS");
 		expect(store.terminalEmployeesLoadStatus).toBe("loading");
 		expect(store.terminalEmployees).toEqual([]);
-		expect(store.isLocked).toBe(true);
+		expect(store.currentCashier?.user).toBe("cashier@example.com");
+		expect(store.isLocked).toBe(false);
 
 		store.beginTerminalEmployeesLoad("Backup POS");
 		expect(
@@ -132,7 +129,7 @@ describe("employeeStore", () => {
 		expect(store.terminalEmployees).toEqual([]);
 	});
 
-	it("clears cashier identities when loading fails", () => {
+	it("keeps the logged-in cashier when cashier loading fails", () => {
 		const store = useEmployeeStore();
 		store.setTerminalEmployees([
 			{ user: "cashier@example.com", full_name: "Main Cashier" },
@@ -146,7 +143,8 @@ describe("employeeStore", () => {
 			),
 		).toBe(true);
 		expect(store.terminalEmployees).toEqual([]);
-		expect(store.currentCashier).toBeNull();
+		expect(store.currentCashier?.user).toBe("cashier@example.com");
+		expect(store.isLocked).toBe(false);
 		expect(store.terminalEmployeesLoadStatus).toBe("error");
 		expect(store.terminalEmployeesLoadError).toContain("Unable to load");
 	});

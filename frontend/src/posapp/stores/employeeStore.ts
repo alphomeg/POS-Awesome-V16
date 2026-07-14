@@ -31,11 +31,28 @@ const normalizeEmployee = (cashier: TerminalEmployee): TerminalEmployee => ({
 	is_supervisor: Boolean(cashier.is_supervisor),
 });
 
+const TERMINAL_LOCKING_ENABLED = false;
+
+const resolveSessionCashier = (): TerminalEmployee | null => {
+	const frappeRef = (globalThis as any).frappe;
+	const session = frappeRef?.session || {};
+	const user = String(session.user || "").trim();
+	if (!user || user === "Guest") return null;
+	const roles = Array.isArray(frappeRef?.user_roles) ? frappeRef.user_roles : [];
+	return normalizeEmployee({
+		user,
+		full_name: session.user_fullname || session.full_name || user,
+		enabled: 1,
+		is_current: true,
+		is_supervisor: roles.includes("System Manager") || roles.includes("POS Manager"),
+	});
+};
+
 export const useEmployeeStore = defineStore("employee", () => {
 	const terminalEmployees = ref<TerminalEmployee[]>([]);
-	const currentCashier = ref<TerminalEmployee | null>(null);
+	const currentCashier = ref<TerminalEmployee | null>(resolveSessionCashier());
 	const switchDialogOpen = ref(false);
-	const lockDialogOpen = ref(true);
+	const lockDialogOpen = ref(TERMINAL_LOCKING_ENABLED);
 	const terminalStateLoaded = ref(false);
 	const terminalLockPending = ref(false);
 	const terminalEmployeesLoadStatus =
@@ -67,6 +84,18 @@ export const useEmployeeStore = defineStore("employee", () => {
 		}
 	};
 
+	const setSessionCashierFromFrappe = () => {
+		const sessionCashier = resolveSessionCashier();
+		if (!sessionCashier) return null;
+		const listedCashier = terminalEmployees.value.find(
+			(employee) => employee.user === sessionCashier.user,
+		);
+		currentCashier.value = listedCashier || sessionCashier;
+		lockDialogOpen.value = false;
+		terminalLockPending.value = false;
+		return currentCashier.value;
+	};
+
 	const setTerminalEmployees = (employees: TerminalEmployee[] = []) => {
 		terminalEmployees.value = Array.isArray(employees)
 			? employees
@@ -80,7 +109,11 @@ export const useEmployeeStore = defineStore("employee", () => {
 			const refreshedCashier = terminalEmployees.value.find(
 				(employee) => employee.user === currentCashier.value?.user,
 			);
-			currentCashier.value = refreshedCashier || null;
+			currentCashier.value =
+				refreshedCashier || (TERMINAL_LOCKING_ENABLED ? null : currentCashier.value);
+		}
+		if (!TERMINAL_LOCKING_ENABLED) {
+			setSessionCashierFromFrappe();
 		}
 	};
 
@@ -89,10 +122,14 @@ export const useEmployeeStore = defineStore("employee", () => {
 		terminalEmployeesLoadStatus.value = "loading";
 		terminalEmployeesLoadError.value = "";
 		terminalEmployees.value = [];
-		currentCashier.value = null;
-		lockDialogOpen.value = true;
+		currentCashier.value = TERMINAL_LOCKING_ENABLED
+			? null
+			: currentCashier.value || resolveSessionCashier();
+		lockDialogOpen.value = TERMINAL_LOCKING_ENABLED;
 		terminalStateLoaded.value = false;
-		switchDialogOpen.value = false;
+		if (TERMINAL_LOCKING_ENABLED) {
+			switchDialogOpen.value = false;
+		}
 	};
 
 	const completeTerminalEmployeesLoad = (
@@ -136,6 +173,14 @@ export const useEmployeeStore = defineStore("employee", () => {
 		state: AuthoritativeTerminalState | null | undefined,
 		verifiedCashier?: TerminalEmployee | null,
 	) => {
+		if (!TERMINAL_LOCKING_ENABLED) {
+			setSessionCashierFromFrappe();
+			lockDialogOpen.value = false;
+			terminalLockPending.value = false;
+			terminalStateLoaded.value = true;
+			return;
+		}
+
 		const activeCashier = String(state?.active_cashier || "").trim();
 		const candidate =
 			verifiedCashier?.user === activeCashier
@@ -166,6 +211,15 @@ export const useEmployeeStore = defineStore("employee", () => {
 		},
 	) => {
 		const state = cashier?.terminal_state;
+		if (!TERMINAL_LOCKING_ENABLED) {
+			if (cashier?.user) {
+				setCurrentCashier(cashier);
+			}
+			lockDialogOpen.value = false;
+			terminalLockPending.value = false;
+			terminalStateLoaded.value = true;
+			return;
+		}
 		if (
 			!cashier?.user ||
 			state?.locked !== false ||
@@ -179,6 +233,14 @@ export const useEmployeeStore = defineStore("employee", () => {
 	};
 
 	const ensureCurrentCashier = () => {
+		if (!TERMINAL_LOCKING_ENABLED) {
+			if (!currentCashier.value) {
+				setSessionCashierFromFrappe();
+			}
+			lockDialogOpen.value = false;
+			terminalLockPending.value = false;
+			return;
+		}
 		if (!currentCashier.value) return;
 		const serverListedCashier = terminalEmployees.value.find(
 			(employee) => employee.user === currentCashier.value?.user,
@@ -191,7 +253,7 @@ export const useEmployeeStore = defineStore("employee", () => {
 
 	const openEmployeeSwitch = () => {
 		ensureCurrentCashier();
-		if (!lockDialogOpen.value) {
+		if (!lockDialogOpen.value || !TERMINAL_LOCKING_ENABLED) {
 			switchDialogOpen.value = true;
 		}
 	};
@@ -202,10 +264,16 @@ export const useEmployeeStore = defineStore("employee", () => {
 
 	const lockTerminal = () => {
 		switchDialogOpen.value = false;
-		lockDialogOpen.value = true;
+		lockDialogOpen.value = TERMINAL_LOCKING_ENABLED;
 	};
 
 	const markTerminalLockPending = () => {
+		if (!TERMINAL_LOCKING_ENABLED) {
+			lockDialogOpen.value = false;
+			terminalLockPending.value = false;
+			switchDialogOpen.value = false;
+			return;
+		}
 		lockTerminal();
 		terminalLockPending.value = true;
 	};
@@ -230,7 +298,9 @@ export const useEmployeeStore = defineStore("employee", () => {
 		terminalEmployeesLoadError,
 		terminalEmployeesProfile,
 		isLocked,
+		terminalLockingEnabled: TERMINAL_LOCKING_ENABLED,
 		setTerminalEmployees,
+		setSessionCashierFromFrappe,
 		beginTerminalEmployeesLoad,
 		completeTerminalEmployeesLoad,
 		failTerminalEmployeesLoad,

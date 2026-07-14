@@ -239,11 +239,12 @@ describe("EmployeeSwitchDialog", () => {
 		);
 	});
 
-	it("shows a locked loading state, then renders and selects asynchronously loaded cashiers", async () => {
+	it("shows a non-blocking switch loading state, then renders asynchronously loaded cashiers", async () => {
 		const store = useEmployeeStore();
 		const uiStore = useUIStore();
 		uiStore.setPosProfile({ name: "Main POS" } as any);
 		store.beginTerminalEmployeesLoad("Main POS");
+		store.openEmployeeSwitch();
 
 		const wrapper = mount(EmployeeSwitchDialog, {
 			global: {
@@ -263,11 +264,10 @@ describe("EmployeeSwitchDialog", () => {
 		});
 
 		expect(
-			wrapper.get('[data-test="terminal-cashier-loading"]').text(),
+			wrapper.get('[data-test="cashier-list-loading"]').text(),
 		).toContain("Loading authorized cashiers");
-		expect(wrapper.find('[data-test="terminal-unlock-pin"]').exists()).toBe(
-			false,
-		);
+		expect(wrapper.find('[data-test="terminal-lock-dialog"]').exists()).toBe(false);
+		expect(wrapper.find('[data-test="cashier-pin-input"]').exists()).toBe(false);
 
 		store.completeTerminalEmployeesLoad("Main POS", [
 			{ user: "cashier@example.com", full_name: "Main Cashier" },
@@ -275,16 +275,12 @@ describe("EmployeeSwitchDialog", () => {
 		]);
 		await wrapper.vm.$nextTick();
 
-		const firstCashier = wrapper.get(
-			'[data-test="terminal-unlock-cashier-cashier@example.com"]',
-		);
+		const firstCashier = wrapper.get('[data-test="employee-option-cashier@example.com"]');
 		expect(firstCashier.text()).toContain("Main Cashier");
 		expect(firstCashier.classes()).toContain(
 			"employee-switch-dialog__option--active",
 		);
-		expect(wrapper.get('[data-test="terminal-unlock-pin"]').exists()).toBe(
-			true,
-		);
+		expect(wrapper.get('[data-test="cashier-pin-input"]').exists()).toBe(true);
 	});
 
 	it("shows a recoverable cashier load error without exposing stale options", async () => {
@@ -294,6 +290,7 @@ describe("EmployeeSwitchDialog", () => {
 			"Main POS",
 			"Unable to load cashiers for this POS profile.",
 		);
+		store.openEmployeeSwitch();
 		const retryLoad = vi.fn();
 
 		const wrapper = mount(EmployeeSwitchDialog, {
@@ -317,22 +314,19 @@ describe("EmployeeSwitchDialog", () => {
 		});
 
 		expect(
-			wrapper.get('[data-test="terminal-cashier-error"]').text(),
+			wrapper.get('[data-test="cashier-list-error"]').text(),
 		).toContain("Unable to load cashiers");
 		expect(wrapper.find(".employee-switch-dialog__option").exists()).toBe(
 			false,
 		);
-		expect(wrapper.find('[data-test="terminal-unlock-pin"]').exists()).toBe(
-			false,
-		);
+		expect(wrapper.find('[data-test="terminal-lock-dialog"]').exists()).toBe(false);
+		expect(wrapper.find('[data-test="cashier-pin-input"]').exists()).toBe(false);
 
-		await wrapper
-			.get('[data-test="terminal-cashier-retry"]')
-			.trigger("click");
+		await wrapper.get('[data-test="cashier-list-retry"]').trigger("click");
 		await wrapper.vm.$nextTick();
 		expect(store.terminalEmployeesLoadStatus).toBe("loading");
 		expect(
-			wrapper.get('[data-test="terminal-cashier-loading"]').text(),
+			wrapper.get('[data-test="cashier-list-loading"]').text(),
 		).toContain("Loading authorized cashiers");
 		expect(retryLoad).toHaveBeenCalledOnce();
 	});
@@ -341,6 +335,7 @@ describe("EmployeeSwitchDialog", () => {
 		const store = useEmployeeStore();
 		store.beginTerminalEmployeesLoad("Main POS");
 		store.completeTerminalEmployeesLoad("Main POS", []);
+		store.openEmployeeSwitch();
 
 		const wrapper = mount(EmployeeSwitchDialog, {
 			global: {
@@ -359,14 +354,15 @@ describe("EmployeeSwitchDialog", () => {
 			},
 		});
 
+		expect(wrapper.get('[data-test="cashier-list-empty"]').text()).toContain(
+			"No cashier profiles",
+		);
 		expect(
-			wrapper.get('[data-test="terminal-cashier-empty"]').text(),
-		).toContain("No enabled cashiers");
-		expect(
-			wrapper.find('[data-test="terminal-cashier-loading"]').exists(),
+			wrapper.find('[data-test="cashier-list-loading"]').exists(),
 		).toBe(false);
 		expect(
-			wrapper.find('[data-test="terminal-cashier-error"]').exists(),
+			wrapper.find('[data-test="cashier-list-error"]').exists(),
 		).toBe(false);
+		expect(wrapper.find('[data-test="terminal-lock-dialog"]').exists()).toBe(false);
 	});
 });

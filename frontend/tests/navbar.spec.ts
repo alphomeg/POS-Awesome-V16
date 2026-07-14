@@ -279,7 +279,7 @@ describe("Navbar supervisor access", () => {
 		expect(shownTitles).not.toContain("Cache cleared successfully");
 	});
 
-	it("fails closed and marks the server lock pending when lock persistence fails", async () => {
+	it("ignores lock actions while terminal locking is disabled", async () => {
 		const employeeStore = useEmployeeStore();
 		employeeStore.setTerminalEmployees([
 			{
@@ -320,22 +320,13 @@ describe("Navbar supervisor access", () => {
 		});
 		await (wrapper.vm as any).fetchTerminalEmployees();
 		(frappe.call as ReturnType<typeof vi.fn>).mockClear();
-		(frappe.call as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-			new Error("server unavailable"),
-		);
 
 		const result = await (wrapper.vm as any).lockPosScreen();
 
-		expect(result).toBeUndefined();
-		expect(employeeStore.isLocked).toBe(true);
-		expect(employeeStore.terminalLockPending).toBe(true);
-		expect(frappe.call).toHaveBeenLastCalledWith({
-			method: "posawesome.posawesome.api.employees.lock_terminal",
-			args: { pos_profile: "Main POS" },
-		});
-		expect((wrapper.vm as any).toastStore.history.at(-1)?.title).toContain(
-			"Server lock pending",
-		);
+		expect(result).toBe(true);
+		expect(employeeStore.isLocked).toBe(false);
+		expect(employeeStore.terminalLockPending).toBe(false);
+		expect(frappe.call).not.toHaveBeenCalled();
 		wrapper.unmount();
 	});
 
@@ -390,7 +381,8 @@ describe("Navbar supervisor access", () => {
 		expect(employeeStore.terminalEmployeesLoadError).toContain(
 			"Unable to load cashiers",
 		);
-		expect(employeeStore.isLocked).toBe(true);
+		expect(employeeStore.currentCashier?.user).toBe("cashier@example.com");
+		expect(employeeStore.isLocked).toBe(false);
 
 		(frappe.call as ReturnType<typeof vi.fn>).mockImplementation(
 			async ({ method }: { method: string }) => {
@@ -424,9 +416,8 @@ describe("Navbar supervisor access", () => {
 		wrapper.unmount();
 	});
 
-	it("publishes authorized cashiers without waiting for terminal state", async () => {
+	it("publishes authorized cashiers without requesting terminal state", async () => {
 		const employeeStore = useEmployeeStore();
-		let resolveTerminalState: ((value: unknown) => void) | undefined;
 		(frappe.call as ReturnType<typeof vi.fn>).mockImplementation(
 			({ method }: { method: string }) => {
 				if (method.endsWith("get_terminal_employees")) {
@@ -439,9 +430,7 @@ describe("Navbar supervisor access", () => {
 						],
 					});
 				}
-				return new Promise((resolve) => {
-					resolveTerminalState = resolve;
-				});
+				throw new Error(`Unexpected terminal method: ${method}`);
 			},
 		);
 
@@ -478,17 +467,11 @@ describe("Navbar supervisor access", () => {
 		expect(
 			employeeStore.terminalEmployees.map((cashier) => cashier.user),
 		).toEqual(["cashier@example.com"]);
-		expect(employeeStore.terminalStateLoaded).toBe(false);
-
-		resolveTerminalState?.({
-			message: {
-				pos_profile: "Main POS",
-				active_cashier: null,
-				locked: true,
-			},
-		});
-		await vi.waitFor(() => {
-			expect(employeeStore.terminalStateLoaded).toBe(true);
+		expect(employeeStore.isLocked).toBe(false);
+		expect(employeeStore.terminalStateLoaded).toBe(true);
+		expect(frappe.call).toHaveBeenCalledWith({
+			method: "posawesome.posawesome.api.employees.get_terminal_employees",
+			args: { pos_profile: "Main POS" },
 		});
 		wrapper.unmount();
 	});

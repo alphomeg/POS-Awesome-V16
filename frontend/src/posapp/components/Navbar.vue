@@ -645,33 +645,42 @@ export default {
 					this.employeeStore.completeTerminalEmployeesLoad(profileName, response.message);
 				})
 				.catch(failEmployeesRequest);
-			const stateRequest = Promise.resolve()
-				.then(() =>
-					withTerminalRequestTimeout(
-						frappe.call({
-							method: "posawesome.posawesome.api.employees.get_terminal_state",
-							args: {
-								pos_profile: profileName,
+			const stateRequest = this.employeeStore.terminalLockingEnabled
+				? Promise.resolve()
+						.then(() =>
+							withTerminalRequestTimeout(
+								frappe.call({
+									method: "posawesome.posawesome.api.employees.get_terminal_state",
+									args: {
+										pos_profile: profileName,
+									},
+								}),
+								"Terminal state",
+							),
+						)
+						.then(
+							(response) => {
+								if (!isCurrentRequest()) return;
+								if (
+									this.employeeStore.terminalLockPending &&
+									response?.message?.locked !== true
+								) {
+									this.scheduleTerminalLockRetry();
+								} else {
+									this.employeeStore.applyTerminalState(response?.message);
+								}
 							},
-						}),
-						"Terminal state",
-					),
-				)
-				.then(
-					(response) => {
+							(error) => {
+								if (!isCurrentRequest()) return;
+								console.error("Failed to load authoritative terminal state", error);
+								this.employeeStore.applyTerminalState(null);
+							},
+						)
+				: Promise.resolve().then(() => {
 						if (!isCurrentRequest()) return;
-						if (this.employeeStore.terminalLockPending && response?.message?.locked !== true) {
-							this.scheduleTerminalLockRetry();
-						} else {
-							this.employeeStore.applyTerminalState(response?.message);
-						}
-					},
-					(error) => {
-						if (!isCurrentRequest()) return;
-						console.error("Failed to load authoritative terminal state", error);
+						this.employeeStore.setSessionCashierFromFrappe();
 						this.employeeStore.applyTerminalState(null);
-					},
-				);
+					});
 
 			await Promise.allSettled([employeesRequest, stateRequest]);
 		},
@@ -679,6 +688,9 @@ export default {
 			this.employeeStore.openEmployeeSwitch();
 		},
 		setupTerminalSecurityChannel() {
+			if (!this.employeeStore.terminalLockingEnabled) {
+				return;
+			}
 			if (typeof window === "undefined" || typeof window.BroadcastChannel !== "function") {
 				return;
 			}
@@ -702,6 +714,10 @@ export default {
 			}, retryDelay);
 		},
 		async persistTerminalLock() {
+			if (!this.employeeStore.terminalLockingEnabled) {
+				this.employeeStore.setSessionCashierFromFrappe();
+				return true;
+			}
 			if (!this.posProfile?.name) return false;
 			if (this.terminalLockRequestInFlight) {
 				return this.terminalLockRequestInFlight;
@@ -734,6 +750,10 @@ export default {
 			return this.terminalLockRequestInFlight;
 		},
 		async lockPosScreen() {
+			if (!this.employeeStore.terminalLockingEnabled) {
+				this.employeeStore.setSessionCashierFromFrappe();
+				return true;
+			}
 			this.employeeStore.markTerminalLockPending();
 			this.terminalSecurityChannel?.postMessage?.({
 				type: "lock-intent",
