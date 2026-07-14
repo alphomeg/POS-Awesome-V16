@@ -181,6 +181,26 @@ import { useEmployeeStore } from "../stores/employeeStore";
 import { useOfflineSyncStore } from "../stores/offlineSyncStore";
 import { storeToRefs } from "pinia";
 
+const TERMINAL_REQUEST_TIMEOUT_MS = 15_000;
+
+const withTerminalRequestTimeout = (request, label) =>
+	new Promise((resolve, reject) => {
+		const timeoutId = window.setTimeout(
+			() => reject(new Error(`${label} request timed out.`)),
+			TERMINAL_REQUEST_TIMEOUT_MS,
+		);
+		Promise.resolve(request).then(
+			(value) => {
+				window.clearTimeout(timeoutId);
+				resolve(value);
+			},
+			(error) => {
+				window.clearTimeout(timeoutId);
+				reject(error);
+			},
+		);
+	});
+
 export default {
 	name: "NavBar",
 	setup() {
@@ -595,53 +615,65 @@ export default {
 			}
 
 			this.employeeStore.beginTerminalEmployeesLoad(profileName);
-			const [employeesResult, stateResult] = await Promise.allSettled([
-				Promise.resolve().then(() =>
-					frappe.call({
-						method: "posawesome.posawesome.api.employees.get_terminal_employees",
-						args: {
-							pos_profile: profileName,
-						},
-					}),
-				),
-				Promise.resolve().then(() =>
-					frappe.call({
-						method: "posawesome.posawesome.api.employees.get_terminal_state",
-						args: {
-							pos_profile: profileName,
-						},
-					}),
-				),
-			]);
-
-			if (requestId !== this.terminalEmployeesRequestId || profileName !== this.posProfileName) {
-				return;
-			}
-
-			if (employeesResult.status === "fulfilled" && Array.isArray(employeesResult.value?.message)) {
-				this.employeeStore.completeTerminalEmployeesLoad(profileName, employeesResult.value.message);
-			} else {
-				const error =
-					employeesResult.status === "rejected"
-						? employeesResult.reason
-						: new Error("Cashier API returned an invalid response.");
+			const isCurrentRequest = () =>
+				requestId === this.terminalEmployeesRequestId && profileName === this.posProfileName;
+			const failEmployeesRequest = (error) => {
+				if (!isCurrentRequest()) return;
 				console.error("Failed to load terminal employees", error);
 				this.employeeStore.failTerminalEmployeesLoad(
 					profileName,
 					this.__("Unable to load cashiers for this POS profile. Check the connection and retry."),
 				);
-			}
+			};
+			const employeesRequest = Promise.resolve()
+				.then(() =>
+					withTerminalRequestTimeout(
+						frappe.call({
+							method: "posawesome.posawesome.api.employees.get_terminal_employees",
+							args: {
+								pos_profile: profileName,
+							},
+						}),
+						"Cashier list",
+					),
+				)
+				.then((response) => {
+					if (!isCurrentRequest()) return;
+					if (!Array.isArray(response?.message)) {
+						throw new Error("Cashier API returned an invalid response.");
+					}
+					this.employeeStore.completeTerminalEmployeesLoad(profileName, response.message);
+				})
+				.catch(failEmployeesRequest);
+			const stateRequest = Promise.resolve()
+				.then(() =>
+					withTerminalRequestTimeout(
+						frappe.call({
+							method: "posawesome.posawesome.api.employees.get_terminal_state",
+							args: {
+								pos_profile: profileName,
+							},
+						}),
+						"Terminal state",
+					),
+				)
+				.then(
+					(response) => {
+						if (!isCurrentRequest()) return;
+						if (this.employeeStore.terminalLockPending && response?.message?.locked !== true) {
+							this.scheduleTerminalLockRetry();
+						} else {
+							this.employeeStore.applyTerminalState(response?.message);
+						}
+					},
+					(error) => {
+						if (!isCurrentRequest()) return;
+						console.error("Failed to load authoritative terminal state", error);
+						this.employeeStore.applyTerminalState(null);
+					},
+				);
 
-			if (stateResult.status === "fulfilled") {
-				if (this.employeeStore.terminalLockPending && stateResult.value?.message?.locked !== true) {
-					this.scheduleTerminalLockRetry();
-				} else {
-					this.employeeStore.applyTerminalState(stateResult.value?.message);
-				}
-			} else {
-				console.error("Failed to load authoritative terminal state", stateResult.reason);
-				this.employeeStore.applyTerminalState(null);
-			}
+			await Promise.allSettled([employeesRequest, stateRequest]);
 		},
 		openEmployeeSwitch() {
 			this.employeeStore.openEmployeeSwitch();

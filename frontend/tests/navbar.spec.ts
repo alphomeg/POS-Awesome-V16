@@ -423,4 +423,148 @@ describe("Navbar supervisor access", () => {
 		expect(employeeStore.terminalEmployeesLoadError).toBe("");
 		wrapper.unmount();
 	});
+
+	it("publishes authorized cashiers without waiting for terminal state", async () => {
+		const employeeStore = useEmployeeStore();
+		let resolveTerminalState: ((value: unknown) => void) | undefined;
+		(frappe.call as ReturnType<typeof vi.fn>).mockImplementation(
+			({ method }: { method: string }) => {
+				if (method.endsWith("get_terminal_employees")) {
+					return Promise.resolve({
+						message: [
+							{
+								user: "cashier@example.com",
+								full_name: "Main Cashier",
+							},
+						],
+					});
+				}
+				return new Promise((resolve) => {
+					resolveTerminalState = resolve;
+				});
+			},
+		);
+
+		const wrapper = shallowMount(Navbar, {
+			props: { posProfile: { name: "Main POS" } },
+			global: {
+				mocks: { __: (value: string) => value },
+				stubs: {
+					NavbarAppBar: true,
+					NavbarDrawer: true,
+					NavbarMenu: true,
+					NotificationBell: true,
+					StatusIndicator: true,
+					CacheUsageMeter: true,
+					AboutDialog: true,
+					EmployeeSwitchDialog: true,
+					OfflineInvoicesDialog: true,
+					ServerUsageGadget: true,
+					DatabaseUsageGadget: true,
+					VDialog: true,
+					VCard: true,
+					VCardTitle: true,
+					VCardText: true,
+					VSnackbar: true,
+					VBtn: true,
+					VProgressCircular: true,
+				},
+			},
+		});
+
+		await vi.waitFor(() => {
+			expect(employeeStore.terminalEmployeesLoadStatus).toBe("ready");
+		});
+		expect(
+			employeeStore.terminalEmployees.map((cashier) => cashier.user),
+		).toEqual(["cashier@example.com"]);
+		expect(employeeStore.terminalStateLoaded).toBe(false);
+
+		resolveTerminalState?.({
+			message: {
+				pos_profile: "Main POS",
+				active_cashier: null,
+				locked: true,
+			},
+		});
+		await vi.waitFor(() => {
+			expect(employeeStore.terminalStateLoaded).toBe(true);
+		});
+		wrapper.unmount();
+	});
+
+	it("turns a timed-out cashier request into an actionable load error", async () => {
+		vi.useFakeTimers();
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+		let wrapper: ReturnType<typeof shallowMount> | undefined;
+		try {
+			const employeeStore = useEmployeeStore();
+			(frappe.call as ReturnType<typeof vi.fn>).mockImplementation(
+				({ method }: { method: string }) => {
+					if (method.endsWith("get_terminal_employees")) {
+						return new Promise(() => undefined);
+					}
+					return Promise.resolve({
+						message: {
+							pos_profile: "Main POS",
+							active_cashier: null,
+							locked: true,
+						},
+					});
+				},
+			);
+
+			wrapper = shallowMount(Navbar, {
+				props: { posProfile: { name: "Main POS" } },
+				global: {
+					mocks: { __: (value: string) => value },
+					stubs: {
+						NavbarAppBar: true,
+						NavbarDrawer: true,
+						NavbarMenu: true,
+						NotificationBell: true,
+						StatusIndicator: true,
+						CacheUsageMeter: true,
+						AboutDialog: true,
+						EmployeeSwitchDialog: true,
+						OfflineInvoicesDialog: true,
+						ServerUsageGadget: true,
+						DatabaseUsageGadget: true,
+						VDialog: true,
+						VCard: true,
+						VCardTitle: true,
+						VCardText: true,
+						VSnackbar: true,
+						VBtn: true,
+						VProgressCircular: true,
+					},
+				},
+			});
+
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(employeeStore.terminalEmployeesLoadStatus).toBe("loading");
+
+			await vi.advanceTimersByTimeAsync(15_000);
+			await nextTick();
+
+			expect(employeeStore.terminalEmployeesLoadStatus).toBe("error");
+			expect(employeeStore.terminalEmployees).toEqual([]);
+			expect(employeeStore.terminalEmployeesLoadError).toContain(
+				"Unable to load cashiers",
+			);
+			expect(consoleError).toHaveBeenCalledWith(
+				"Failed to load terminal employees",
+				expect.objectContaining({
+					message: "Cashier list request timed out.",
+				}),
+			);
+		} finally {
+			wrapper?.unmount();
+			consoleError.mockRestore();
+			vi.useRealTimers();
+		}
+	});
 });
