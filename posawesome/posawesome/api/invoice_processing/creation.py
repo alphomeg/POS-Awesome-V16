@@ -2343,6 +2343,11 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
             getattr(getattr(frappe, "session", None), "user", None),
             ledger_doc.name if ledger_doc else None,
         )
+        post_submit_runs_async = bool(
+            allow_background_submit and _has_post_submit_payment_work(data)
+        )
+        if ledger_doc and not post_submit_runs_async:
+            ledger_doc.state = STATE_POST_SUBMIT_DONE
 
     return {
         "name": invoice_doc.name,

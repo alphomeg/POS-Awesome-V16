@@ -2762,6 +2762,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
         )
 
         self.assertEqual(first["name"], "ACC-SINV-LEDGER-0001")
+        self.assertEqual(first["ledger_state"], "POST_SUBMIT_DONE")
         self.assertEqual(second["name"], "ACC-SINV-LEDGER-0001")
         self.assertEqual(len(ledger_rows), 1)
         self.assertEqual(next(iter(ledger_rows.values())).state, "POST_SUBMIT_DONE")
