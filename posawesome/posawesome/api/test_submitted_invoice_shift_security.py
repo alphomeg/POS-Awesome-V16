@@ -89,9 +89,10 @@ def _load_module(captured):
         data["posa_pos_opening_shift"] = "POS-OPEN-CURRENT"
         yield
 
-    def submit_invoice(invoice, data, submit_in_background=False):
+    def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         captured["submitted_invoice"] = json.loads(invoice)
         captured["submitted_data"] = json.loads(data)
+        captured["cashier_pin"] = cashier_pin
         return {
             "name": "ACC-SINV-AMENDED-0001",
             "doctype": "Sales Invoice",
@@ -167,6 +168,7 @@ class TestSubmittedInvoiceShiftSecurity(unittest.TestCase):
             client_request_id="submitted-amendment-001",
             pos_profile="Main POS",
             company="Test Company",
+            cashier_pin="1234",
         )
 
         self.assertEqual(captured["source"], "submitted_amendment")
@@ -181,6 +183,7 @@ class TestSubmittedInvoiceShiftSecurity(unittest.TestCase):
         )
         self.assertTrue(original.cancelled)
         self.assertEqual(result["name"], amended.name)
+        self.assertEqual(captured["cashier_pin"], "1234")
 
 
 if __name__ == "__main__":

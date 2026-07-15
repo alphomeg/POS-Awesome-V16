@@ -15,6 +15,7 @@
   "pos_profile",
   "document_type",
   "invoice_name",
+  "posa_cashier",
   "section_break_1",
   "request_data",
   "invoice_payload",
@@ -78,6 +79,13 @@
    "in_list_view": 1,
    "label": "Invoice",
    "options": "document_type"
+  },
+  {
+   "fieldname": "posa_cashier",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Authoritative Cashier",
+   "options": "User"
   },
   {
    "fieldname": "section_break_1",

@@ -69,6 +69,36 @@ def _install_frappe_stub():
     sys.modules["frappe"] = frappe_module
 
 
+def _install_dependency_stubs():
+    pos_access = types.ModuleType("posawesome.posawesome.api.pos_access")
+    pos_access.POS_SUPERVISOR_ROLE = "POS Awesome Supervisor"
+    pos_access.get_authenticated_pos_user = lambda: "cashier@example.com"
+    pos_access.get_authorized_pos_profile = lambda profile=None: {
+        "name": profile or "Main POS"
+    }
+    pos_access.user_can_manage_pos = lambda _user: False
+    sys.modules["posawesome.posawesome.api.pos_access"] = pos_access
+
+    terminal_state = types.ModuleType("posawesome.posawesome.api.terminal_state")
+    terminal_state.activate_verified_cashier = lambda profile, user: {
+        "pos_profile": profile.get("name"),
+        "active_cashier": user,
+        "locked": False,
+    }
+    terminal_state.get_active_terminal_cashier = lambda _profile: ""
+    terminal_state.get_authorized_terminal_state = lambda profile=None: {
+        "pos_profile": profile or "Main POS",
+        "active_cashier": None,
+        "locked": False,
+    }
+    terminal_state.lock_authorized_terminal = lambda profile: {
+        "pos_profile": profile.get("name"),
+        "active_cashier": None,
+        "locked": True,
+    }
+    sys.modules["posawesome.posawesome.api.terminal_state"] = terminal_state
+
+
 def _load_employees_module():
     module_name = "posawesome.posawesome.api.employees"
     file_path = REPO_ROOT / "posawesome" / "posawesome" / "api" / "employees.py"
@@ -86,7 +116,15 @@ class TestEmployeesApi(unittest.TestCase):
         cls.original_employees_module = sys.modules.get(
             "posawesome.posawesome.api.employees"
         )
+        cls.original_dependency_modules = {
+            name: sys.modules.get(name)
+            for name in (
+                "posawesome.posawesome.api.pos_access",
+                "posawesome.posawesome.api.terminal_state",
+            )
+        }
         _install_frappe_stub()
+        _install_dependency_stubs()
         cls.employees = _load_employees_module()
         cls.production_create_cashier_pin_attempt_tracker = staticmethod(
             cls.employees._create_cashier_pin_attempt_tracker
@@ -107,6 +145,12 @@ class TestEmployeesApi(unittest.TestCase):
             sys.modules.pop(module_name, None)
         else:
             sys.modules[module_name] = cls.original_employees_module
+
+        for name, original in cls.original_dependency_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
     def setUp(self):
         self.employees.frappe.session.user = "cashier@example.com"
@@ -331,6 +375,62 @@ class TestEmployeesApi(unittest.TestCase):
             )
 
         self.employees.activate_verified_cashier.assert_not_called()
+
+    def test_pin_only_resolution_rejects_duplicate_profile_pin(self):
+        class FakeUserDoc:
+            full_name = "Cashier"
+            enabled = 1
+            posa_is_pos_supervisor = 0
+
+            def __init__(self, name):
+                self.name = name
+
+            def get_password(self, fieldname):
+                return "1234"
+
+        self.employees.frappe.get_all = lambda doctype, **kwargs: (
+            [{"user": "one@example.com"}, {"user": "two@example.com"}]
+            if doctype == "POS Profile User"
+            else []
+        )
+        self.employees.frappe.get_doc = lambda doctype, name: FakeUserDoc(name)
+
+        with self.assertRaisesRegex(Exception, "more than one cashier"):
+            self.employees.resolve_cashier_by_pin("Main POS", "1234")
+
+    def test_save_cashier_pin_rejects_profile_local_duplicate(self):
+        class FakeUserDoc:
+            full_name = "Cashier"
+            enabled = 1
+            posa_is_pos_supervisor = 0
+            flags = types.SimpleNamespace()
+
+            def __init__(self, name):
+                self.name = name
+
+            def get_password(self, fieldname):
+                return "5678" if self.name == "other@example.com" else ""
+
+            def set(self, fieldname, value):
+                self.saved_value = value
+
+            def save(self, ignore_permissions=False):
+                self.saved = ignore_permissions
+
+        self.employees.frappe.session.user = "cashier@example.com"
+        self.employees.frappe.get_all = lambda doctype, **kwargs: (
+            [{"user": "cashier@example.com"}, {"user": "other@example.com"}]
+            if doctype == "POS Profile User"
+            else []
+        )
+        self.employees.frappe.get_doc = lambda doctype, name: FakeUserDoc(name)
+
+        with self.assertRaisesRegex(Exception, "already assigned"):
+            self.employees.save_cashier_pin(
+                "Main POS",
+                "cashier@example.com",
+                "5678",
+            )
 
     def test_pin_attempt_key_is_scoped_and_does_not_expose_identifiers(self):
         identity = {
@@ -742,16 +842,19 @@ class TestEmployeesApi(unittest.TestCase):
 
         self.employees.user_can_manage_pos.assert_not_called()
 
-    def test_server_verified_active_cashier_may_manage_own_pin(self):
+    def test_terminal_active_cashier_cannot_manage_pin_without_session_or_manager(self):
         self.employees.frappe.session.user = "terminal-login@example.com"
         self.employees.user_can_manage_pos = Mock(return_value=False)
-        self.employees.get_active_terminal_cashier = Mock(
-            return_value="cashier@example.com"
+
+        with self.assertRaisesRegex(PermissionError, "only manage your own cashier PIN"):
+            self.employees._require_pin_management_access(
+                "Main POS",
+                "cashier@example.com",
+            )
+
+        self.employees.user_can_manage_pos.assert_called_once_with(
+            "terminal-login@example.com"
         )
-
-        self.employees._require_pin_management_access("Main POS", "cashier@example.com")
-
-        self.employees.get_active_terminal_cashier.assert_called_once_with("Main POS")
 
 
 if __name__ == "__main__":

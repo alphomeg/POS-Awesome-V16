@@ -42,10 +42,7 @@ from posawesome.posawesome.api.item_sale_controls import (
     collect_item_sale_control_errors,
     validate_invoice_item_sale_controls,
 )
-from posawesome.posawesome.api.terminal_state import (
-    get_active_terminal_cashier,
-    validate_assigned_terminal_cashier,
-)
+from posawesome.posawesome.api.terminal_state import validate_assigned_terminal_cashier
 from posawesome.posawesome.api.pos_access import (
     get_authorized_pos_profile,
     require_pos_supervisor_or_manager,
@@ -67,8 +64,15 @@ STATE_FAILED = "FAILED"
 FINAL_LEDGER_STATES = {STATE_SUBMITTED, STATE_POST_SUBMIT_DONE}
 AUTHORITATIVE_CASHIER_FIELD = "posa_cashier"
 CLIENT_CASHIER_KEYS = {AUTHORITATIVE_CASHIER_FIELD, "_posa_authoritative_cashier"}
+CASHIER_PIN_KEYS = {
+    "cashier_pin",
+    "posa_cashier_pin",
+    "_posa_cashier_pin",
+    "cashierPin",
+}
 TRUSTED_SHIFT_AUDIT_KEY = "_posa_shift_reassignment_audit"
 TRUSTED_SHIFT_SOURCES = {"offline_sync", "submitted_amendment"}
+SYSTEM_PAYMENT_MODES = {"Gift Card"}
 
 RETURN_OUTSTANDING_MESSAGE_MARKERS = (
     "Updating the outstanding to this invoice.",
@@ -225,6 +229,38 @@ def _strip_client_cashier_identity(*payloads):
             payload.pop(key, None)
 
 
+def _reject_embedded_cashier_pin(*payloads):
+    def scrub(value):
+        found = False
+        if isinstance(value, dict):
+            for key in list(value):
+                if key in CASHIER_PIN_KEYS:
+                    found = bool(str(value.pop(key, None) or "").strip()) or found
+                else:
+                    found = scrub(value.get(key)) or found
+        elif isinstance(value, list):
+            for child in value:
+                found = scrub(child) or found
+        return found
+
+    if any(scrub(payload) for payload in payloads):
+        _permission_denied(
+            _("Cashier PIN must be sent as a transient submit argument.")
+        )
+
+
+def _scrub_transient_submission_keys(value):
+    if isinstance(value, dict):
+        return {
+            key: _scrub_transient_submission_keys(child)
+            for key, child in value.items()
+            if key not in CASHIER_PIN_KEYS
+        }
+    if isinstance(value, list):
+        return [_scrub_transient_submission_keys(child) for child in value]
+    return value
+
+
 def _supports_authoritative_cashier(doctype):
     has_column = getattr(frappe.db, "has_column", None)
     if not callable(has_column):
@@ -242,12 +278,72 @@ def _set_authoritative_cashier(invoice_doc, cashier):
         invoice_doc.set(AUTHORITATIVE_CASHIER_FIELD, cashier)
 
 
-def _resolve_authoritative_cashier(pos_profile, ledger_doc=None):
+def _ledger_supports_authoritative_cashier():
+    try:
+        meta = frappe.get_meta(LEDGER_DOCTYPE)
+        has_field = getattr(meta, "has_field", None)
+        if callable(has_field):
+            return bool(has_field(AUTHORITATIVE_CASHIER_FIELD))
+    except Exception:
+        pass
+    return False
+
+
+def _set_submission_ledger_cashier(ledger_doc, cashier):
+    if not ledger_doc or not cashier or not _ledger_supports_authoritative_cashier():
+        return False
+    existing_cashier = str(ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD) or "").strip()
+    if existing_cashier:
+        if existing_cashier != cashier:
+            _permission_denied(
+                _("This invoice request is already signed by another cashier.")
+            )
+        return False
+    if hasattr(ledger_doc, "set"):
+        ledger_doc.set(AUTHORITATIVE_CASHIER_FIELD, cashier)
+    else:
+        setattr(ledger_doc, AUTHORITATIVE_CASHIER_FIELD, cashier)
+    return True
+
+
+def _resolve_cashier_by_pin(pos_profile, cashier_pin):
+    from posawesome.posawesome.api.employees import resolve_cashier_by_pin
+
+    result = resolve_cashier_by_pin(pos_profile=pos_profile, pin=cashier_pin)
+    cashier = str((result or {}).get("user") or "").strip()
+    if not cashier:
+        frappe.throw(_("Invalid cashier PIN."))
+    return validate_assigned_terminal_cashier(pos_profile, cashier)
+
+
+def _resolve_authoritative_cashier(
+    pos_profile,
+    ledger_doc=None,
+    cashier_pin=None,
+    require_pin=False,
+):
     owned_ledger_name = getattr(
         getattr(frappe, "flags", None),
         "posa_owned_submission_ledger",
         None,
     )
+    current_sale_cashier = str(
+        getattr(
+            getattr(frappe, "flags", None),
+            "posa_current_sale_authoritative_cashier",
+            "",
+        )
+        or ""
+    ).strip()
+    if current_sale_cashier:
+        return validate_assigned_terminal_cashier(pos_profile, current_sale_cashier)
+
+    ledger_cashier = ""
+    if ledger_doc:
+        ledger_cashier = str(ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD) or "").strip()
+    if ledger_cashier:
+        return validate_assigned_terminal_cashier(pos_profile, ledger_cashier)
+
     background_cashier = str(
         getattr(
             getattr(frappe, "flags", None),
@@ -263,12 +359,19 @@ def _resolve_authoritative_cashier(pos_profile, ledger_doc=None):
     ):
         return validate_assigned_terminal_cashier(pos_profile, background_cashier)
 
-    return get_active_terminal_cashier(pos_profile)
+    cashier_pin = str(cashier_pin or "").strip()
+    if cashier_pin:
+        return _resolve_cashier_by_pin(pos_profile, cashier_pin)
+
+    if require_pin:
+        frappe.throw(_("Cashier PIN is required."))
+
+    return ""
 
 
 def _json_dumps(value):
     try:
-        return json.dumps(value or {}, default=str)
+        return json.dumps(_scrub_transient_submission_keys(value or {}), default=str)
     except Exception:
         return "{}"
 
@@ -282,6 +385,81 @@ def _json_loads(value):
         return json.loads(value)
     except Exception:
         return {}
+
+
+def _doc_list(doc, key):
+    value = _doc_value(doc, key)
+    return value or []
+
+
+def _configured_profile_payment_methods(profile_doc):
+    methods = {
+        str(_doc_value(row, "mode_of_payment") or "").strip()
+        for row in _doc_list(profile_doc, "payments")
+        if str(_doc_value(row, "mode_of_payment") or "").strip()
+    }
+    if methods:
+        return methods
+
+    profile_name = str(_doc_value(profile_doc, "name") or "").strip()
+    if not profile_name:
+        return methods
+
+    for child_doctype in ("POS Payment Method", "Sales Invoice Payment"):
+        try:
+            rows = frappe.get_all(
+                child_doctype,
+                filters={"parent": profile_name},
+                fields=["mode_of_payment"],
+                ignore_permissions=True,
+            )
+        except Exception:
+            rows = []
+        methods.update(
+            str(_doc_value(row, "mode_of_payment") or "").strip()
+            for row in rows or []
+            if str(_doc_value(row, "mode_of_payment") or "").strip()
+        )
+        if methods:
+            break
+
+    return methods
+
+
+def _is_system_payment_row(row):
+    mode = str(_doc_value(row, "mode_of_payment") or "").strip()
+    if mode in SYSTEM_PAYMENT_MODES:
+        return True
+    if _doc_value(row, "gift_card_code") or _doc_value(row, "gift_card"):
+        return True
+    return False
+
+
+def _validate_invoice_payment_modes(invoice_doc, profile_doc):
+    configured_methods = _configured_profile_payment_methods(profile_doc)
+
+    invalid_modes = []
+    unconfigured_modes = []
+    for row in invoice_doc.get("payments") or []:
+        mode = str(_doc_value(row, "mode_of_payment") or "").strip()
+        if not mode or _is_system_payment_row(row):
+            continue
+        amount = flt(_doc_value(row, "amount") or _doc_value(row, "base_amount"))
+        if not amount:
+            continue
+        if not configured_methods:
+            unconfigured_modes.append(mode)
+            continue
+        if mode not in configured_methods:
+            invalid_modes.append(mode)
+
+    if invalid_modes or unconfigured_modes:
+        frappe.throw(
+            _("Payment mode {0} is not configured for POS Profile {1}.").format(
+                ", ".join(sorted(set(invalid_modes + unconfigured_modes))),
+                _doc_value(profile_doc, "name") or invoice_doc.get("pos_profile"),
+            )
+        )
 
 
 def _submission_ledger_key(client_request_id, company, pos_profile, document_type):
@@ -420,6 +598,13 @@ def _get_or_create_submission_ledger(client_request_id, invoice, data, document_
         "request_data": _json_dumps(data),
         "invoice_payload": _json_dumps(invoice),
     }
+    authoritative_cashier = str(
+        (data or {}).get(AUTHORITATIVE_CASHIER_FIELD)
+        or (data or {}).get("_posa_authoritative_cashier")
+        or ""
+    ).strip()
+    if authoritative_cashier and _ledger_supports_authoritative_cashier():
+        payload[AUTHORITATIVE_CASHIER_FIELD] = authoritative_cashier
     try:
         ledger_doc = frappe.get_doc(payload)
         saved = _save_submission_ledger(ledger_doc)
@@ -446,6 +631,11 @@ def _ledger_response(ledger_doc, replayed=True):
     )
 
     docstatus = cint(invoice_doc.get("docstatus"))
+    authoritative_cashier = str(
+        invoice_doc.get(AUTHORITATIVE_CASHIER_FIELD)
+        or ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD)
+        or ""
+    ).strip()
     return {
         "name": invoice_doc.name,
         "status": docstatus,
@@ -455,6 +645,7 @@ def _ledger_response(ledger_doc, replayed=True):
         "idempotent": bool(replayed),
         "ledger_state": ledger_doc.get("state"),
         "client_request_id": ledger_doc.get("client_request_id"),
+        AUTHORITATIVE_CASHIER_FIELD: authoritative_cashier,
     }
 
 
@@ -1444,6 +1635,7 @@ def _guard_return_cash_refund(invoice_doc):
 def update_invoice(data):
     currency_cache = {}
     data = json.loads(data)
+    _reject_embedded_cashier_pin(data)
     _strip_client_cashier_identity(data)
     client_request_id = extract_invoice_client_request_id(data)
     if not doctype_supports_client_request_id(data.get("doctype") or "Sales Invoice"):
@@ -1467,7 +1659,7 @@ def update_invoice(data):
 
     # Ensure the document type is set for new invoices to prevent validation errors
     data["doctype"] = doctype
-    authoritative_cashier = get_active_terminal_cashier(pos_profile)
+    authoritative_cashier = _resolve_authoritative_cashier(pos_profile)
 
     return_validity_enabled, default_validity_days = _get_return_validity_settings(pos_profile)
 
@@ -1680,7 +1872,7 @@ def update_invoice(data):
 
 
 @frappe.whitelist()
-def submit_invoice(invoice, data, submit_in_background=False):
+def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
     data = json.loads(data)
     invoice = json.loads(invoice)
     invoice.pop(TRUSTED_SHIFT_AUDIT_KEY, None)
@@ -1690,7 +1882,7 @@ def submit_invoice(invoice, data, submit_in_background=False):
     )
     if isinstance(trusted_shift_audit, dict):
         data[TRUSTED_SHIFT_AUDIT_KEY] = dict(trusted_shift_audit)
-    _strip_client_cashier_identity(invoice, data)
+    _reject_embedded_cashier_pin(invoice, data)
     client_request_id = normalize_invoice_request_identity(invoice, data)
     _sanitize_delivery_dates(invoice)
     _apply_manual_posting_controls(invoice)
@@ -1699,6 +1891,7 @@ def submit_invoice(invoice, data, submit_in_background=False):
     profile_doc = _resolve_authorized_invoice_profile(invoice, data)
     pos_profile = profile_doc.get("name")
     company = profile_doc.get("company")
+    _strip_client_cashier_identity(invoice, data)
     forced_doctype = invoice.pop("_force_invoice_doctype", None) or data.pop("_force_invoice_doctype", None)
     doctype = "Sales Invoice"
     if forced_doctype in {"Sales Invoice", "POS Invoice"}:
@@ -1788,6 +1981,9 @@ def submit_invoice(invoice, data, submit_in_background=False):
                 "idempotent": True,
                 "ledger_state": ledger_doc.get("state") if ledger_doc else STATE_POST_SUBMIT_DONE,
                 "client_request_id": client_request_id,
+                AUTHORITATIVE_CASHIER_FIELD: str(
+                    existing_by_request.get(AUTHORITATIVE_CASHIER_FIELD) or ""
+                ).strip(),
             }
         assert_invoice_request_scope(
             existing_by_request,
@@ -1834,7 +2030,12 @@ def submit_invoice(invoice, data, submit_in_background=False):
             )
             invoice["name"] = ledger_invoice.name
 
-    authoritative_cashier = _resolve_authoritative_cashier(pos_profile, ledger_doc)
+    authoritative_cashier = _resolve_authoritative_cashier(
+        pos_profile,
+        ledger_doc,
+        cashier_pin=cashier_pin,
+        require_pin=not bool(ledger_doc and ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD)),
+    )
     data["_posa_authoritative_cashier"] = authoritative_cashier
     allow_background_submit = frappe.get_value(
         "POS Profile",
@@ -1851,6 +2052,8 @@ def submit_invoice(invoice, data, submit_in_background=False):
             doctype,
             return_created=True,
         )
+    if _set_submission_ledger_cashier(ledger_doc, authoritative_cashier):
+        _save_submission_ledger(ledger_doc)
     owned_ledger_name = getattr(
         getattr(frappe, "flags", None),
         "posa_owned_submission_ledger",
@@ -1885,6 +2088,7 @@ def submit_invoice(invoice, data, submit_in_background=False):
             invoice_name=invoice_name,
             request_data=_json_dumps(data),
             invoice_payload=_json_dumps(invoice),
+            **{AUTHORITATIVE_CASHIER_FIELD: authoritative_cashier},
         )
         _enqueue_payload_background_submission(
             invoice,
@@ -1921,7 +2125,19 @@ def submit_invoice(invoice, data, submit_in_background=False):
     if not invoice_name or not frappe.db.exists(doctype, invoice_name):
         if client_request_id:
             invoice["posa_client_request_id"] = client_request_id
-        created = update_invoice(json.dumps(invoice))
+        previous_sale_cashier = getattr(
+            getattr(frappe, "flags", None),
+            "posa_current_sale_authoritative_cashier",
+            None,
+        )
+        frappe.flags.posa_current_sale_authoritative_cashier = authoritative_cashier
+        try:
+            created = update_invoice(json.dumps(invoice))
+        finally:
+            if previous_sale_cashier is not None:
+                frappe.flags.posa_current_sale_authoritative_cashier = previous_sale_cashier
+            elif hasattr(frappe.flags, "posa_current_sale_authoritative_cashier"):
+                delattr(frappe.flags, "posa_current_sale_authoritative_cashier")
         invoice_name = created.get("name")
         invoice_doc = _get_scoped_invoice_doc(
             doctype,
@@ -1953,6 +2169,7 @@ def submit_invoice(invoice, data, submit_in_background=False):
             invoice_name=invoice_doc.name,
             request_data=_json_dumps(data),
             invoice_payload=_json_dumps(invoice),
+            **{AUTHORITATIVE_CASHIER_FIELD: authoritative_cashier},
         )
 
     _deduplicate_free_items(invoice_doc)
@@ -2037,6 +2254,7 @@ def submit_invoice(invoice, data, submit_in_background=False):
 
     _validate_stock_on_invoice(invoice_doc)
     validate_invoice_item_sale_controls(invoice_doc)
+    _validate_invoice_payment_modes(invoice_doc, profile_doc)
 
     _validate_credit_sale_allowed(invoice_doc, data)
     _apply_write_off_settings(invoice_doc, data)
@@ -2353,6 +2571,7 @@ def submit_payload_in_background_job(kwargs):
             json.dumps(invoice, default=str),
             json.dumps(data, default=str),
             submit_in_background=0,
+            cashier_pin=None,
         )
     except Exception as e:
         frappe.db.rollback()
@@ -2419,7 +2638,6 @@ def repair_invoice_submission(
     )
     pos_profile = profile_doc.get("name")
     company = profile_doc.get("company")
-    get_active_terminal_cashier(pos_profile)
     _resolve_current_invoice_opening_shift(profile_doc, pos_opening_shift)
 
     ledger_doc = _get_submission_ledger(

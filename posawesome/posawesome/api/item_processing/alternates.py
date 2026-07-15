@@ -13,11 +13,11 @@ from frappe.utils.caching import redis_cache
 from posawesome.posawesome.api.item_fetchers import _fetch_batches
 from posawesome.posawesome.api.item_sale_controls import _resolve_buying_price_list
 from posawesome.posawesome.api.pos_access import (
+    get_authenticated_pos_user,
     get_authorized_pos_item,
     get_authorized_pos_profile,
     user_can_manage_pos,
 )
-from posawesome.posawesome.api.terminal_state import get_active_terminal_cashier
 from posawesome.posawesome.api.utils import expand_item_groups, get_item_groups
 
 
@@ -580,7 +580,7 @@ def get_alternate_items(
 ):
     profile_doc = get_authorized_pos_profile(pos_profile, company=company)
     requested_item = get_authorized_pos_item(item_code, profile_doc)
-    active_cashier = get_active_terminal_cashier(profile_doc.get("name"))
+    active_user = get_authenticated_pos_user()
 
     profile_name = cstr(profile_doc.get("name")).strip()
     company_name = cstr(profile_doc.get("company")).strip()
@@ -606,7 +606,7 @@ def get_alternate_items(
             "currency": currency,
             "requested_qty": requested_qty,
         },
-        "profit_display_allowed": bool(user_can_manage_pos(active_cashier)),
+        "profit_display_allowed": bool(user_can_manage_pos(active_user)),
         "items": [],
         "reason": None,
         "candidate_metadata_ttl_seconds": ALTERNATE_CANDIDATE_CACHE_TTL_SECONDS,

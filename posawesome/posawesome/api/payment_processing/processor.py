@@ -15,8 +15,10 @@ from posawesome.posawesome.api.idempotency import (
     find_payment_entries_by_client_request_id,
     normalize_client_request_id,
 )
-from posawesome.posawesome.api.pos_access import get_authorized_pos_profile
-from posawesome.posawesome.api.terminal_state import get_active_terminal_cashier
+from posawesome.posawesome.api.pos_access import (
+    get_authenticated_pos_user,
+    get_authorized_pos_profile,
+)
 
 
 def _permission_denied(message):
@@ -69,7 +71,7 @@ def _authorize_payment_request(data):
     if not profile_name or not company:
         _permission_denied(_("The authorized POS Profile must have a company."))
 
-    cashier = get_active_terminal_cashier(profile_name)
+    user = get_authenticated_pos_user()
     _validate_pos_opening_shift(
         data.get("pos_opening_shift_name"),
         profile_name,
@@ -79,7 +81,7 @@ def _authorize_payment_request(data):
     data.pos_profile_name = profile_name
     data.company = company
     data.pos_profile = profile_doc
-    return profile_doc, cashier
+    return profile_doc, user
 
 
 def _amounts_match(left, right):

@@ -71,7 +71,7 @@ class TestAlternateItems(unittest.TestCase):
         with (
             patch.object(alternates, "get_authorized_pos_profile", return_value=self.profile),
             patch.object(alternates, "get_authorized_pos_item", return_value=self.requested_item),
-            patch.object(alternates, "get_active_terminal_cashier", return_value="cashier@test"),
+            patch.object(alternates, "get_authenticated_pos_user", return_value="cashier@test"),
             patch.object(alternates, "user_can_manage_pos", return_value=manager),
             patch.object(alternates, "_resolve_warehouse", return_value=("Main Warehouse", ("Main Warehouse",))),
             patch.object(alternates, "_resolve_price_list", return_value=("Standard Selling", "PKR")),
@@ -108,19 +108,19 @@ class TestAlternateItems(unittest.TestCase):
         item_lookup.assert_not_called()
         candidate_lookup.assert_not_called()
 
-    def test_requires_server_verified_active_cashier_before_candidate_queries(self):
+    def test_requires_authenticated_pos_user_before_candidate_queries(self):
         candidate_lookup = Mock(side_effect=AssertionError("locked terminal must not query"))
         with (
             patch.object(alternates, "get_authorized_pos_profile", return_value=self.profile),
             patch.object(alternates, "get_authorized_pos_item", return_value=self.requested_item),
             patch.object(
                 alternates,
-                "get_active_terminal_cashier",
-                side_effect=frappe.PermissionError("terminal is locked"),
+                "get_authenticated_pos_user",
+                side_effect=frappe.PermissionError("sign in required"),
             ),
             patch.object(alternates, "_get_candidate_item_rows", candidate_lookup),
         ):
-            with self.assertRaisesRegex(frappe.PermissionError, "terminal is locked"):
+            with self.assertRaisesRegex(frappe.PermissionError, "sign in required"):
                 alternates.get_alternate_items("REQ-1", pos_profile="Main POS")
         candidate_lookup.assert_not_called()
 
@@ -131,7 +131,7 @@ class TestAlternateItems(unittest.TestCase):
         with (
             patch.object(alternates, "get_authorized_pos_profile", return_value=self.profile),
             patch.object(alternates, "get_authorized_pos_item", return_value=self.requested_item),
-            patch.object(alternates, "get_active_terminal_cashier", return_value="cashier@test"),
+            patch.object(alternates, "get_authenticated_pos_user", return_value="cashier@test"),
             patch.object(alternates, "user_can_manage_pos", return_value=False),
             patch.object(alternates, "_resolve_warehouse", return_value=("Main Warehouse", ("Main Warehouse",))),
             patch.object(alternates, "_resolve_price_list", return_value=("Standard Selling", "PKR")),
@@ -223,7 +223,7 @@ class TestAlternateItems(unittest.TestCase):
         with (
             patch.object(alternates, "get_authorized_pos_profile", return_value=self.profile),
             patch.object(alternates, "get_authorized_pos_item", return_value=self.requested_item),
-            patch.object(alternates, "get_active_terminal_cashier", return_value="cashier@test"),
+            patch.object(alternates, "get_authenticated_pos_user", return_value="manager@test"),
             patch.object(alternates, "user_can_manage_pos", return_value=True),
             patch.object(alternates, "_resolve_warehouse", return_value=("Main Warehouse", ("Main Warehouse",))),
             patch.object(alternates, "_resolve_price_list", return_value=("Standard Selling", "PKR")),
@@ -285,7 +285,7 @@ class TestAlternateItems(unittest.TestCase):
         with (
             patch.object(alternates, "get_authorized_pos_profile", return_value=self.profile),
             patch.object(alternates, "get_authorized_pos_item", return_value=self.requested_item),
-            patch.object(alternates, "get_active_terminal_cashier", return_value="cashier@test"),
+            patch.object(alternates, "get_authenticated_pos_user", return_value="manager@test"),
             patch.object(alternates, "user_can_manage_pos", return_value=True),
             patch.object(alternates, "_resolve_warehouse", return_value=("Main Warehouse", ("Main Warehouse",))),
             patch.object(alternates, "_resolve_price_list", return_value=("Standard Selling", "PKR")),

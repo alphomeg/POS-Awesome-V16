@@ -133,7 +133,6 @@ def _install_stubs():
     frappe_utils_module = types.ModuleType("frappe.utils")
     employees_module = types.ModuleType("posawesome.posawesome.api.employees")
     pos_access_module = types.ModuleType("posawesome.posawesome.api.pos_access")
-    terminal_state_module = types.ModuleType("posawesome.posawesome.api.terminal_state")
     erpnext_setup_utils_module = types.ModuleType("erpnext.setup.utils")
     erpnext_setup_utils_module.get_exchange_rate = lambda *_args, **_kwargs: 1
     utilities_module = types.ModuleType("posawesome.posawesome.api.utilities")
@@ -164,7 +163,7 @@ def _install_stubs():
             ),
         },
         "invoices": {"ACC-SINV-0001": FakeInvoice()},
-        "active_cashier": "supervisor@example.com",
+        "session_user": "supervisor@example.com",
         "pos_profiles": {
             "Main POS": types.SimpleNamespace(
                 name="Main POS",
@@ -265,11 +264,10 @@ def _install_stubs():
     pos_access_module.get_authorized_pos_profile = (
         lambda pos_profile=None: state["pos_profiles"][str(pos_profile or "").strip()]
     )
-    pos_access_module.user_can_manage_pos = (
-        lambda user: bool(getattr(state["user_docs"].get(user), "posa_is_pos_supervisor", 0))
-    )
-    terminal_state_module.get_active_terminal_cashier = (
-        lambda pos_profile=None: state["active_cashier"]
+    pos_access_module.require_pos_supervisor_or_manager = lambda: (
+        state["session_user"]
+        if bool(getattr(state["user_docs"].get(state["session_user"]), "posa_is_pos_supervisor", 0))
+        else (_ for _ in ()).throw(Exception("A POS supervisor or manager is required"))
     )
     utilities_module.ensure_child_doctype = lambda *args, **kwargs: None
 
@@ -277,7 +275,6 @@ def _install_stubs():
     sys.modules["frappe.utils"] = frappe_utils_module
     sys.modules["posawesome.posawesome.api.employees"] = employees_module
     sys.modules["posawesome.posawesome.api.pos_access"] = pos_access_module
-    sys.modules["posawesome.posawesome.api.terminal_state"] = terminal_state_module
     sys.modules["erpnext.setup.utils"] = erpnext_setup_utils_module
     sys.modules["posawesome.posawesome.api.utilities"] = utilities_module
     return state
@@ -317,7 +314,7 @@ class TestGiftCardApi(unittest.TestCase):
         self.state["new_docs"].clear()
         self.state["journal_entries"].clear()
         self.state["mode_of_payments"].clear()
-        self.state["active_cashier"] = "supervisor@example.com"
+        self.state["session_user"] = "supervisor@example.com"
         profile_doc = self.state["pos_profiles"]["Main POS"]
         profile_doc.posa_use_gift_cards = 1
         profile_doc.posa_default_source_account = "1110 - Cash - TC"
@@ -327,11 +324,11 @@ class TestGiftCardApi(unittest.TestCase):
             invoice_doc.payments = []
 
     def test_issue_gift_card_requires_supervisor(self):
-        self.state["active_cashier"] = "cashier@example.com"
+        self.state["session_user"] = "cashier@example.com"
         with self.assertRaises(Exception) as ctx:
             self.module.issue_gift_card(
                 pos_profile="Main POS",
-                cashier="cashier@example.com",
+                cashier="supervisor@example.com",
                 company="Test Company",
                 initial_amount=500,
                 gift_card_code="GC-NEW-01",
@@ -339,7 +336,7 @@ class TestGiftCardApi(unittest.TestCase):
 
         self.assertIn("POS supervisor", str(ctx.exception))
 
-    def test_client_cashier_is_ignored_in_favor_of_server_terminal_state(self):
+    def test_client_cashier_is_ignored_in_favor_of_authenticated_supervisor(self):
         result = self.module.issue_gift_card(
             pos_profile="Main POS",
             cashier="cashier@example.com",

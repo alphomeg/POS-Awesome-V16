@@ -350,6 +350,34 @@ def _preview_amended_doc(original_doc, correction_data=None):
     return preview_doc
 
 
+def _append_cashier_display_names(rows):
+    cashier_ids = sorted(
+        {
+            str(row.get("posa_cashier") or "").strip()
+            for row in rows or []
+            if str(row.get("posa_cashier") or "").strip()
+        }
+    )
+    cashier_names = {}
+    if cashier_ids:
+        users = frappe.get_all(
+            "User",
+            filters={"name": ["in", cashier_ids]},
+            fields=["name", "full_name"],
+            limit_page_length=0,
+            ignore_permissions=True,
+        )
+        cashier_names = {
+            str(user.get("name") or "").strip(): str(user.get("full_name") or "").strip()
+            for user in users or []
+            if str(user.get("name") or "").strip()
+        }
+
+    for row in rows or []:
+        cashier_id = str(row.get("posa_cashier") or "").strip()
+        row["posa_cashier_name"] = cashier_names.get(cashier_id) or cashier_id
+
+
 @frappe.whitelist()
 def list_submitted_invoices(
     doctype="Sales Invoice",
@@ -384,6 +412,8 @@ def list_submitted_invoices(
         "pos_profile",
         "company",
     ]
+    if _has_column(doctype, "posa_cashier"):
+        metadata_fields.append("posa_cashier")
     if _has_column(doctype, "pos_closing_entry"):
         metadata_fields.append("pos_closing_entry")
     if doctype == "POS Invoice":
@@ -397,6 +427,8 @@ def list_submitted_invoices(
         order_by=order_by,
         limit_page_length=cint(limit_page_length or 0),
     )
+    if "posa_cashier" in requested_fields:
+        _append_cashier_display_names(rows)
     for row in rows or []:
         row["doctype"] = doctype
         doc = frappe._dict(row)
@@ -429,6 +461,7 @@ def submit_submitted_invoice_edit(
     client_request_id=None,
     pos_profile=None,
     company=None,
+    cashier_pin=None,
 ):
     from posawesome.posawesome.api.pos_access import get_authorized_pos_profile
 
@@ -493,6 +526,7 @@ def submit_submitted_invoice_edit(
                 json.dumps(payload, default=str),
                 json.dumps(submission_data, default=str),
                 submit_in_background=False,
+                cashier_pin=cashier_pin,
             )
         amended_doc = frappe.get_doc(response.get("doctype") or doctype, response.get("name"))
         set_invoice_client_request_id(amended_doc, client_request_id)

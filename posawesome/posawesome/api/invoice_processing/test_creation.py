@@ -4,7 +4,7 @@ import pathlib
 import sys
 import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _ORIGINAL_MODULES = dict(sys.modules)
@@ -331,6 +331,9 @@ class TestUpdateInvoiceReturnPayments(unittest.TestCase):
         self.enqueue_calls.clear()
         self.frappe._publish_realtime_calls.clear()
         self.creation._validate_invoice_opening_shift = lambda *args, **kwargs: None
+        self.creation._resolve_cashier_by_pin = (
+            lambda *_args, **_kwargs: "cashier@example.com"
+        )
 
     def test_return_invoice_derives_missing_base_amount_from_amount(self):
         invoice_doc = FakeDoc(
@@ -1176,32 +1179,50 @@ class TestManualPostingDatePreservation(unittest.TestCase):
         self.enqueue_calls.clear()
         self.frappe._publish_realtime_calls.clear()
         self.creation._validate_invoice_opening_shift = lambda *args, **kwargs: None
-        self.creation.get_active_terminal_cashier = (
+        self.creation._resolve_cashier_by_pin = (
             lambda *_args, **_kwargs: "cashier@example.com"
         )
 
-    def test_update_invoice_requires_unlocked_server_terminal_before_draft_creation(self):
-        self.creation.get_active_terminal_cashier = Mock(
-            side_effect=PermissionError("terminal is locked")
-        )
-        self.creation.frappe.get_doc = Mock(
-            side_effect=AssertionError("locked terminal must not create a draft")
+    def test_draft_cashier_resolution_does_not_require_terminal_or_pin(self):
+        self.creation.validate_assigned_terminal_cashier = Mock(
+            side_effect=AssertionError("draft save must not resolve a cashier")
         )
 
-        with self.assertRaisesRegex(PermissionError, "terminal is locked"):
-            self.creation.update_invoice(
-                json.dumps(
-                    {
-                        "doctype": "Sales Invoice",
-                        "pos_profile": "Main POS",
-                        "company": "Test Company",
-                        "posa_cashier": "Administrator",
-                    }
-                )
-            )
+        self.assertEqual(
+            self.creation._resolve_authoritative_cashier("Main POS"),
+            "",
+        )
+        self.creation.validate_assigned_terminal_cashier.assert_not_called()
 
-        self.creation.get_active_terminal_cashier.assert_called_once_with("Main POS")
-        self.creation.frappe.get_doc.assert_not_called()
+    def test_embedded_cashier_pin_is_rejected_and_removed(self):
+        payload = {"posa_cashier_pin": "1234", "customer": "CUST-0001"}
+
+        with self.assertRaisesRegex(Exception, "transient submit argument"):
+            self.creation._reject_embedded_cashier_pin(payload)
+
+        self.assertNotIn("posa_cashier_pin", payload)
+
+    def test_nested_cashier_pin_is_rejected_and_removed(self):
+        payload = {
+            "customer": "CUST-0001",
+            "payments": [{"mode_of_payment": "Cash", "cashierPin": "1234"}],
+        }
+
+        with self.assertRaisesRegex(Exception, "transient submit argument"):
+            self.creation._reject_embedded_cashier_pin(payload)
+
+        self.assertNotIn("cashierPin", payload["payments"][0])
+
+    def test_json_dumps_strips_nested_cashier_pin_aliases(self):
+        serialized = self.creation._json_dumps(
+            {
+                "customer": "CUST-0001",
+                "payments": [{"mode_of_payment": "Cash", "cashier_pin": "1234"}],
+            }
+        )
+
+        self.assertNotIn("1234", serialized)
+        self.assertNotIn("cashier_pin", serialized)
 
     def test_authoritative_cashier_replaces_forged_client_identity(self):
         payload = {
@@ -1222,9 +1243,6 @@ class TestManualPostingDatePreservation(unittest.TestCase):
         self.assertEqual(invoice_doc.posa_cashier, "cashier@example.com")
 
     def test_background_worker_uses_owned_ledger_cashier_after_terminal_relocks(self):
-        self.creation.get_active_terminal_cashier = Mock(
-            side_effect=PermissionError("terminal is locked")
-        )
         self.creation.validate_assigned_terminal_cashier = Mock(
             return_value="cashier@example.com"
         )
@@ -1251,7 +1269,127 @@ class TestManualPostingDatePreservation(unittest.TestCase):
             "Main POS",
             "cashier@example.com",
         )
-        self.creation.get_active_terminal_cashier.assert_not_called()
+
+    def test_payment_modes_fail_closed_when_profile_has_no_configured_methods(self):
+        invoice_doc = FakeDoc(
+            doctype="Sales Invoice",
+            pos_profile="Main POS",
+            payments=[FakeDoc(mode_of_payment="Cash", amount=10)],
+        )
+        profile_doc = AttrDict(name="Main POS", payments=[])
+        self.creation.frappe.get_all = lambda *args, **kwargs: []
+
+        with self.assertRaisesRegex(Exception, "not configured"):
+            self.creation._validate_invoice_payment_modes(invoice_doc, profile_doc)
+
+    def test_submission_ledger_cashier_freezes_when_field_exists(self):
+        self.creation.frappe.get_meta = lambda doctype: types.SimpleNamespace(
+            has_field=lambda fieldname: fieldname == "posa_cashier"
+        )
+        ledger_doc = FakeDoc(doctype="POS Invoice Submission Ledger")
+
+        self.assertTrue(
+            self.creation._set_submission_ledger_cashier(
+                ledger_doc,
+                "cashier@example.com",
+            )
+        )
+
+        self.assertEqual(ledger_doc.posa_cashier, "cashier@example.com")
+        self.assertFalse(
+            self.creation._set_submission_ledger_cashier(
+                ledger_doc,
+                "cashier@example.com",
+            )
+        )
+
+        with self.assertRaisesRegex(Exception, "already signed by another cashier"):
+            self.creation._set_submission_ledger_cashier(
+                ledger_doc,
+                "other@example.com",
+            )
+
+        self.assertEqual(ledger_doc.posa_cashier, "cashier@example.com")
+
+    def test_submission_ledger_is_created_with_cashier_and_without_pin(self):
+        captured = {}
+
+        def fake_get_doc(payload):
+            captured.update(payload)
+            return FakeDoc(**payload)
+
+        with (
+            patch.object(
+                self.creation,
+                "_resolve_ledger_scope",
+                return_value={
+                    "company": "Test Company",
+                    "pos_profile": "Main POS",
+                    "document_type": "Sales Invoice",
+                },
+            ),
+            patch.object(
+                self.creation,
+                "_get_submission_ledger_by_key",
+                return_value=None,
+            ),
+            patch.object(
+                self.creation,
+                "_ledger_supports_authoritative_cashier",
+                return_value=True,
+            ),
+            patch.object(
+                self.creation,
+                "_save_submission_ledger",
+                side_effect=lambda doc: doc,
+            ),
+            patch.object(self.creation.frappe, "get_doc", side_effect=fake_get_doc),
+        ):
+            ledger_doc, created = self.creation._get_or_create_submission_ledger(
+                "request-001",
+                {"customer": "CUST-0001", "cashier_pin": "must-not-persist"},
+                {"_posa_authoritative_cashier": "cashier@example.com"},
+                "Sales Invoice",
+                return_created=True,
+            )
+
+        self.assertTrue(created)
+        self.assertEqual(ledger_doc.posa_cashier, "cashier@example.com")
+        self.assertEqual(captured["posa_cashier"], "cashier@example.com")
+        self.assertNotIn("cashier_pin", captured["invoice_payload"])
+        self.assertNotIn("must-not-persist", captured["invoice_payload"])
+
+    def test_ledger_replay_response_includes_frozen_cashier(self):
+        ledger_doc = FakeDoc(
+            document_type="Sales Invoice",
+            invoice_name="ACC-SINV-0001",
+            pos_profile="Main POS",
+            company="Test Company",
+            state="POST_SUBMIT_DONE",
+            client_request_id="request-001",
+            posa_cashier="cashier@example.com",
+        )
+        invoice_doc = FakeDoc(
+            doctype="Sales Invoice",
+            name="ACC-SINV-0001",
+            docstatus=1,
+        )
+
+        with patch.object(
+            self.creation,
+            "_get_scoped_invoice_doc",
+            return_value=invoice_doc,
+        ):
+            response = self.creation._ledger_response(ledger_doc)
+
+        self.assertEqual(response["posa_cashier"], "cashier@example.com")
+
+    def test_new_final_submission_requires_cashier_pin(self):
+        with self.assertRaisesRegex(Exception, "Cashier PIN is required"):
+            self.creation._resolve_authoritative_cashier(
+                "Main POS",
+                require_pin=True,
+            )
 
     def _install_loyalty_program_module(self, conversion_factor):
         module_name = "erpnext.accounts.doctype.loyalty_program.loyalty_program"
@@ -1497,6 +1635,7 @@ class TestManualPostingDatePreservation(unittest.TestCase):
             ),
             json.dumps({}),
             submit_in_background=0,
+            cashier_pin="1234",
         )
 
         self.assertEqual(invoice_doc.posting_date, "2026-03-19")
@@ -1601,6 +1740,7 @@ class TestManualPostingDatePreservation(unittest.TestCase):
                 ),
                 json.dumps({}),
                 submit_in_background=0,
+                cashier_pin="1234",
             )
         finally:
             FakeDoc.calculate_taxes_and_totals = original_calculate_taxes_and_totals
@@ -1609,6 +1749,14 @@ class TestManualPostingDatePreservation(unittest.TestCase):
         self.assertEqual(result["status"], 1)
 
     def test_submit_invoice_normalizes_existing_return_draft_payments_before_save(self):
+        original_configured_methods = self.creation._configured_profile_payment_methods
+        self.creation._configured_profile_payment_methods = lambda _profile: {"Cash"}
+        self.addCleanup(
+            setattr,
+            self.creation,
+            "_configured_profile_payment_methods",
+            original_configured_methods,
+        )
         invoice_doc = self._build_invoice_doc(
             name="ACC-SINV-RETURN-0001",
             is_return=1,
@@ -1675,6 +1823,7 @@ class TestManualPostingDatePreservation(unittest.TestCase):
             ),
             json.dumps({}),
             submit_in_background=0,
+            cashier_pin="1234",
         )
 
         self.assertEqual(result["status"], 1)
@@ -1698,7 +1847,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.frappe._publish_realtime_calls.clear()
         self.creation.frappe.db.has_column = lambda doctype, fieldname: True
         self.creation._process_post_submit_payments = type(self).original_process_post_submit_payments
-        self.creation.get_active_terminal_cashier = (
+        self.creation._resolve_cashier_by_pin = (
             lambda *_args, **_kwargs: "cashier@example.com"
         )
         self.creation._validate_invoice_opening_shift = lambda *args, **kwargs: None
@@ -1806,16 +1955,12 @@ class TestInvoiceIdempotency(unittest.TestCase):
         original_get_ledger = self.creation._get_submission_ledger
         original_find_invoice = self.creation.find_invoice_by_client_request_id
         original_scope = self.creation.assert_invoice_request_scope
-        original_cashier = self.creation.get_active_terminal_cashier
         self.creation._get_submission_ledger = lambda *_args, **_kwargs: None
         self.creation.find_invoice_by_client_request_id = (
             lambda *_args, **_kwargs: invoice_doc
         )
         self.creation.assert_invoice_request_scope = Mock(
             side_effect=PermissionError("write permission required")
-        )
-        self.creation.get_active_terminal_cashier = Mock(
-            side_effect=AssertionError("draft must be rejected before terminal or queue work")
         )
         self.addCleanup(
             setattr, self.creation, "_get_submission_ledger", original_get_ledger
@@ -1828,9 +1973,6 @@ class TestInvoiceIdempotency(unittest.TestCase):
         )
         self.addCleanup(
             setattr, self.creation, "assert_invoice_request_scope", original_scope
-        )
-        self.addCleanup(
-            setattr, self.creation, "get_active_terminal_cashier", original_cashier
         )
 
         with self.assertRaisesRegex(PermissionError, "write permission required"):
@@ -2114,9 +2256,9 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.creation.update_invoice = lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("duplicate replay should not build a new invoice")
         )
-        self.creation.get_active_terminal_cashier = Mock(
+        self.creation._resolve_cashier_by_pin = Mock(
             side_effect=AssertionError(
-                "final idempotent replay must not require an unlocked terminal"
+                "final idempotent replay must not require cashier PIN resolution"
             )
         )
         self.creation._validate_invoice_opening_shift = (
@@ -2142,7 +2284,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.assertEqual(result["name"], "ACC-SINV-IDEMP-0001")
         self.assertEqual(result["status"], 1)
         self.assertTrue(result["replayed"])
-        self.creation.get_active_terminal_cashier.assert_not_called()
+        self.creation._resolve_cashier_by_pin.assert_not_called()
 
     def test_submit_retry_does_not_turn_failed_post_submit_ledger_into_success(self):
         ledger_doc = FakeDoc(
@@ -2241,19 +2383,10 @@ class TestInvoiceIdempotency(unittest.TestCase):
 
         profile_lookup.assert_not_called()
 
-    def test_repair_requires_unlocked_terminal_and_current_opening_shift(self):
-        original_cashier = self.creation.get_active_terminal_cashier
+    def test_repair_requires_current_opening_shift_after_manager_authorization(self):
         original_resolve_shift = self.creation._resolve_current_invoice_opening_shift
-        cashier = Mock(return_value="cashier@example.com")
         shift = Mock(side_effect=PermissionError("open shift required"))
-        self.creation.get_active_terminal_cashier = cashier
         self.creation._resolve_current_invoice_opening_shift = shift
-        self.addCleanup(
-            setattr,
-            self.creation,
-            "get_active_terminal_cashier",
-            original_cashier,
-        )
         self.addCleanup(
             setattr,
             self.creation,
@@ -2268,7 +2401,6 @@ class TestInvoiceIdempotency(unittest.TestCase):
                 "Main POS",
             )
 
-        cashier.assert_called_once_with("Main POS")
         shift.assert_called_once()
 
     def test_repair_api_rethrows_durable_post_submit_failure(self):
@@ -2407,6 +2539,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
             ),
             json.dumps({"idempotency_key": "inv-fixed-002"}),
             submit_in_background=0,
+            cashier_pin="1234",
         )
 
         self.assertEqual(result["status"], 1)
@@ -2467,6 +2600,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
             ),
             json.dumps({"idempotency_key": "inv-fixed-003"}),
             submit_in_background=0,
+            cashier_pin="1234",
         )
 
         self.assertEqual(result["status"], 1)
@@ -2575,6 +2709,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
             json.dumps(payload),
             json.dumps(data),
             submit_in_background=0,
+            cashier_pin="1234",
         )
         second = self.creation.submit_invoice(
             json.dumps(payload),
@@ -2601,6 +2736,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
             pos_profile="Main POS",
             document_type="Sales Invoice",
             state="RECEIVED",
+            posa_cashier="cashier@example.com",
         )
 
         def fake_get_value(doctype, filters=None, fieldname=None, **kwargs):
@@ -2733,6 +2869,7 @@ class TestInvoiceIdempotency(unittest.TestCase):
             ),
             json.dumps({"idempotency_key": "ledger-fast-001"}),
             submit_in_background=1,
+            cashier_pin="1234",
         )
 
         self.assertEqual(result["name"], "ACC-SINV-DRAFT-0001")

@@ -93,6 +93,17 @@ def _install_frappe_stub():
     invoice_processing_creation.repair_invoice_submission = lambda *args, **kwargs: None
     invoice_processing_creation.validate_cart_items = lambda *args, **kwargs: None
     invoice_processing_creation._reapply_incoming_payment_amounts = lambda *args, **kwargs: None
+
+    class TrustedInvoiceShiftReassignment:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    invoice_processing_creation.trusted_invoice_shift_reassignment = (
+        lambda *args, **kwargs: TrustedInvoiceShiftReassignment()
+    )
     sys.modules["posawesome.posawesome.api.invoice_processing.creation"] = invoice_processing_creation
 
     invoice_processing_returns = types.ModuleType("posawesome.posawesome.api.invoice_processing.returns")
@@ -120,6 +131,9 @@ def _install_frappe_stub():
 
 
 def _load_invoices_module():
+    # Other pure-unit modules install their own Frappe stubs. Reload the history
+    # facade so it binds to this test module's stub when suites share a process.
+    sys.modules.pop("posawesome.posawesome.api.submitted_invoice_edits", None)
     module_name = "posawesome.posawesome.api.invoices"
     file_path = REPO_ROOT / "posawesome" / "posawesome" / "api" / "invoices.py"
     spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -221,6 +235,179 @@ class TestInvoicesApi(unittest.TestCase):
         self.assertEqual(captured["kwargs"]["filters"]["docstatus"], 1)
         self.assertTrue(rows[0]["can_edit_submitted_invoice"])
         self.assertIsNone(rows[0]["edit_block_reason"])
+
+    def test_list_submitted_invoices_includes_authoritative_cashier_when_available(self):
+        captured = {}
+
+        def fake_get_list(doctype, **kwargs):
+            captured["doctype"] = doctype
+            captured["kwargs"] = kwargs
+            return [
+                {
+                    "name": "POS-INV-0001",
+                    "doctype": "POS Invoice",
+                    "docstatus": 1,
+                    "is_return": 0,
+                    "return_against": None,
+                    "creation": "2026-07-10 00:00:00",
+                    "amended_from": None,
+                    "pos_profile": "POS-1",
+                    "company": "Company 1",
+                    "status": "Paid",
+                    "posa_cashier": "cashier@example.com",
+                }
+            ]
+
+        self.invoices.frappe.get_list = fake_get_list
+        self.invoices.frappe.get_all = lambda *args, **kwargs: []
+        self.invoices.frappe.db.exists = lambda *args, **kwargs: False
+        self.invoices.frappe.db.has_column = lambda doctype, fieldname: fieldname in {
+            "posa_cashier",
+            "pos_closing_entry",
+        }
+        self.invoices.frappe.db.get_value = lambda *args, **kwargs: None
+
+        rows = self.invoices.list_submitted_invoices(
+            doctype="POS Invoice",
+            filters={"pos_profile": "POS-1"},
+            fields=["name", "status"],
+        )
+
+        self.assertEqual(captured["doctype"], "POS Invoice")
+        self.assertIn("posa_cashier", captured["kwargs"]["fields"])
+        self.assertEqual(rows[0]["posa_cashier"], "cashier@example.com")
+        self.assertEqual(rows[0]["posa_cashier_name"], "cashier@example.com")
+
+    def test_list_submitted_invoices_resolves_cashier_names_in_one_user_query(self):
+        user_calls = []
+
+        self.invoices.frappe.get_list = lambda *args, **kwargs: [
+            {
+                "name": "POS-INV-0001",
+                "doctype": "POS Invoice",
+                "docstatus": 1,
+                "is_return": 0,
+                "return_against": None,
+                "creation": "2026-07-10 00:00:00",
+                "amended_from": None,
+                "pos_profile": "POS-1",
+                "company": "Company 1",
+                "status": "Paid",
+                "posa_cashier": "cashier@example.com",
+            },
+            {
+                "name": "POS-INV-0002",
+                "doctype": "POS Invoice",
+                "docstatus": 1,
+                "is_return": 0,
+                "return_against": None,
+                "creation": "2026-07-10 00:00:00",
+                "amended_from": None,
+                "pos_profile": "POS-1",
+                "company": "Company 1",
+                "status": "Paid",
+                "posa_cashier": "backup@example.com",
+            },
+            {
+                "name": "POS-INV-0003",
+                "doctype": "POS Invoice",
+                "docstatus": 1,
+                "is_return": 0,
+                "return_against": None,
+                "creation": "2026-07-10 00:00:00",
+                "amended_from": None,
+                "pos_profile": "POS-1",
+                "company": "Company 1",
+                "status": "Paid",
+                "posa_cashier": "cashier@example.com",
+            },
+        ]
+
+        def fake_get_all(doctype, **kwargs):
+            if doctype != "User":
+                return []
+            user_calls.append(kwargs)
+            return [
+                {"name": "cashier@example.com", "full_name": "Main Cashier"},
+                {"name": "backup@example.com", "full_name": "Backup Cashier"},
+            ]
+
+        self.invoices.frappe.get_all = fake_get_all
+        self.invoices.frappe.db.exists = lambda *args, **kwargs: False
+        self.invoices.frappe.db.has_column = lambda doctype, fieldname: fieldname == "posa_cashier"
+        self.invoices.frappe.db.get_value = lambda *args, **kwargs: None
+
+        rows = self.invoices.list_submitted_invoices(
+            doctype="POS Invoice",
+            filters={"pos_profile": "POS-1"},
+            fields=["name", "status"],
+        )
+
+        self.assertEqual(len(user_calls), 1)
+        self.assertEqual(user_calls[0]["filters"]["name"][0], "in")
+        self.assertEqual(
+            set(user_calls[0]["filters"]["name"][1]),
+            {"cashier@example.com", "backup@example.com"},
+        )
+        self.assertEqual(rows[0]["posa_cashier_name"], "Main Cashier")
+        self.assertEqual(rows[1]["posa_cashier_name"], "Backup Cashier")
+        self.assertEqual(rows[2]["posa_cashier_name"], "Main Cashier")
+
+    def test_list_submitted_invoices_falls_back_for_legacy_and_unknown_cashiers(self):
+        user_calls = []
+
+        self.invoices.frappe.get_list = lambda *args, **kwargs: [
+            {
+                "name": "POS-INV-0001",
+                "doctype": "POS Invoice",
+                "docstatus": 1,
+                "is_return": 0,
+                "return_against": None,
+                "creation": "2026-07-10 00:00:00",
+                "amended_from": None,
+                "pos_profile": "POS-1",
+                "company": "Company 1",
+                "status": "Paid",
+                "posa_cashier": "",
+            },
+            {
+                "name": "POS-INV-0002",
+                "doctype": "POS Invoice",
+                "docstatus": 1,
+                "is_return": 0,
+                "return_against": None,
+                "creation": "2026-07-10 00:00:00",
+                "amended_from": None,
+                "pos_profile": "POS-1",
+                "company": "Company 1",
+                "status": "Paid",
+                "posa_cashier": "unknown@example.com",
+            },
+        ]
+
+        def fake_get_all(doctype, **kwargs):
+            if doctype != "User":
+                return []
+            user_calls.append(kwargs)
+            return []
+
+        self.invoices.frappe.get_all = fake_get_all
+        self.invoices.frappe.db.exists = lambda *args, **kwargs: False
+        self.invoices.frappe.db.has_column = lambda doctype, fieldname: fieldname == "posa_cashier"
+        self.invoices.frappe.db.get_value = lambda *args, **kwargs: None
+
+        rows = self.invoices.list_submitted_invoices(
+            doctype="POS Invoice",
+            filters={"pos_profile": "POS-1"},
+            fields=["name", "status"],
+        )
+
+        self.assertEqual(len(user_calls), 1)
+        self.assertEqual(user_calls[0]["filters"]["name"][1], ["unknown@example.com"])
+        self.assertEqual(rows[0]["posa_cashier"], "")
+        self.assertEqual(rows[0]["posa_cashier_name"], "")
+        self.assertEqual(rows[1]["posa_cashier"], "unknown@example.com")
+        self.assertEqual(rows[1]["posa_cashier_name"], "unknown@example.com")
 
     def test_list_submitted_invoices_blocks_return_invoice_editing(self):
         self.invoices.frappe.get_list = lambda *args, **kwargs: [

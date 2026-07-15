@@ -30,15 +30,14 @@ class TestDashboardAccess(unittest.TestCase):
             ) as authorize_profile,
             patch.object(
                 dashboard,
-                "get_active_terminal_cashier",
+                "require_pos_supervisor_or_manager",
                 return_value="supervisor@example.com",
-            ) as get_cashier,
-            patch.object(dashboard, "user_can_manage_pos", return_value=True),
+            ) as require_supervisor,
         ):
             result, cashier = dashboard._get_authorized_dashboard_profile(forged_profile)
 
         authorize_profile.assert_called_once_with(forged_profile)
-        get_cashier.assert_called_once_with("Main POS")
+        require_supervisor.assert_called_once_with()
         self.assertEqual(cashier, "supervisor@example.com")
         self.assertEqual(result["company"], "RetailMind")
         self.assertEqual(result["posa_allow_company_dashboard_scope"], 0)
@@ -53,13 +52,7 @@ class TestDashboardAccess(unittest.TestCase):
             ),
             patch.object(
                 dashboard,
-                "get_active_terminal_cashier",
-                return_value="cashier@example.com",
-            ),
-            patch.object(dashboard, "user_can_manage_pos", return_value=False),
-            patch.object(
-                dashboard.frappe,
-                "throw",
+                "require_pos_supervisor_or_manager",
                 side_effect=PermissionError("A POS supervisor or manager is required"),
             ),
         ):
@@ -77,14 +70,13 @@ class TestDashboardAccess(unittest.TestCase):
             ),
             patch.object(
                 dashboard,
-                "get_active_terminal_cashier",
+                "require_pos_supervisor_or_manager",
                 return_value="supervisor@example.com",
-            ),
-            patch.object(dashboard, "user_can_manage_pos", return_value=True) as can_manage,
+            ) as require_supervisor,
         ):
             result, cashier = dashboard._get_authorized_dashboard_profile("Main POS")
 
-        can_manage.assert_called_once_with("supervisor@example.com")
+        require_supervisor.assert_called_once_with()
         self.assertEqual(cashier, "supervisor@example.com")
         self.assertEqual(result["name"], "Main POS")
 

@@ -15,7 +15,6 @@ from posawesome.posawesome.api.pos_access import (
 )
 from posawesome.posawesome.api.terminal_state import (
     activate_verified_cashier,
-    get_active_terminal_cashier,
     get_authorized_terminal_state,
     lock_authorized_terminal,
 )
@@ -25,6 +24,8 @@ CASHIER_PIN_LOCK_INTERVAL_SECONDS = 5 * 60
 CASHIER_PIN_ATTEMPT_LOCK_TIMEOUT_SECONDS = 10
 CASHIER_PIN_ATTEMPT_LOCK_WAIT_SECONDS = 2
 CASHIER_PIN_ATTEMPT_KEY_VERSION = "v1"
+PIN_ONLY_CASHIER_ATTEMPT_TARGET = "__pin_only_cashier_resolution__"
+AMBIGUOUS_CASHIER_PIN = "__ambiguous_cashier_pin__"
 
 
 def _resolve_profile_name(pos_profile=None) -> str:
@@ -187,11 +188,85 @@ def _verify_cashier_pin_with_attempt_guard(
     return verified
 
 
+def _resolve_cashier_by_pin_with_attempt_guard(
+    profile_name: str,
+    supplied_pin: str,
+    attempt_key: str,
+):
+    attempt_lock = None
+    lock_acquired = False
+    resolved_user_doc = None
+
+    try:
+        attempt_lock = _create_cashier_pin_attempt_lock(attempt_key)
+        lock_acquired = bool(attempt_lock.acquire())
+    except Exception:
+        _log_cashier_pin_guard_error("lock acquisition", PIN_ONLY_CASHIER_ATTEMPT_TARGET)
+        return None
+
+    if not lock_acquired:
+        return None
+
+    try:
+        tracker = _create_cashier_pin_attempt_tracker(attempt_key)
+        if not tracker.is_user_allowed():
+            return None
+
+        matches = []
+        for user in _get_terminal_users(profile_name):
+            user_doc = frappe.get_doc("User", user)
+            if not int(getattr(user_doc, "enabled", 1) or 0):
+                continue
+            stored_pin = _get_user_pin(user_doc)
+            if stored_pin and hmac.compare_digest(stored_pin, supplied_pin):
+                matches.append(user_doc)
+
+        if len(matches) > 1:
+            tracker.add_failure_attempt()
+            return AMBIGUOUS_CASHIER_PIN
+
+        if not matches:
+            tracker.add_failure_attempt()
+            return None
+
+        tracker.add_success_attempt()
+        resolved_user_doc = matches[0]
+    except Exception:
+        _log_cashier_pin_guard_error("attempt update", PIN_ONLY_CASHIER_ATTEMPT_TARGET)
+        resolved_user_doc = None
+    finally:
+        try:
+            attempt_lock.release()
+        except Exception:
+            _log_cashier_pin_guard_error("lock release", PIN_ONLY_CASHIER_ATTEMPT_TARGET)
+            resolved_user_doc = None
+
+    return resolved_user_doc
+
+
 def _is_pos_supervisor(user_doc) -> bool:
     user = getattr(user_doc, "name", None)
     if user and POS_SUPERVISOR_ROLE in _get_roles_for_user(user):
         return True
     return bool(getattr(user_doc, "posa_is_pos_supervisor", 0))
+
+
+def _find_profile_pin_duplicate(profile_name: str, target_user: str, pin: str) -> bool:
+    pin = str(pin or "").strip()
+    if not pin:
+        return False
+
+    for user in _get_terminal_users(profile_name):
+        user = str(user or "").strip()
+        if not user or user == target_user:
+            continue
+        user_doc = frappe.get_doc("User", user)
+        if not int(getattr(user_doc, "enabled", 1) or 0):
+            continue
+        stored_pin = _get_user_pin(user_doc)
+        if stored_pin and hmac.compare_digest(stored_pin, pin):
+            return True
+    return False
 
 
 def _get_roles_for_user(user: str) -> set[str]:
@@ -260,15 +335,10 @@ def _require_pin_management_access(profile_name: str, target_user: str) -> str:
     if target_user == session_user or user_can_manage_pos(session_user):
         return session_user
 
-    try:
-        active_cashier = get_active_terminal_cashier(profile_name)
-    except frappe.PermissionError:
-        active_cashier = ""
-    if target_user != active_cashier:
-        frappe.throw(
-            _("You may only manage your own cashier PIN unless you are a POS supervisor or manager."),
-            frappe.PermissionError,
-        )
+    frappe.throw(
+        _("You may only manage your own cashier PIN unless you are a POS supervisor or manager."),
+        frappe.PermissionError,
+    )
     return session_user
 
 
@@ -343,6 +413,38 @@ def verify_terminal_employee_pin(pos_profile=None, user=None, pin=None):
     return result
 
 
+def resolve_cashier_by_pin(pos_profile=None, pin=None):
+    profile_doc = get_authorized_pos_profile(pos_profile)
+    profile_name = str(profile_doc.get("name") or "").strip()
+
+    pin = str(pin or "").strip()
+    if not pin:
+        frappe.throw(_("Cashier PIN is required."))
+
+    attempt_key = _cashier_pin_attempt_key(
+        get_authenticated_pos_user(),
+        profile_name,
+        PIN_ONLY_CASHIER_ATTEMPT_TARGET,
+        _get_cashier_pin_request_ip(),
+    )
+    user_doc = _resolve_cashier_by_pin_with_attempt_guard(
+        profile_name,
+        pin,
+        attempt_key,
+    )
+    if user_doc == AMBIGUOUS_CASHIER_PIN:
+        frappe.throw(_("Cashier PIN is assigned to more than one cashier in this POS Profile."))
+    if not user_doc:
+        frappe.throw(_("Invalid cashier PIN."))
+
+    return {
+        "user": user_doc.name,
+        "full_name": user_doc.full_name or user_doc.name,
+        "enabled": user_doc.enabled,
+        "is_supervisor": _is_pos_supervisor(user_doc),
+    }
+
+
 @frappe.whitelist()
 def get_terminal_state(pos_profile=None):
     return get_authorized_terminal_state(pos_profile)
@@ -388,6 +490,8 @@ def save_cashier_pin(pos_profile=None, user=None, new_pin=None, current_pin=None
     user_doc = _get_user_doc(user)
     existing_pin = _get_user_pin(user_doc)
     next_pin = _validate_new_pin(new_pin)
+    if _find_profile_pin_duplicate(profile_name, user, next_pin):
+        frappe.throw(_("PIN is already assigned to another cashier in this POS Profile."))
 
     supplied_current_pin = str(current_pin or "").strip()
     if existing_pin and not hmac.compare_digest(existing_pin, supplied_current_pin):

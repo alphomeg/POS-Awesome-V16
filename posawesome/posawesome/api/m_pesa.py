@@ -12,7 +12,6 @@ import hmac
 from urllib.parse import quote
 
 from posawesome.posawesome.api.pos_access import get_authorized_pos_profile
-from posawesome.posawesome.api.terminal_state import get_active_terminal_cashier
 
 
 MPESA_ADMIN_ROLES = frozenset({"System Manager", "Accounts Manager"})
@@ -322,7 +321,6 @@ def validation(**kwargs):
 @frappe.whitelist()
 def get_mpesa_mode_of_payment(company, pos_profile=None):
     profile_doc = get_authorized_pos_profile(pos_profile, company=company)
-    get_active_terminal_cashier(profile_doc.get("name"))
     company = str(profile_doc.get("company") or "").strip()
     allowed_methods = _profile_payment_methods(profile_doc)
     _assert_mpesa_callback_ready(profile_doc)
@@ -351,7 +349,6 @@ def get_mpesa_draft_payments(
     pos_profile=None,
 ):
     profile_doc = get_authorized_pos_profile(pos_profile, company=company)
-    get_active_terminal_cashier(profile_doc.get("name"))
     company = str(profile_doc.get("company") or "").strip()
     allowed_methods = _profile_payment_methods(profile_doc)
     if not allowed_methods:
@@ -408,7 +405,6 @@ def get_mpesa_draft_payments(
 @frappe.whitelist()
 def submit_mpesa_payment(mpesa_payment, customer, pos_profile=None):
     profile_doc = get_authorized_pos_profile(pos_profile)
-    get_active_terminal_cashier(profile_doc.get("name"))
     doc = get_authorized_mpesa_payment(
         mpesa_payment,
         customer,

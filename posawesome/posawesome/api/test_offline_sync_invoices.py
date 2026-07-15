@@ -48,13 +48,18 @@ def _install_stubs():
     idempotency_spec.loader.exec_module(idempotency_module)
 
     creation_module = types.ModuleType("posawesome.posawesome.api.invoice_processing.creation")
-    creation_module.submit_invoice = lambda invoice, data, submit_in_background=0: {
-        "name": "ACC-SINV-OUTBOX-0001",
-        "doctype": "Sales Invoice",
-        "docstatus": 1,
-        "status": 1,
-        "client_request_id": json.loads(invoice).get("posa_client_request_id"),
-    }
+    def submit_invoice(invoice, data, submit_in_background=0, cashier_pin=None):
+        if cashier_pin is not None:
+            frappe_module.throw("offline outbox must not provide cashier_pin")
+        return {
+            "name": "ACC-SINV-OUTBOX-0001",
+            "doctype": "Sales Invoice",
+            "docstatus": 1,
+            "status": 1,
+            "client_request_id": json.loads(invoice).get("posa_client_request_id"),
+        }
+
+    creation_module.submit_invoice = submit_invoice
     creation_module.repair_invoice_submission = lambda **kwargs: {
         "name": "ACC-SINV-OUTBOX-0001",
         "doctype": kwargs.get("document_type"),
@@ -114,9 +119,10 @@ class TestOfflineSyncInvoices(unittest.TestCase):
         captured = {}
         original_submit_invoice = self.module.submit_invoice
 
-        def capture_submit(invoice, data, submit_in_background=0):
+        def capture_submit(invoice, data, submit_in_background=0, cashier_pin=None):
             captured["invoice"] = json.loads(invoice)
             captured["data"] = json.loads(data)
+            captured["cashier_pin"] = cashier_pin
             return {
                 "name": "ACC-SINV-OUTBOX-0002",
                 "doctype": "Sales Invoice",
@@ -141,6 +147,7 @@ class TestOfflineSyncInvoices(unittest.TestCase):
             captured["invoice"]["posa_client_request_id"],
             "outbox-authoritative-002",
         )
+        self.assertIsNone(captured["cashier_pin"])
         self.assertEqual(
             captured["data"]["idempotency_key"],
             "outbox-authoritative-002",

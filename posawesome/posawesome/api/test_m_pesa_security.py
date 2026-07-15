@@ -90,10 +90,6 @@ def _load_module():
     )
     sys.modules["posawesome.posawesome.api.pos_access"] = pos_access
 
-    terminal_state = types.ModuleType("posawesome.posawesome.api.terminal_state")
-    terminal_state.get_active_terminal_cashier = lambda profile: "cashier@example.com"
-    sys.modules["posawesome.posawesome.api.terminal_state"] = terminal_state
-
     module_name = "posawesome.posawesome.api.m_pesa"
     spec = importlib.util.spec_from_file_location(
         module_name,
@@ -448,25 +444,16 @@ class TestMpesaAuthorization(unittest.TestCase):
             ],
         )
         authorize = Mock(return_value=profile)
-        terminal = Mock(return_value="cashier@example.com")
         query = Mock(return_value=[])
         original_authorize = self.mpesa.get_authorized_pos_profile
-        original_terminal = self.mpesa.get_active_terminal_cashier
         original_get_list = self.mpesa.frappe.get_list
         self.mpesa.get_authorized_pos_profile = authorize
-        self.mpesa.get_active_terminal_cashier = terminal
         self.mpesa.frappe.get_list = query
         self.addCleanup(
             setattr,
             self.mpesa,
             "get_authorized_pos_profile",
             original_authorize,
-        )
-        self.addCleanup(
-            setattr,
-            self.mpesa,
-            "get_active_terminal_cashier",
-            original_terminal,
         )
         self.addCleanup(setattr, self.mpesa.frappe, "get_list", original_get_list)
 
@@ -477,7 +464,6 @@ class TestMpesaAuthorization(unittest.TestCase):
         )
 
         authorize.assert_called_once_with(None, company="Test Company")
-        terminal.assert_called_once_with("Main POS")
         filters = query.call_args.kwargs["filters"]
         self.assertEqual(filters["company"], "Test Company")
         self.assertEqual(filters["docstatus"], 0)
@@ -491,12 +477,8 @@ class TestMpesaAuthorization(unittest.TestCase):
             payments=[AttrDict(mode_of_payment="M-Pesa")],
         )
         original_authorize = self.mpesa.get_authorized_pos_profile
-        original_terminal = self.mpesa.get_active_terminal_cashier
         original_get_list = self.mpesa.frappe.get_list
         self.mpesa.get_authorized_pos_profile = Mock(return_value=profile)
-        self.mpesa.get_active_terminal_cashier = Mock(
-            return_value="cashier@example.com"
-        )
         self.mpesa.frappe.get_list = Mock(
             return_value=[
                 AttrDict(mode_of_payment="M-Pesa"),
@@ -508,12 +490,6 @@ class TestMpesaAuthorization(unittest.TestCase):
             self.mpesa,
             "get_authorized_pos_profile",
             original_authorize,
-        )
-        self.addCleanup(
-            setattr,
-            self.mpesa,
-            "get_active_terminal_cashier",
-            original_terminal,
         )
         self.addCleanup(setattr, self.mpesa.frappe, "get_list", original_get_list)
 
@@ -604,8 +580,6 @@ class TestMpesaAuthorization(unittest.TestCase):
             return payment_entry
 
         self.mpesa.frappe.get_doc = get_doc
-        terminal = Mock(return_value="cashier@example.com")
-        self.mpesa.get_active_terminal_cashier = terminal
 
         result = self.mpesa.submit_mpesa_payment(
             register.name,
@@ -613,7 +587,6 @@ class TestMpesaAuthorization(unittest.TestCase):
             pos_profile="Main POS",
         )
 
-        terminal.assert_called_once_with("Main POS")
         self.assertEqual(register.permission_checks, ["read", "write", "submit"])
         self.assertEqual(register.customer, "CUST-0001")
         self.assertEqual(register.submit_payment, 1)

@@ -84,6 +84,7 @@ def _install_framework_stubs():
     sys.modules["frappe.utils"] = frappe_utils
 
     pos_access_module = types.ModuleType("posawesome.posawesome.api.pos_access")
+    pos_access_module.get_authenticated_pos_user = lambda: "cashier@example.com"
     pos_access_module.get_authorized_pos_profile = lambda pos_profile=None, company=None: AttrDict(
         {
             "name": pos_profile or "Main POS",
@@ -96,12 +97,6 @@ def _install_framework_stubs():
         }
     )
     sys.modules["posawesome.posawesome.api.pos_access"] = pos_access_module
-
-    terminal_state_module = types.ModuleType("posawesome.posawesome.api.terminal_state")
-    terminal_state_module.get_active_terminal_cashier = (
-        lambda *_args, **_kwargs: "cashier@example.com"
-    )
-    sys.modules["posawesome.posawesome.api.terminal_state"] = terminal_state_module
 
     erpnext_module = types.ModuleType("erpnext")
     erpnext_module.get_default_cost_center = lambda company: "Main - TC"
@@ -364,8 +359,8 @@ class TestPosPaymentProcessing(unittest.TestCase):
 
         authorize_profile.assert_not_called()
 
-    def test_authorization_rejects_unassigned_profile_before_terminal_access(self):
-        terminal_cashier = Mock()
+    def test_authorization_rejects_unassigned_profile_before_user_resolution(self):
+        user_lookup = Mock()
         with (
             patch.object(
                 self.processor,
@@ -374,14 +369,14 @@ class TestPosPaymentProcessing(unittest.TestCase):
             ),
             patch.object(
                 self.processor,
-                "get_active_terminal_cashier",
-                terminal_cashier,
+                "get_authenticated_pos_user",
+                user_lookup,
             ),
         ):
             with self.assertRaisesRegex(PermissionError, "unassigned profile"):
                 self.real_authorize_payment_request(self._payment_request_data())
 
-        terminal_cashier.assert_not_called()
+        user_lookup.assert_not_called()
 
     def test_authorization_propagates_forged_company_rejection(self):
         authorize_profile = Mock(side_effect=PermissionError("forged company"))
@@ -397,7 +392,7 @@ class TestPosPaymentProcessing(unittest.TestCase):
 
         authorize_profile.assert_called_once_with("Main POS", company="Other Company")
 
-    def test_authorization_rejects_locked_terminal_before_opening_lookup(self):
+    def test_authorization_rejects_unauthenticated_user_before_opening_lookup(self):
         canonical_profile = AttrDict(name="Main POS", company="Test Company")
         opening_lookup = Mock()
         with (
@@ -408,12 +403,12 @@ class TestPosPaymentProcessing(unittest.TestCase):
             ),
             patch.object(
                 self.processor,
-                "get_active_terminal_cashier",
-                side_effect=PermissionError("terminal locked"),
+                "get_authenticated_pos_user",
+                side_effect=PermissionError("sign in required"),
             ),
             patch.object(self.processor.frappe, "get_doc", opening_lookup),
         ):
-            with self.assertRaisesRegex(PermissionError, "terminal locked"):
+            with self.assertRaisesRegex(PermissionError, "sign in required"):
                 self.real_authorize_payment_request(self._payment_request_data())
 
         opening_lookup.assert_not_called()
@@ -428,7 +423,7 @@ class TestPosPaymentProcessing(unittest.TestCase):
             ),
             patch.object(
                 self.processor,
-                "get_active_terminal_cashier",
+                "get_authenticated_pos_user",
                 return_value="cashier@example.com",
             ),
             patch.object(
@@ -464,7 +459,7 @@ class TestPosPaymentProcessing(unittest.TestCase):
             ) as authorize_profile,
             patch.object(
                 self.processor,
-                "get_active_terminal_cashier",
+                "get_authenticated_pos_user",
                 return_value="cashier@example.com",
             ),
             patch.object(

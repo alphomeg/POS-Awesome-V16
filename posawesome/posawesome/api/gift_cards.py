@@ -7,9 +7,8 @@ from posawesome.posawesome.api.utilities import ensure_child_doctype
 
 from posawesome.posawesome.api.pos_access import (
     get_authorized_pos_profile,
-    user_can_manage_pos,
+    require_pos_supervisor_or_manager,
 )
-from posawesome.posawesome.api.terminal_state import get_active_terminal_cashier
 
 
 def _to_float(value) -> float:
@@ -48,11 +47,8 @@ def _doc_value(doc, key, default=None):
 def _require_supervisor(pos_profile=None, cashier=None):
     profile_doc = get_authorized_pos_profile(pos_profile)
     profile_name = str(_doc_value(profile_doc, "name") or "").strip()
-    authoritative_cashier = get_active_terminal_cashier(profile_name)
-    if not user_can_manage_pos(authoritative_cashier):
-        frappe.throw(frappe._("A POS supervisor is required for this action."))
-
-    return profile_name, authoritative_cashier, frappe.get_doc("User", authoritative_cashier)
+    supervisor = require_pos_supervisor_or_manager()
+    return profile_name, supervisor, frappe.get_doc("User", supervisor)
 
 
 def _get_profile_doc(pos_profile=None):

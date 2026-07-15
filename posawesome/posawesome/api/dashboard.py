@@ -11,10 +11,9 @@ from frappe.utils import add_months, cint, cstr, flt, getdate, now_datetime, now
 
 from .pos_access import (
     get_authorized_pos_profile,
-    user_can_manage_pos,
+    require_pos_supervisor_or_manager,
     user_is_pos_privileged_manager,
 )
-from .terminal_state import get_active_terminal_cashier
 from .utils import get_default_warehouse
 
 INVOICE_SOURCES: tuple[tuple[str, str], ...] = (
@@ -37,13 +36,8 @@ def _pick_first_column(doctype: str, candidates: list[str]) -> str | None:
 
 def _get_authorized_dashboard_profile(pos_profile: Any) -> tuple[dict[str, Any], str]:
     profile_doc = get_authorized_pos_profile(pos_profile)
-    cashier = get_active_terminal_cashier(profile_doc.get("name"))
-    if not user_can_manage_pos(cashier):
-        frappe.throw(
-            _("A POS supervisor or manager is required for dashboard access."),
-            frappe.PermissionError,
-        )
-    return profile_doc.as_dict(), cashier
+    user = require_pos_supervisor_or_manager()
+    return profile_doc.as_dict(), user
 
 
 def _build_in_filter(column_sql: str, values: list[str]) -> tuple[str, list[str]]:
