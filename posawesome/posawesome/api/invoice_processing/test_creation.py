@@ -1282,6 +1282,50 @@ class TestManualPostingDatePreservation(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "not configured"):
             self.creation._validate_invoice_payment_modes(invoice_doc, profile_doc)
 
+    def test_payment_mode_accepts_exact_profile_method(self):
+        invoice_doc = FakeDoc(
+            doctype="POS Invoice",
+            pos_profile="Main POS",
+            payments=[FakeDoc(mode_of_payment="Credit Card", amount=10)],
+        )
+        profile_doc = AttrDict(
+            name="Main POS",
+            payments=[AttrDict(mode_of_payment="Cash"), AttrDict(mode_of_payment="Credit Card")],
+        )
+
+        self.creation._validate_invoice_payment_modes(invoice_doc, profile_doc)
+
+    def test_payment_mode_rejects_unconfigured_alias(self):
+        invoice_doc = FakeDoc(
+            doctype="POS Invoice",
+            pos_profile="Main POS",
+            payments=[FakeDoc(mode_of_payment="Card", amount=10)],
+        )
+        profile_doc = AttrDict(
+            name="Main POS",
+            payments=[AttrDict(mode_of_payment="Cash"), AttrDict(mode_of_payment="Credit Card")],
+        )
+
+        with self.assertRaisesRegex(Exception, "Payment mode Card is not configured"):
+            self.creation._validate_invoice_payment_modes(invoice_doc, profile_doc)
+
+    def test_server_generated_gift_card_payment_is_allowed(self):
+        invoice_doc = FakeDoc(
+            doctype="POS Invoice",
+            pos_profile="Main POS",
+            payments=[
+                FakeDoc(
+                    mode_of_payment="Gift Card",
+                    amount=10,
+                    gift_card_code="GC-0001",
+                )
+            ],
+        )
+        profile_doc = AttrDict(name="Main POS", payments=[])
+        self.creation.frappe.get_all = lambda *args, **kwargs: []
+
+        self.creation._validate_invoice_payment_modes(invoice_doc, profile_doc)
+
     def test_submission_ledger_cashier_freezes_when_field_exists(self):
         self.creation.frappe.get_meta = lambda doctype: types.SimpleNamespace(
             has_field=lambda fieldname: fieldname == "posa_cashier"
