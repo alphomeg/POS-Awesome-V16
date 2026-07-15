@@ -11,6 +11,7 @@ import {
 	focusCartItemField,
 	getAdjacentCartGridColumnKey,
 	getNavigableCartColumnKeys,
+	resolveCounterGridEntryReturnTarget,
 	resolveCounterGridKeyboardCommand,
 	shouldDelegateCartGridKeyToEditor,
 } from "../src/posapp/utils/cartFieldFocus";
@@ -189,6 +190,51 @@ describe("focusCartItemField", () => {
 		expect(CART_GRID_DIRECT_EDIT_COLUMNS).not.toContain(
 			"data-table-expand",
 		);
+	});
+
+	it("returns from the blank entry row to the last editable cart field", () => {
+		const available = [
+			"item_name",
+			"qty",
+			"discount_percentage",
+			"discount_amount",
+			"amount",
+			"actions",
+			"data-table-expand",
+		] as const;
+		const editable = [
+			"qty",
+			"discount_percentage",
+			"discount_amount",
+		] as const;
+
+		expect(
+			resolveCounterGridEntryReturnTarget(
+				"shift-tab",
+				[...available],
+				[...editable],
+			),
+		).toEqual({ key: "discount_amount", activate: true });
+		expect(
+			resolveCounterGridEntryReturnTarget(
+				"arrow-up",
+				[...available],
+				[...editable],
+			),
+		).toEqual({ key: "item_name", activate: false });
+	});
+
+	it("falls back to the last available cell when a row has no editable fields", () => {
+		expect(
+			resolveCounterGridEntryReturnTarget(
+				"shift-tab",
+				["item_name", "amount", "data-table-expand"],
+				[],
+			),
+		).toEqual({ key: "data-table-expand", activate: false });
+		expect(
+			resolveCounterGridEntryReturnTarget("shift-tab", [], []),
+		).toBeNull();
 	});
 
 	it("leaves UOM menu keys to the active select editor", () => {

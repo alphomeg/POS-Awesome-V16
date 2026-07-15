@@ -521,12 +521,6 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 
 <style scoped>
 .pharmacy-search-results {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
 	position: relative;
 	display: flex;
 	flex: 1 1 auto;

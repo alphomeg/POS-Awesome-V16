@@ -417,9 +417,11 @@ export default {
 .pos-navbar-enhanced--counter-grid {
 	background: #09253d !important;
 	background-image: none !important;
+	backdrop-filter: none !important;
 	border-bottom: 2px solid #38bdf8 !important;
 	box-shadow: 0 3px 0 rgba(5, 20, 34, 0.38) !important;
 	color: #ffffff !important;
+	transition: none !important;
 }
 
 .pos-navbar-enhanced--counter-grid .pos-navbar-title-light,

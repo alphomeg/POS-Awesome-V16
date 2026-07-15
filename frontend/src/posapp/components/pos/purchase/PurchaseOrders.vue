@@ -82,7 +82,8 @@
 								{{ formatCurrency(totalAmount) }}
 							</strong>
 							<span class="purchase-action-bar__meta">
-								{{ purchaseItems.length }} {{ __("items") }} &middot; {{ formatNumber(totalQty) }} {{ __("qty") }}
+								{{ purchaseItems.length }} {{ __("items") }} &middot;
+								{{ formatNumber(totalQty) }} {{ __("qty") }}
 							</span>
 						</div>
 						<v-row dense class="purchase-action-bar__buttons">
@@ -196,10 +197,7 @@ import SupplierDialog from "../dialogs/purchase/SupplierDialog.vue";
 import PurchaseHeader from "./PurchaseHeader.vue";
 import PurchaseItemsTable from "./PurchaseItemsTable.vue";
 import { computed, ref, watch, onMounted, onBeforeUnmount, inject } from "vue";
-import {
-	extractPurchaseServerError,
-	purchaseCurrencySymbol,
-} from "./purchaseFormatting";
+import { extractPurchaseServerError, purchaseCurrencySymbol } from "./purchaseFormatting";
 
 export default {
 	mixins: [format],
@@ -267,7 +265,9 @@ export default {
 		);
 		const receiptComplete = computed(() => !!purchaseOrderProgress.value?.receipt_complete);
 		const invoiceComplete = computed(() => !!purchaseOrderProgress.value?.invoice_complete);
-		const loadedSubmittedOrder = computed(() => Number(purchaseOrderProgress.value?.docstatus || 0) === 1);
+		const loadedSubmittedOrder = computed(
+			() => Number(purchaseOrderProgress.value?.docstatus || 0) === 1,
+		);
 		const saveAndClearDisabled = computed(
 			() =>
 				submitLoading.value ||
@@ -412,7 +412,8 @@ export default {
 					qty: item.qty,
 					rate: item.rate,
 					received_qty: submit && receiveNow.value ? item.received_qty : undefined,
-					invoice_qty: submit && createInvoice.value ? item.pending_bill_qty || item.qty : undefined,
+					invoice_qty:
+						submit && createInvoice.value ? item.pending_bill_qty || item.qty : undefined,
 					bill_qty: submit && createInvoice.value ? item.pending_bill_qty || item.qty : undefined,
 					warehouse: warehouse.value || item.warehouse,
 				})),
@@ -703,6 +704,7 @@ export default {
 	gap: 16px;
 	padding: 16px;
 	border-top: 1px solid var(--pos-border);
+	background: var(--pos-surface-raised);
 	background: color-mix(in srgb, var(--pos-surface-raised) 94%, rgb(var(--v-theme-primary)) 6%);
 }
 

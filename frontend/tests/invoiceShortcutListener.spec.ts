@@ -17,8 +17,14 @@ describe("invoiceShortcutListener", () => {
 		};
 		const listeners = createInvoiceShortcutListeners(vi.fn());
 
-		registerInvoiceShortcutListener(target as unknown as Document, listeners);
-		unregisterInvoiceShortcutListener(target as unknown as Document, listeners);
+		registerInvoiceShortcutListener(
+			target as unknown as Document,
+			listeners,
+		);
+		unregisterInvoiceShortcutListener(
+			target as unknown as Document,
+			listeners,
+		);
 
 		expect(target.addEventListener).toHaveBeenCalledWith(
 			"keydown",
@@ -81,5 +87,23 @@ describe("invoiceShortcutListener", () => {
 
 		expect(handler).toHaveBeenCalledTimes(1);
 		expect(handler).toHaveBeenCalledWith(keydownEvent);
+	});
+
+	it("ignores IME composition on both keyboard phases", () => {
+		const handler = vi.fn();
+		const listeners = createInvoiceShortcutListeners(handler);
+		const keydownEvent = new KeyboardEvent("keydown", {
+			key: "Process",
+			isComposing: true,
+		});
+		const keyupEvent = new KeyboardEvent("keyup", {
+			key: "Process",
+			isComposing: true,
+		});
+
+		listeners.onKeydown(keydownEvent);
+		listeners.onKeyup(keyupEvent);
+
+		expect(handler).not.toHaveBeenCalled();
 	});
 });

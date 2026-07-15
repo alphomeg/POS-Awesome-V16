@@ -25,10 +25,18 @@
 			max-width="1480"
 			scrim="rgba(15, 23, 42, 0.55)"
 			class="payment-dialog"
+			:content-class="
+				counterGridActive ? 'counter-grid-overlay-content counter-grid-payment-content' : undefined
+			"
 			@update:model-value="handlePaymentDialogUpdate"
+			@after-enter="handlePaymentDialogAfterEnter"
 			@after-leave="handlePaymentDialogAfterLeave"
 		>
-			<Payments dialog-mode />
+			<Payments
+				ref="paymentPanel"
+				dialog-mode
+				:class="{ 'payment-shell--counter-grid': counterGridActive }"
+			/>
 		</v-dialog>
 		<v-dialog
 			v-if="counterGridActive"
@@ -36,7 +44,9 @@
 			:retain-focus="true"
 			width="calc(100vw - 32px)"
 			max-width="1500"
+			scrim="rgba(9, 37, 61, 0.56)"
 			class="counter-item-search-dialog"
+			content-class="counter-grid-overlay-content counter-grid-search-content"
 			@after-enter="handleCounterItemSearchAfterEnter"
 			@after-leave="handleCounterItemSearchAfterLeave"
 		>
@@ -82,6 +92,8 @@
 			:model-value="counterAuxiliaryOpen"
 			width="calc(100vw - 32px)"
 			max-width="1380"
+			scrim="rgba(9, 37, 61, 0.56)"
+			content-class="counter-grid-overlay-content counter-grid-auxiliary-content"
 			@update:model-value="handleCounterAuxiliaryUpdate"
 			@after-leave="handleCounterAuxiliaryAfterLeave"
 		>
@@ -318,6 +330,7 @@ export default {
 		const eventBus = inject("eventBus");
 		const dialog = ref(false);
 		const invoicePanel = ref(null);
+		const paymentPanel = ref(null);
 		const additionalDiscountField = ref(null);
 		const mobileDock = ref(null);
 		const responsive = useResponsive();
@@ -505,6 +518,10 @@ export default {
 				return;
 			}
 			uiStore.closePaymentDialog();
+		};
+
+		const handlePaymentDialogAfterEnter = () => {
+			nextTick(() => paymentPanel.value?.stabilizePaymentKeyboardFocus?.());
 		};
 
 		const handlePaymentDialogAfterLeave = () => {
@@ -863,6 +880,7 @@ export default {
 			handleAdditionalDiscountPercentageBlur,
 			commitAdditionalDiscountPercentage,
 			handlePaymentDialogUpdate,
+			handlePaymentDialogAfterEnter,
 			handlePaymentDialogAfterLeave,
 			handleCounterItemAdded,
 			handleCounterAlternatesCancelled,
@@ -874,6 +892,7 @@ export default {
 			discountPercentageOfferName,
 			getCurrencySymbol,
 			invoicePanel,
+			paymentPanel,
 			counterItemsSelector,
 			eventBus,
 			dialog,
@@ -959,6 +978,7 @@ export default {
 
 <style scoped>
 .payment-dialog :deep(.v-overlay__content) {
+	max-height: calc(100vh - 24px);
 	max-height: calc(100dvh - 24px);
 }
 
@@ -969,26 +989,17 @@ export default {
 }
 
 .pos-main-container--counter-grid {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-green: #079b55;
-	--counter-rugged-red: #dc343d;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
-	--counter-rugged-surface: #ffffff;
-	--counter-rugged-muted: #edf3f7;
 	padding: 0;
 	height: calc(100vh - 64px);
 	height: calc(100dvh - 64px);
 	min-height: 0;
 	overflow: hidden;
+	transition: none;
 }
 
 .counter-grid-pos {
 	display: grid;
-	grid-template-rows: minmax(0, 1fr) 32px;
+	grid-template-rows: minmax(0, 1fr) 30px;
 	height: 100%;
 	min-height: 0;
 	background: #e7edf2;
@@ -1000,9 +1011,9 @@ export default {
 	gap: 22px;
 	min-width: 0;
 	padding: 0 14px;
-	border-top: 2px solid var(--counter-rugged-navy-raised);
-	background: var(--counter-rugged-surface);
-	color: #42566a;
+	border-top: 2px solid var(--counter-rugged-cyan);
+	background: var(--counter-rugged-navy);
+	color: #e5eef5;
 	font-size: 0.78rem;
 }
 
@@ -1016,21 +1027,18 @@ export default {
 	white-space: nowrap;
 }
 
+.counter-grid-status :deep(.v-icon) {
+	color: var(--counter-rugged-cyan);
+}
+
 .counter-grid-status__template {
 	margin-inline-start: auto;
 	font-weight: 700;
-	color: var(--counter-rugged-blue);
+	color: #ffffff;
 }
 
 .counter-item-search-surface,
 .counter-auxiliary-surface {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-surface: #ffffff;
-	--counter-rugged-muted: #edf3f7;
 	display: flex;
 	flex-direction: column;
 	width: 100%;
@@ -1114,6 +1122,18 @@ export default {
 	background: var(--counter-rugged-muted) !important;
 }
 
+@media (max-width: 1199px) {
+	.counter-grid-pos {
+		grid-template-rows: minmax(0, 1fr) 28px;
+	}
+
+	.counter-grid-status {
+		gap: 12px;
+		padding-inline: 10px;
+		font-size: 0.72rem;
+	}
+}
+
 .dynamic-main-row {
 	padding: 0;
 	margin: 0;
@@ -1152,6 +1172,7 @@ export default {
 .mobile-pos-dock {
 	padding: 10px;
 	border-radius: 24px;
+	background: var(--pos-card-bg);
 	background: color-mix(in srgb, var(--pos-card-bg) 88%, transparent);
 	backdrop-filter: blur(18px);
 	box-shadow: 0 18px 38px var(--pos-shadow);
@@ -1254,6 +1275,7 @@ export default {
 :deep([data-theme="dark"]) .mobile-pos-dock,
 :deep([data-theme-mode="dark"]) .mobile-sale-dock,
 :deep([data-theme-mode="dark"]) .mobile-pos-dock {
+	background: var(--pos-card-bg);
 	background: color-mix(in srgb, var(--pos-card-bg) 94%, transparent);
 	box-shadow: 0 18px 40px rgba(0, 0, 0, 0.42);
 	border-color: rgba(255, 255, 255, 0.08);

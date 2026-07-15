@@ -37,118 +37,126 @@
 					{{ __("Invoices saved as POS Invoices") }}
 				</v-alert>
 				<div class="invoice-sections">
-					<div class="invoice-top-grid">
-						<v-card flat class="invoice-section-card pos-themed-card">
-							<div class="invoice-section-heading">
-								<h3 class="invoice-section-heading__title">{{ __("Customer Details") }}</h3>
-							</div>
-							<InvoiceCustomerSection
-								ref="customerSection"
-								:pos_profile="pos_profile"
-								:invoiceTypes="invoiceTypes"
-								v-model="invoiceType"
-							/>
-						</v-card>
+					<div class="invoice-context-grid">
+						<div class="invoice-top-grid">
+							<v-card flat class="invoice-section-card pos-themed-card">
+								<div class="invoice-section-heading">
+									<h3 class="invoice-section-heading__title">
+										{{ __("Customer Details") }}
+									</h3>
+								</div>
+								<InvoiceCustomerSection
+									ref="customerSection"
+									:pos_profile="pos_profile"
+									:invoiceTypes="invoiceTypes"
+									v-model="invoiceType"
+								/>
+							</v-card>
 
-						<v-card
-							v-if="pos_profile.posa_use_delivery_charges"
-							flat
-							class="invoice-section-card pos-themed-card"
-						>
-							<div class="invoice-section-heading">
-								<h3 class="invoice-section-heading__title">{{ __("Delivery Charges") }}</h3>
-							</div>
-							<DeliveryCharges
-								ref="deliveryChargesComponent"
-								:pos_profile="pos_profile"
-								:delivery_charges="delivery_charges"
-								:selected_delivery_charge="selected_delivery_charge"
-								:delivery_charges_rate="delivery_charges_rate"
-								:deliveryChargesFilter="deliveryChargesFilter"
-								:formatCurrency="formatCurrency"
-								:currencySymbol="currencySymbol"
-								:readonly="readonly"
-								@update:selected_delivery_charge="
-									(val) => {
-										selected_delivery_charge = val;
-										update_delivery_charges(conversion_rate, currency_precision);
-									}
-								"
-							/>
-						</v-card>
-					</div>
+							<v-card
+								v-if="pos_profile.posa_use_delivery_charges"
+								flat
+								class="invoice-section-card pos-themed-card"
+							>
+								<div class="invoice-section-heading">
+									<h3 class="invoice-section-heading__title">
+										{{ __("Delivery Charges") }}
+									</h3>
+								</div>
+								<DeliveryCharges
+									ref="deliveryChargesComponent"
+									:pos_profile="pos_profile"
+									:delivery_charges="delivery_charges"
+									:selected_delivery_charge="selected_delivery_charge"
+									:delivery_charges_rate="delivery_charges_rate"
+									:deliveryChargesFilter="deliveryChargesFilter"
+									:formatCurrency="formatCurrency"
+									:currencySymbol="currencySymbol"
+									:readonly="readonly"
+									@update:selected_delivery_charge="
+										(val) => {
+											selected_delivery_charge = val;
+											update_delivery_charges(conversion_rate, currency_precision);
+										}
+									"
+								/>
+							</v-card>
+						</div>
 
-					<div class="invoice-meta-grid">
-						<v-card
-							v-if="pos_profile.posa_allow_change_posting_date"
-							flat
-							class="invoice-section-card pos-themed-card"
-						>
-							<div class="invoice-section-heading">
-								<h3 class="invoice-section-heading__title">
-									{{ __("Posting and Price List") }}
-								</h3>
-							</div>
-							<PostingDateRow
-								ref="postingDateComponent"
-								:pos_profile="pos_profile"
-								:posting_date_display="posting_date_display"
-								:customer_balance="customer_balance"
-								:customer_balance_currency="customer_balance_currency"
-								:balance_loading="customer_balance_loading"
-								:price-list="selected_price_list"
-								:price-lists="price_lists"
-								:formatCurrency="formatCurrency"
-								:currencySymbol="currencySymbol"
-								@update:posting_date_display="
-									(val) => {
-										posting_date_display = val;
-									}
-								"
-								@update:priceList="
-									(val) => {
-										selected_price_list = val;
-									}
-								"
-							/>
-						</v-card>
+						<div class="invoice-meta-grid">
+							<v-card
+								v-if="pos_profile.posa_allow_change_posting_date"
+								flat
+								class="invoice-section-card pos-themed-card"
+							>
+								<div class="invoice-section-heading">
+									<h3 class="invoice-section-heading__title">
+										{{ __("Posting and Price List") }}
+									</h3>
+								</div>
+								<PostingDateRow
+									ref="postingDateComponent"
+									:pos_profile="pos_profile"
+									:posting_date_display="posting_date_display"
+									:customer_balance="customer_balance"
+									:customer_balance_currency="customer_balance_currency"
+									:balance_loading="customer_balance_loading"
+									:price-list="selected_price_list"
+									:price-lists="price_lists"
+									:formatCurrency="formatCurrency"
+									:currencySymbol="currencySymbol"
+									@update:posting_date_display="
+										(val) => {
+											posting_date_display = val;
+										}
+									"
+									@update:priceList="
+										(val) => {
+											selected_price_list = val;
+										}
+									"
+								/>
+							</v-card>
 
-						<v-card
-							v-if="pos_profile.posa_allow_multi_currency"
-							flat
-							class="invoice-section-card pos-themed-card"
-						>
-							<div class="invoice-section-heading">
-								<h3 class="invoice-section-heading__title">{{ __("Multi Currency") }}</h3>
-							</div>
-							<MultiCurrencyRow
-								:pos_profile="pos_profile"
-								:selected_currency="selected_currency"
-								:plc_conversion_rate="exchange_rate"
-								:conversion_rate="conversion_rate"
-								:available_currencies="available_currencies"
-								:isNumber="isNumber"
-								:price_list_currency="price_list_currency"
-								@update:selected_currency="
-									(val) => {
-										selected_currency = val;
-										update_currency(val);
-									}
-								"
-								@update:plc_conversion_rate="
-									(val) => {
-										exchange_rate = val;
-										update_exchange_rate();
-									}
-								"
-								@update:conversion_rate="
-									(val) => {
-										conversion_rate = val;
-										update_conversion_rate();
-									}
-								"
-							/>
-						</v-card>
+							<v-card
+								v-if="pos_profile.posa_allow_multi_currency"
+								flat
+								class="invoice-section-card pos-themed-card"
+							>
+								<div class="invoice-section-heading">
+									<h3 class="invoice-section-heading__title">
+										{{ __("Multi Currency") }}
+									</h3>
+								</div>
+								<MultiCurrencyRow
+									:pos_profile="pos_profile"
+									:selected_currency="selected_currency"
+									:plc_conversion_rate="exchange_rate"
+									:conversion_rate="conversion_rate"
+									:available_currencies="available_currencies"
+									:isNumber="isNumber"
+									:price_list_currency="price_list_currency"
+									@update:selected_currency="
+										(val) => {
+											selected_currency = val;
+											update_currency(val);
+										}
+									"
+									@update:plc_conversion_rate="
+										(val) => {
+											exchange_rate = val;
+											update_exchange_rate();
+										}
+									"
+									@update:conversion_rate="
+										(val) => {
+											conversion_rate = val;
+											update_conversion_rate();
+										}
+									"
+								/>
+							</v-card>
+						</div>
 					</div>
 
 					<v-card flat class="invoice-section-card invoice-items-card pos-themed-card">
@@ -1442,14 +1450,6 @@ export default {
 }
 
 .invoice-shell--counter-grid {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
-	--counter-rugged-surface: #ffffff;
-	--counter-rugged-muted: #edf3f7;
 	height: 100%;
 	width: min(100%, 1560px);
 	margin-inline: auto;
@@ -1481,10 +1481,29 @@ export default {
 	overflow: hidden;
 }
 
+.invoice-shell--counter-grid .invoice-context-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+
 .invoice-shell--counter-grid .invoice-top-grid,
 .invoice-shell--counter-grid .invoice-meta-grid {
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 8px;
+	display: contents;
+}
+
+.invoice-shell--counter-grid .invoice-context-grid .invoice-section-card {
+	flex: 1 1 300px;
+	min-width: 0;
+}
+
+.invoice-shell--counter-grid .invoice-top-grid > .invoice-section-card:first-child {
+	flex: 1.35 1 560px;
+}
+
+.invoice-shell--counter-grid .invoice-meta-grid > .invoice-section-card:first-child {
+	flex: 1 1 340px;
 }
 
 .invoice-shell--counter-grid .invoice-section-card {

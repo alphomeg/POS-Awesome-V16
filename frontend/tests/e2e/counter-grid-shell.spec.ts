@@ -201,13 +201,13 @@ test.describe("Counter Grid shell", () => {
 		await page.keyboard.press("Shift+Tab");
 		await expect(cartRow).toHaveAttribute(
 			"data-active-cell-key",
-			"data-table-expand",
+			"discount_amount",
 		);
 		await expect(
-			cartRow.locator('[data-column-key="data-table-expand"] button'),
+			cartRow.locator('[data-column-key="discount_amount"] input'),
 		).toBeFocused();
 
-		await page.keyboard.press("Tab");
+		await page.keyboard.press("Enter");
 		await expect(entry).toBeFocused();
 		await page.keyboard.press("ArrowUp");
 		await expect(cartRow).toHaveAttribute(
@@ -331,8 +331,11 @@ test.describe("Counter Grid shell", () => {
 		await page.keyboard.press("Shift+Tab");
 		await expect(secondRow).toHaveAttribute(
 			"data-active-cell-key",
-			"data-table-expand",
+			"discount_amount",
 		);
+		await expect(
+			secondRow.locator('[data-column-key="discount_amount"] input'),
+		).toBeFocused();
 
 		await page.keyboard.press("Home");
 		await page.keyboard.press("ArrowRight");

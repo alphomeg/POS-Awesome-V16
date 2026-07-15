@@ -535,6 +535,7 @@ body[data-page-route="posapp"] .v-overlay__content.posa-theme-tooltip .text-capt
 }
 
 body[data-page-route="posapp"] .v-overlay__scrim {
+	background: rgba(255, 255, 255, 0.72) !important;
 	background: color-mix(in srgb, var(--pos-bg-primary) 72%, transparent) !important;
 }
 
@@ -706,6 +707,7 @@ body[data-page-route="posapp"] .content.page-wrapper {
 /* Override Frappe's layout constraints */
 body[data-page-route="posapp"] #body {
 	display: block !important;
+	min-height: 100vh !important;
 	min-height: 100dvh !important;
 	height: auto !important;
 	overflow-x: hidden !important;

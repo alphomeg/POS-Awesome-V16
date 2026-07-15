@@ -330,10 +330,6 @@ const showMoreActions = computed(
 	grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
 	gap: 6px;
 	min-width: 0;
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-green: #079b55;
-	--counter-rugged-red: #dc343d;
 }
 
 .counter-grid-action {
@@ -369,14 +365,25 @@ const showMoreActions = computed(
 
 .counter-grid-action--pay {
 	grid-column: span 2;
-	border-color: #05743f !important;
+	border-color: #066b3b !important;
 	background: var(--counter-rugged-green) !important;
 	color: #ffffff !important;
 	font-size: 0.86rem !important;
 }
 
 .counter-grid-action--pay:hover {
-	background: #07884b !important;
+	background: #066b3b !important;
+}
+
+@media (max-width: 1199px) {
+	.counter-grid-action {
+		padding-inline: 6px !important;
+		font-size: 0.72rem !important;
+	}
+
+	.counter-grid-action :deep(.v-icon) {
+		font-size: 16px !important;
+	}
 }
 
 .white-text-btn {

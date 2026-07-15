@@ -439,6 +439,7 @@ export default {
 	justify-content: flex-end;
 	gap: 12px;
 	padding: 14px 20px calc(14px + env(safe-area-inset-bottom, 0px));
+	background: var(--pos-surface-raised);
 	background: color-mix(in srgb, var(--pos-surface-raised) 92%, transparent);
 	backdrop-filter: blur(10px);
 	border-top: 1px solid var(--pos-border);

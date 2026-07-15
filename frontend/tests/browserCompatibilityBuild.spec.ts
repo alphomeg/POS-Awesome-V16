@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { auditChrome109CounterGridCss } from "../scripts/audit-chrome109-css.mjs";
+import {
+	auditChrome109CounterGridCss,
+	auditChrome109ProgressiveFallbacks,
+} from "../scripts/audit-chrome109-css.mjs";
 
 const thisFile = fileURLToPath(import.meta.url);
 const frontendDir = path.resolve(path.dirname(thisFile), "..");
@@ -77,5 +80,20 @@ describe("Chrome 109 build compatibility", () => {
 		expect(() =>
 			auditChrome109CounterGridCss(unsupportedOnly, "fixture CSS"),
 		).toThrow("must use a fixed Chrome 109 selection color");
+	});
+
+	it("requires complete fallbacks before progressive color and viewport units", () => {
+		expect(() =>
+			auditChrome109ProgressiveFallbacks(
+				`.safe{background:#fff;background:color-mix(in srgb, #fff 80%, transparent);height:100vh;height:100dvh}`,
+				"safe fixture",
+			),
+		).not.toThrow();
+		expect(() =>
+			auditChrome109ProgressiveFallbacks(
+				`.unsafe{background:color-mix(in srgb, #fff 80%, transparent);height:100dvh}`,
+				"unsafe fixture",
+			),
+		).toThrow("needs a preceding Chrome 109-safe");
 	});
 });

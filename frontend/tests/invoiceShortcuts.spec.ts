@@ -104,6 +104,37 @@ describe("invoiceShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
+	it("does not dispatch commands while an IME composition is active", async () => {
+		const vm = createVm();
+		const event = new KeyboardEvent("keydown", {
+			key: "Process",
+			isComposing: true,
+			bubbles: true,
+			cancelable: true,
+		});
+
+		await (invoiceShortcuts as any).handleInvoiceShortcut.call(vm, event);
+
+		expect(vm.eventBus.emit).not.toHaveBeenCalled();
+		expect(vm.focusItemSearchField).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it("consumes held command keys without dispatching the action again", async () => {
+		const vm = createVm();
+		const event = new KeyboardEvent("keydown", {
+			key: "F9",
+			repeat: true,
+			bubbles: true,
+			cancelable: true,
+		});
+
+		await (invoiceShortcuts as any).handleInvoiceShortcut.call(vm, event);
+
+		expect(vm.eventBus.emit).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+	});
+
 	it("routes Alt+3 through the Counter Grid item modal", async () => {
 		const vm = { ...createVm(), isCounterGridPresentation: true };
 		const event = createAltEvent("3", "Digit3");

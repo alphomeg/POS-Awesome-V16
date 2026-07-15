@@ -739,8 +739,8 @@ defineExpose({
 }
 
 .counter-grid-summary__metric--total {
-	border-color: #079b55;
-	border-left-color: #079b55;
+	border-color: #087d45;
+	border-left-color: #087d45;
 	background: #e6f7ee;
 }
 

@@ -10,7 +10,9 @@
 
 <style scoped>
 .customer-display-layout {
+	height: 100vh;
 	height: 100dvh;
+	background: var(--pos-bg-primary);
 	background:
 		radial-gradient(
 			circle at top,

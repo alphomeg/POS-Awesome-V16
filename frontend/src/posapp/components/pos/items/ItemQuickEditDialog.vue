@@ -896,15 +896,10 @@ watch(
 
 <style scoped>
 .item-quick-edit {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
 	display: grid;
 	grid-template-rows: auto minmax(0, 1fr) auto;
 	width: 100%;
+	max-height: calc(100vh - 24px);
 	max-height: calc(100dvh - 24px);
 	overflow: hidden;
 	border: 3px solid var(--counter-rugged-navy);
@@ -914,7 +909,9 @@ watch(
 }
 
 .item-quick-edit--fullscreen {
+	height: 100vh;
 	height: 100dvh;
+	max-height: 100vh;
 	max-height: 100dvh;
 	border-radius: 0 !important;
 }

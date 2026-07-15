@@ -1888,13 +1888,6 @@ defineExpose({
 }
 
 .items-selector-shell--counter-dialog {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-surface: #ffffff;
-	--counter-rugged-muted: #edf3f7;
 	height: 100%;
 }
 

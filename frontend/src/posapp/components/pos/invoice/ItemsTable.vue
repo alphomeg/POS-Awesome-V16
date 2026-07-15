@@ -174,6 +174,7 @@ import {
 	getNavigableCartColumnKeys,
 	isCartGridColumnKey,
 	isCartGridDirectEditColumnKey,
+	resolveCounterGridEntryReturnTarget,
 	resolveCounterGridKeyboardCommand,
 	shouldDelegateCartGridKeyToEditor,
 	type CartGridColumnKey,
@@ -572,13 +573,17 @@ const moveGridTraversal = async (delta: number) => {
 const focusPreviousCounterGridEntry = (method: "arrow-up" | "shift-tab" = "shift-tab") => {
 	const rowIndex = items.value.length - 1;
 	if (rowIndex < 0) return false;
-	const keys = getAvailableKeysForRow(rowIndex);
-	if (!keys.length) return enterKeyboardGrid({ rowIndex, mode: "row" });
+	const returnTarget = resolveCounterGridEntryReturnTarget(
+		method,
+		getAvailableKeysForRow(rowIndex),
+		method === "shift-tab" ? getEditableKeysForRow(rowIndex) : [],
+	);
+	if (!returnTarget) return enterKeyboardGrid({ rowIndex, mode: "row" });
 	gridMode.value = "cell";
 	rememberActiveRow(rowIndex);
 	rememberSelectedRow(rowIndex);
-	activeCellKey.value = method === "arrow-up" ? (keys[0] ?? null) : (keys[keys.length - 1] ?? null);
-	void focusActiveGridTarget({ activateDirectEdit: false });
+	activeCellKey.value = returnTarget.key;
+	void focusActiveGridTarget({ activateDirectEdit: returnTarget.activate });
 	return true;
 };
 

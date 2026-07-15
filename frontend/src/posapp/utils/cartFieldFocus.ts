@@ -30,6 +30,11 @@ export type CounterGridKeyboardCommand =
 			column: "first" | "last";
 	  };
 
+export type CounterGridEntryReturnTarget = {
+	key: CartGridColumnKey;
+	activate: boolean;
+};
+
 const FIELD_SELECTORS: Record<CartGridColumnKey, string> = {
 	item_name: '[data-column-key="item_name"]',
 	qty: '[data-column-key="qty"] .posa-cart-table__qty-input-shell input',
@@ -171,6 +176,21 @@ export const getAdjacentCartGridColumnKey = (
 	return nextIndex >= 0 && nextIndex < keys.length
 		? (keys[nextIndex] ?? null)
 		: null;
+};
+
+export const resolveCounterGridEntryReturnTarget = (
+	method: "arrow-up" | "shift-tab",
+	availableKeys: CartGridColumnKey[],
+	editableKeys: CartGridColumnKey[],
+): CounterGridEntryReturnTarget | null => {
+	if (method === "arrow-up") {
+		const key = availableKeys[0];
+		return key ? { key, activate: false } : null;
+	}
+
+	const returnKeys = editableKeys.length ? editableKeys : availableKeys;
+	const key = returnKeys[returnKeys.length - 1];
+	return key ? { key, activate: editableKeys.includes(key) } : null;
 };
 
 export const getCartGridRow = (

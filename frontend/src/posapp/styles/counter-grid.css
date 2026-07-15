@@ -1,0 +1,161 @@
+/*
+ * RetailMind Counter Grid presentation tokens.
+ *
+ * The legacy aliases keep the existing component styles stable while the
+ * rm-cg names provide one documented source of truth for new UI work.
+ */
+.pos-main-container--counter-grid,
+.invoice-shell--counter-grid,
+.counter-grid-actions,
+.counter-grid-overlay-content,
+.counter-item-search-surface,
+.counter-auxiliary-surface,
+.items-selector-shell--counter-dialog,
+.pharmacy-search-results,
+.posa-item-history-card,
+.invoice-detail-card,
+.item-quick-edit,
+.payment-shell--counter-grid {
+	--rm-cg-navy-950: #09253d;
+	--rm-cg-navy-800: #174a70;
+	--rm-cg-blue-600: #0f70d7;
+	--rm-cg-cyan-400: #38bdf8;
+	--rm-cg-surface: #ffffff;
+	--rm-cg-surface-muted: #edf3f7;
+	--rm-cg-surface-selected: #e8f2ff;
+	--rm-cg-surface-editing: #effaf4;
+	--rm-cg-line: #9db2c4;
+	--rm-cg-line-soft: #c9d5df;
+	--rm-cg-text: #102a43;
+	--rm-cg-text-muted: #526678;
+	--rm-cg-text-on-dark: #ffffff;
+	--rm-cg-success: #087d45;
+	--rm-cg-warning: #a95d00;
+	--rm-cg-danger: #dc343d;
+	--rm-cg-disabled: #687381;
+	--rm-cg-focus: #0f70d7;
+	--rm-cg-focus-on-dark: #38bdf8;
+	--rm-cg-focus-inner: #ffffff;
+	--rm-cg-radius-control: 4px;
+	--rm-cg-radius-surface: 6px;
+	--rm-cg-shadow-overlay: 0 10px 28px rgba(9, 37, 61, 0.24);
+
+	--counter-rugged-navy: var(--rm-cg-navy-950);
+	--counter-rugged-navy-raised: var(--rm-cg-navy-800);
+	--counter-rugged-blue: var(--rm-cg-blue-600);
+	--counter-rugged-cyan: var(--rm-cg-cyan-400);
+	--counter-rugged-green: var(--rm-cg-success);
+	--counter-rugged-red: var(--rm-cg-danger);
+	--counter-rugged-line: var(--rm-cg-line);
+	--counter-rugged-soft-line: var(--rm-cg-line-soft);
+	--counter-rugged-surface: var(--rm-cg-surface);
+	--counter-rugged-muted: var(--rm-cg-surface-muted);
+
+	font-family: "Segoe UI", Arial, sans-serif;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0;
+}
+
+.counter-grid-overlay-content {
+	max-height: calc(100vh - 24px);
+	max-height: calc(100dvh - 24px);
+	border-radius: var(--rm-cg-radius-surface) !important;
+	box-shadow: var(--rm-cg-shadow-overlay) !important;
+	overflow: hidden;
+}
+
+.pos-main-container--counter-grid :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible,
+.counter-grid-overlay-content :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible,
+.posa-item-history-dialog :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible,
+.item-quick-edit-dialog :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible {
+	outline: 3px solid var(--rm-cg-focus, #0f70d7) !important;
+	outline-offset: 2px;
+}
+
+.pos-main-container--counter-grid .v-btn,
+.pos-main-container--counter-grid .v-field,
+.counter-grid-overlay-content .v-btn,
+.counter-grid-overlay-content .v-field {
+	transition: none !important;
+}
+
+.pos-main-container--counter-grid,
+.pos-main-container--counter-grid *,
+.counter-grid-overlay-content,
+.counter-grid-overlay-content * {
+	scroll-behavior: auto !important;
+}
+
+/* Payment keeps the existing component and transaction path; only its shell changes. */
+.payment-shell--counter-grid {
+	height: calc(100vh - 48px);
+	height: calc(100dvh - 48px);
+	background: var(--rm-cg-surface-muted);
+	color: var(--rm-cg-text);
+}
+
+.payment-shell--counter-grid .payment-card {
+	border: 3px solid var(--rm-cg-navy-950);
+	border-radius: var(--rm-cg-radius-surface) !important;
+	background: var(--rm-cg-surface) !important;
+	box-shadow: none !important;
+}
+
+.payment-shell--counter-grid .payment-scroll {
+	padding: 8px;
+	gap: 8px;
+	background: var(--rm-cg-surface-muted);
+}
+
+.payment-shell--counter-grid .payment-sections--dialog {
+	gap: 8px;
+}
+
+.payment-shell--counter-grid .payment-section {
+	border: 1px solid var(--rm-cg-line);
+	border-radius: 3px;
+	background: var(--rm-cg-surface);
+	box-shadow: none;
+}
+
+.payment-shell--counter-grid .payment-section--summary {
+	background: var(--rm-cg-surface);
+}
+
+.payment-shell--counter-grid .payment-section__header {
+	margin: -10px -10px 0;
+	padding: 7px 10px;
+	border-bottom: 2px solid var(--rm-cg-cyan-400);
+	background: var(--rm-cg-navy-950);
+}
+
+.payment-shell--counter-grid .payment-section__header .payment-section__title {
+	color: var(--rm-cg-text-on-dark);
+	font-size: 0.88rem;
+	line-height: 1.2;
+	text-transform: none;
+}
+
+.payment-shell--counter-grid .payment-footer {
+	background: var(--rm-cg-surface);
+}
+
+@media (max-width: 1199px) {
+	.counter-grid-payment-content {
+		width: calc(100vw - 16px) !important;
+		max-width: calc(100vw - 16px) !important;
+	}
+
+	.payment-shell--counter-grid .payment-scroll {
+		padding: 6px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pos-main-container--counter-grid *,
+	.counter-grid-overlay-content * {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

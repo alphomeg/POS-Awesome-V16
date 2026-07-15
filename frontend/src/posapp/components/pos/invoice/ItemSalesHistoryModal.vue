@@ -895,12 +895,6 @@ watch(historyRows, () => {
 
 <style scoped>
 .posa-item-history-card {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
 	display: grid;
 	grid-template-rows: auto auto auto minmax(0, 1fr) auto;
 	height: min(780px, calc(100vh - 24px));
@@ -1153,11 +1147,6 @@ watch(historyRows, () => {
 }
 
 .invoice-detail-card {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
 	border: 3px solid var(--counter-rugged-navy);
 	border-radius: 5px !important;
 	background: #edf3f7 !important;

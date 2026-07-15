@@ -30,6 +30,19 @@ const isLetter = (event: KeyboardEvent, letter: string) => {
 		keyValue === normalized || event.code === `Key${letter.toUpperCase()}`
 	);
 };
+const isKnownAltCommand = (event: KeyboardEvent) =>
+	Array.from({ length: 9 }, (_value, index) => index + 1).some((digit) =>
+		isDigit(event, digit),
+	) ||
+	isBackquote(event) ||
+	isArrowRight(event) ||
+	event.key === "PageUp" ||
+	event.key === "Home" ||
+	["g", "q", "a", "u", "r", "e", "f", "l", "m", "s", "d", "x", "p"].some(
+		(letter) => isLetter(event, letter),
+	);
+const isKnownFunctionCommand = (key: string) =>
+	["F2", "F4", "F6", "F7", "F8", "F9", "F12"].includes(key);
 const isTextEditingTarget = (target: EventTarget | null) => {
 	const element = target as HTMLElement | null;
 	if (!element) {
@@ -227,11 +240,24 @@ interface InvoiceShortcutsVm {
 const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 	{
 		async handleInvoiceShortcut(event: KeyboardEvent) {
-			if (event.defaultPrevented) {
+			if (
+				event.defaultPrevented ||
+				event.isComposing ||
+				event.key === "Process" ||
+				event.keyCode === 229
+			) {
 				return;
 			}
 
 			const key = event.key;
+			if (
+				event.repeat &&
+				(isKnownFunctionCommand(key) ||
+					(isAltOnly(event) && isKnownAltCommand(event)))
+			) {
+				consumeEvent(event);
+				return;
+			}
 
 			if (shouldEnterInvoiceGridFromArrow(event)) {
 				const count = this.items?.length || 0;

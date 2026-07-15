@@ -131,7 +131,7 @@ test.describe("Counter Grid rugged visual system", () => {
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-pay"),
-				"rgb(7, 155, 85)",
+				"rgb(8, 125, 69)",
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-cancel-sale"),
@@ -385,5 +385,41 @@ test.describe("Counter Grid rugged visual system", () => {
 			path: "test-results/counter-grid-rugged-item-update.png",
 			fullPage: true,
 		});
+		await quickEdit
+			.getByRole("button", { name: "Close item quick edit" })
+			.click();
+		await expect(quickEdit).toBeHidden({ timeout: 30_000 });
+	});
+
+	test("uses the centered rugged payment surface", async () => {
+		await page.setViewportSize({ width: 1366, height: 768 });
+		await page.keyboard.press("F9");
+
+		const payment = page.getByTestId("payment-root");
+		const paymentContent = page.locator(".counter-grid-payment-content");
+		await expect(payment).toBeVisible({ timeout: 30_000 });
+		await expect(payment).toHaveClass(/payment-shell--counter-grid/);
+		await expect(payment.locator(".payment-card")).toHaveCSS(
+			"border-top-width",
+			"3px",
+		);
+		await expectBackground(
+			payment.locator(".payment-section__header").first(),
+			"rgb(9, 37, 61)",
+		);
+
+		const bounds = await paymentContent.boundingBox();
+		expect(bounds).not.toBeNull();
+		expect(
+			Math.abs((bounds?.x || 0) + (bounds?.width || 0) / 2 - 683),
+		).toBeLessThanOrEqual(2);
+		await expectNoViewportOverflow(page);
+		await page.screenshot({
+			path: "test-results/counter-grid-rugged-payment.png",
+			fullPage: true,
+		});
+
+		await page.getByTestId("payment-cancel").click();
+		await expect(payment).toBeHidden({ timeout: 30_000 });
 	});
 });

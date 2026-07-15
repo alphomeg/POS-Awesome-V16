@@ -863,6 +863,7 @@ export default {
 
 <style scoped>
 .return-expired-row {
+	background-color: var(--pos-surface) !important;
 	background-color: color-mix(in srgb, var(--pos-error) 14%, var(--pos-surface)) !important;
 }
 
@@ -929,6 +930,7 @@ export default {
 }
 
 .returns-result-card:hover {
+	border-color: var(--pos-border);
 	border-color: color-mix(in srgb, var(--pos-primary) 28%, var(--pos-border));
 	box-shadow: 0 10px 24px var(--pos-shadow);
 	transform: translateY(-1px);
@@ -936,10 +938,12 @@ export default {
 
 .returns-result-card--selected {
 	border-color: var(--pos-primary);
+	box-shadow: 0 0 0 2px rgba(15, 112, 215, 0.14);
 	box-shadow: 0 0 0 2px color-mix(in srgb, var(--pos-primary) 14%, transparent);
 }
 
 .returns-result-card--expired {
+	background: var(--pos-surface);
 	background: color-mix(in srgb, var(--pos-error) 6%, var(--pos-surface));
 }
 

@@ -713,9 +713,7 @@ const visiblePaymentMethods = computed(() =>
 	),
 );
 
-const creditSaleAllowed = computed(() =>
-	parseBooleanSetting(pos_profile.value?.posa_allow_credit_sale),
-);
+const creditSaleAllowed = computed(() => parseBooleanSetting(pos_profile.value?.posa_allow_credit_sale));
 
 const giftCardAppliedAmount = computed(() =>
 	(Array.isArray(giftCardRedemptions.value) ? giftCardRedemptions.value : []).reduce(
@@ -1325,11 +1323,37 @@ const focusFirstPaymentTarget = () => {
 	return focusSubmitButton();
 };
 
+const paymentFocusRetryDelays = [0, 100, 300, 700, 1500];
+const paymentFocusTimers = new Set();
+
+const clearPaymentFocusTimers = () => {
+	paymentFocusTimers.forEach((timer) => window.clearTimeout(timer));
+	paymentFocusTimers.clear();
+};
+
+const stabilizePaymentKeyboardFocus = () => {
+	clearPaymentFocusTimers();
+	nextTick(() => {
+		if (!isPaymentOpen.value) return;
+
+		paymentFocusRetryDelays.forEach((delay) => {
+			const timer = window.setTimeout(() => {
+				paymentFocusTimers.delete(timer);
+				if (!isPaymentOpen.value || paymentRoot.value?.contains(document.activeElement)) {
+					return;
+				}
+				focusFirstPaymentTarget();
+			}, delay);
+			paymentFocusTimers.add(timer);
+		});
+	});
+};
+
 const handleShowPayment = () => {
 	paymentVisible.value = true;
 	nextTick(() => {
 		setTimeout(() => {
-			focusFirstPaymentTarget();
+			stabilizePaymentKeyboardFocus();
 			if (eventBus && typeof eventBus.emit === "function") {
 				eventBus.emit("payment_ui_ready");
 			}
@@ -1749,11 +1773,7 @@ const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
 
 	if (amount !== null) {
 		const shortcutAmount = Number(amount);
-		if (
-			!invoice_doc.value?.is_return &&
-			Number.isFinite(shortcutAmount) &&
-			shortcutAmount === 0
-		) {
+		if (!invoice_doc.value?.is_return && Number.isFinite(shortcutAmount) && shortcutAmount === 0) {
 			if (!enableShortcutCreditSale()) {
 				return;
 			}
@@ -2014,6 +2034,7 @@ watch(isPaymentOpen, (isOpen) => {
 		ensurePaymentLinesInitialized();
 		handleShowPayment();
 	} else {
+		clearPaymentFocusTimers();
 		releaseActiveFocus();
 		paymentVisible.value = false;
 		highlightSubmit.value = false;
@@ -2105,6 +2126,7 @@ onMounted(() => {
 				get_addresses();
 			}
 			get_sales_person_names();
+			stabilizePaymentKeyboardFocus();
 		});
 
 		eventBus.on("register_pos_profile", (data) => {
@@ -2148,6 +2170,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+	clearPaymentFocusTimers();
 	eventBus.off("send_invoice_doc_payment");
 	eventBus.off("register_pos_profile");
 	eventBus.off("add_the_new_address");
@@ -2167,6 +2190,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
 	focusFirstPaymentTarget,
+	stabilizePaymentKeyboardFocus,
 });
 </script>
 
@@ -2189,6 +2213,7 @@ defineExpose({
 }
 
 .payment-shell--dialog {
+	height: calc(100vh - 48px);
 	height: calc(100dvh - 48px);
 	display: flex;
 	flex-direction: column;

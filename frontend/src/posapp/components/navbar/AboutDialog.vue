@@ -323,6 +323,7 @@ function loadAppInfo() {
 }
 
 .app-item-improved:hover {
+	background: var(--pos-surface);
 	background: color-mix(in srgb, var(--pos-primary) 14%, var(--pos-surface));
 	border-color: var(--pos-primary);
 	transform: translateY(-1px);

@@ -13,6 +13,7 @@ describe("Counter Grid rugged visual contract", () => {
 	it("uses the reference navy, selection blue, and solid action colors", () => {
 		const shell = source("components", "pos", "shell", "Pos.vue");
 		const navbar = source("components", "navbar", "NavbarAppBar.vue");
+		const tokens = source("styles", "counter-grid.css");
 		const actions = source(
 			"components",
 			"pos",
@@ -26,7 +27,11 @@ describe("Counter Grid rugged visual contract", () => {
 			"items-table-styles.css",
 		);
 
-		expect(shell).toContain("--counter-rugged-navy: #09253d");
+		expect(tokens).toContain("--rm-cg-navy-950: #09253d");
+		expect(tokens).toContain("--rm-cg-success: #087d45");
+		expect(tokens).toContain(
+			"--counter-rugged-green: var(--rm-cg-success)",
+		);
 		expect(navbar).toContain("pos-navbar-enhanced--counter-grid");
 		expect(navbar).toContain("background: #09253d !important");
 		expect(navbar).toContain("border-bottom: 2px solid #38bdf8");
@@ -34,8 +39,42 @@ describe("Counter Grid rugged visual contract", () => {
 		expect(table).toContain(
 			"background: var(--counter-rugged-navy-raised)",
 		);
-		expect(actions).toContain("--counter-rugged-green: #079b55");
-		expect(actions).toContain("--counter-rugged-red: #dc343d");
+		expect(actions).toContain(
+			"background: var(--counter-rugged-green) !important",
+		);
+		expect(actions).toContain(
+			"background: var(--counter-rugged-red) !important",
+		);
+		expect(shell).toContain("background: var(--counter-rugged-navy)");
+		expect(shell).toContain("grid-template-rows: minmax(0, 1fr) 28px");
+		expect(source("components", "pos", "Invoice.vue")).toContain(
+			"flex: 1.35 1 560px",
+		);
+		expect(source("components", "pos", "Invoice.vue")).toContain(
+			"display: contents",
+		);
+	});
+
+	it("gives centered overlays and payment the same rugged presentation", () => {
+		const shell = source("components", "pos", "shell", "Pos.vue");
+		const tokens = source("styles", "counter-grid.css");
+
+		expect(shell).toContain(
+			"counter-grid-overlay-content counter-grid-search-content",
+		);
+		expect(shell).toContain(
+			"counter-grid-overlay-content counter-grid-payment-content",
+		);
+		expect(shell).toContain("payment-shell--counter-grid");
+		expect(shell).toContain('ref="paymentPanel"');
+		expect(shell).toContain('@after-enter="handlePaymentDialogAfterEnter"');
+		expect(shell).toContain(
+			"paymentPanel.value?.stabilizePaymentKeyboardFocus?.()",
+		);
+		expect(tokens).toContain(
+			".payment-shell--counter-grid .payment-section",
+		);
+		expect(tokens).toContain("border: 3px solid var(--rm-cg-navy-950)");
 	});
 
 	it("gives the invoice and pharmacy tables crisp cells and a saturated active row", () => {

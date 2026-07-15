@@ -5,7 +5,9 @@
 				<div>
 					<div class="text-h5 text-primary">{{ __("Purchase Management") }}</div>
 					<div class="text-subtitle-2 text-medium-emphasis">
-						{{ __("Manage receipts, supplier bills, and payments for submitted purchase orders") }}
+						{{
+							__("Manage receipts, supplier bills, and payments for submitted purchase orders")
+						}}
 					</div>
 				</div>
 				<div class="d-flex align-center ga-2">
@@ -18,7 +20,12 @@
 					>
 						{{ __("Refresh") }}
 					</v-btn>
-					<v-btn icon="mdi-close" variant="text" :aria-label="__('Close')" @click="dialog = false" />
+					<v-btn
+						icon="mdi-close"
+						variant="text"
+						:aria-label="__('Close')"
+						@click="dialog = false"
+					/>
 				</div>
 			</v-card-title>
 
@@ -107,7 +114,10 @@
 					</div>
 					<div class="purchase-management-summary__tile">
 						<span>{{ __("To Pay") }}</span>
-						<strong>{{ currencySymbol(posProfile?.currency) }} {{ formatAmount(payableTotal) }}</strong>
+						<strong
+							>{{ currencySymbol(posProfile?.currency) }}
+							{{ formatAmount(payableTotal) }}</strong
+						>
 					</div>
 				</div>
 
@@ -157,7 +167,10 @@
 						</v-chip>
 					</template>
 					<template #item.payable_amount="{ item }">
-						<strong>{{ currencySymbol(item.currency) }} {{ formatAmount(item.payable_amount) }}</strong>
+						<strong
+							>{{ currencySymbol(item.currency) }}
+							{{ formatAmount(item.payable_amount) }}</strong
+						>
 					</template>
 					<template #item.actions="{ item }">
 						<div class="purchase-management-actions">
@@ -225,7 +238,8 @@
 						<div>
 							<span>{{ __("Payable") }}</span>
 							<strong>
-								{{ currencySymbol(previewDoc.currency) }} {{ formatAmount(previewDoc.payable_amount) }}
+								{{ currencySymbol(previewDoc.currency) }}
+								{{ formatAmount(previewDoc.payable_amount) }}
 							</strong>
 						</div>
 					</div>
@@ -255,10 +269,16 @@
 					<div>
 						<div class="text-h6">{{ actionTitle }}</div>
 						<div class="text-caption text-medium-emphasis">
-							{{ actionDoc?.name }} &middot; {{ actionDoc?.supplier_name || actionDoc?.supplier }}
+							{{ actionDoc?.name }} &middot;
+							{{ actionDoc?.supplier_name || actionDoc?.supplier }}
 						</div>
 					</div>
-					<v-btn icon="mdi-close" variant="text" :disabled="!!actionLoading" @click="closeActionDialog" />
+					<v-btn
+						icon="mdi-close"
+						variant="text"
+						:disabled="!!actionLoading"
+						@click="closeActionDialog"
+					/>
 				</v-card-title>
 				<v-card-text class="purchase-action-dialog__body">
 					<div class="purchase-action-controls">
@@ -281,10 +301,20 @@
 								{{ formatAmount(selectedActionAmount) }}
 							</strong>
 						</div>
-						<v-btn variant="tonal" color="primary" prepend-icon="mdi-check-all" @click="setAllActionQty">
+						<v-btn
+							variant="tonal"
+							color="primary"
+							prepend-icon="mdi-check-all"
+							@click="setAllActionQty"
+						>
 							{{ __("All Pending") }}
 						</v-btn>
-						<v-btn variant="text" color="error" prepend-icon="mdi-close-circle-outline" @click="clearActionQty">
+						<v-btn
+							variant="text"
+							color="error"
+							prepend-icon="mdi-close-circle-outline"
+							@click="clearActionQty"
+						>
 							{{ __("Clear") }}
 						</v-btn>
 					</div>
@@ -340,7 +370,11 @@
 					<v-btn
 						:color="actionType === 'receipt' ? 'success' : 'primary'"
 						theme="dark"
-						:prepend-icon="actionType === 'receipt' ? 'mdi-truck-check-outline' : 'mdi-file-document-check-outline'"
+						:prepend-icon="
+							actionType === 'receipt'
+								? 'mdi-truck-check-outline'
+								: 'mdi-file-document-check-outline'
+						"
 						:loading="actionLoading === `${actionOrder?.name}:${actionType}`"
 						:disabled="!canSubmitAction || !!actionLoading"
 						@click="submitAction"
@@ -472,10 +506,7 @@ const selectedActionQty = computed(() =>
 	actionRows.value.reduce((sum, row) => sum + (Number(row.action_qty) || 0), 0),
 );
 const selectedActionAmount = computed(() =>
-	actionRows.value.reduce(
-		(sum, row) => sum + (Number(row.action_qty) || 0) * (Number(row.rate) || 0),
-		0,
-	),
+	actionRows.value.reduce((sum, row) => sum + (Number(row.action_qty) || 0) * (Number(row.rate) || 0), 0),
 );
 const canSubmitAction = computed(() => !!actionDate.value && selectedActionQty.value > 0);
 
@@ -603,8 +634,10 @@ async function submitAction() {
 					company: props.posProfile?.company,
 					warehouse: row.set_warehouse,
 					transaction_date: normalizeDateForBackend(actionDate.value),
-					receipt_date: action === "receipt" ? normalizeDateForBackend(actionDate.value) : undefined,
-					invoice_date: action === "invoice" ? normalizeDateForBackend(actionDate.value) : undefined,
+					receipt_date:
+						action === "receipt" ? normalizeDateForBackend(actionDate.value) : undefined,
+					invoice_date:
+						action === "invoice" ? normalizeDateForBackend(actionDate.value) : undefined,
 					items,
 				},
 			},
@@ -763,6 +796,7 @@ function extractServerError(error) {
 
 .purchase-management-tabs {
 	padding: 0 16px;
+	background: var(--pos-surface-raised);
 	background: color-mix(in srgb, var(--pos-surface-raised) 94%, rgb(var(--v-theme-primary)) 6%);
 }
 

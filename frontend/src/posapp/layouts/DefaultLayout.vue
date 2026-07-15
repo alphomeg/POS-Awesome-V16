@@ -812,13 +812,7 @@ watch(
 		posProfile.value?.selling_price_list || null,
 		posProfile.value?.currency || null,
 	],
-	([
-		isInitialSyncSettled,
-		areWarningsReady,
-		isNetworkOnline,
-		isServerOnline,
-		isServerConnecting,
-	]) => {
+	([isInitialSyncSettled, areWarningsReady, isNetworkOnline, isServerOnline, isServerConnecting]) => {
 		if (
 			isInitialSyncSettled &&
 			areWarningsReady &&
@@ -987,14 +981,14 @@ const notifyCacheCapacityIfActionable = (usage = {}) => {
 	toastStore.show({
 		title: __("Local cache usage is high"),
 		detail: offlineNow
-			? __(
-					"Reconnect online to sync {0} pending local record(s). Cache usage is {1}%.",
-					[pendingTotal, Math.round(usage.percentage || 0)],
-				)
-			: __(
-					"Sync {0} pending local record(s). Cache usage is {1}%.",
-					[pendingTotal, Math.round(usage.percentage || 0)],
-				),
+			? __("Reconnect online to sync {0} pending local record(s). Cache usage is {1}%.", [
+					pendingTotal,
+					Math.round(usage.percentage || 0),
+				])
+			: __("Sync {0} pending local record(s). Cache usage is {1}%.", [
+					pendingTotal,
+					Math.round(usage.percentage || 0),
+				]),
 		color: "warning",
 	});
 };
@@ -1287,7 +1281,9 @@ const adjust_frappe_sidebar_offset = () => {
 .container1 {
 	width: 100%;
 	max-width: 100%;
+	min-height: 100vh;
 	min-height: 100dvh;
+	height: 100vh;
 	height: 100dvh;
 	overflow: hidden;
 	padding-inline-start: var(--posa-desk-sidebar-width, 0px);
@@ -1350,6 +1346,7 @@ const adjust_frappe_sidebar_offset = () => {
 @media (max-width: 768px) {
 	.container1 {
 		height: auto;
+		min-height: 100vh;
 		min-height: 100dvh;
 		overflow-y: auto;
 		overflow-x: hidden;
@@ -1357,6 +1354,7 @@ const adjust_frappe_sidebar_offset = () => {
 
 	.main-content {
 		height: auto;
+		min-height: 100vh;
 		min-height: 100dvh;
 	}
 
