@@ -42,6 +42,10 @@ from posawesome.posawesome.api.item_sale_controls import (
     collect_item_sale_control_errors,
     validate_invoice_item_sale_controls,
 )
+from posawesome.posawesome.api.cashier_pin_security import (
+    CASHIER_PIN_KEYS,
+    redact_cashier_pin_request_context,
+)
 from posawesome.posawesome.api.terminal_state import validate_assigned_terminal_cashier
 from posawesome.posawesome.api.pos_access import (
     get_authorized_pos_profile,
@@ -64,12 +68,6 @@ STATE_FAILED = "FAILED"
 FINAL_LEDGER_STATES = {STATE_SUBMITTED, STATE_POST_SUBMIT_DONE}
 AUTHORITATIVE_CASHIER_FIELD = "posa_cashier"
 CLIENT_CASHIER_KEYS = {AUTHORITATIVE_CASHIER_FIELD, "_posa_authoritative_cashier"}
-CASHIER_PIN_KEYS = {
-    "cashier_pin",
-    "posa_cashier_pin",
-    "_posa_cashier_pin",
-    "cashierPin",
-}
 TRUSTED_SHIFT_AUDIT_KEY = "_posa_shift_reassignment_audit"
 TRUSTED_SHIFT_SOURCES = {"offline_sync", "submitted_amendment"}
 SYSTEM_PAYMENT_MODES = {"Gift Card"}
@@ -1633,6 +1631,7 @@ def _guard_return_cash_refund(invoice_doc):
 
 @frappe.whitelist()
 def update_invoice(data):
+    redact_cashier_pin_request_context()
     currency_cache = {}
     data = json.loads(data)
     _reject_embedded_cashier_pin(data)
@@ -1873,6 +1872,7 @@ def update_invoice(data):
 
 @frappe.whitelist()
 def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
+    redact_cashier_pin_request_context()
     data = json.loads(data)
     invoice = json.loads(invoice)
     invoice.pop(TRUSTED_SHIFT_AUDIT_KEY, None)

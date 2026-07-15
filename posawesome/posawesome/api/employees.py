@@ -7,6 +7,9 @@ import json
 import frappe
 from frappe import _
 
+from posawesome.posawesome.api.cashier_pin_security import (
+    redact_cashier_pin_request_context,
+)
 from posawesome.posawesome.api.pos_access import (
     POS_SUPERVISOR_ROLE,
     get_authenticated_pos_user,
@@ -384,6 +387,7 @@ def get_terminal_employees(pos_profile=None):
 
 @frappe.whitelist()
 def verify_terminal_employee_pin(pos_profile=None, user=None, pin=None):
+    redact_cashier_pin_request_context()
     profile_doc = get_authorized_pos_profile(pos_profile)
     profile_name = str(profile_doc.get("name") or "").strip()
 
@@ -414,6 +418,7 @@ def verify_terminal_employee_pin(pos_profile=None, user=None, pin=None):
 
 
 def resolve_cashier_by_pin(pos_profile=None, pin=None):
+    redact_cashier_pin_request_context()
     profile_doc = get_authorized_pos_profile(pos_profile)
     profile_name = str(profile_doc.get("name") or "").strip()
 
@@ -479,6 +484,7 @@ def get_cashier_pin_status(pos_profile=None, user=None):
 
 @frappe.whitelist()
 def save_cashier_pin(pos_profile=None, user=None, new_pin=None, current_pin=None):
+    redact_cashier_pin_request_context()
     profile_name = _authorize_terminal_profile(pos_profile)
 
     user = str(user or "").strip()

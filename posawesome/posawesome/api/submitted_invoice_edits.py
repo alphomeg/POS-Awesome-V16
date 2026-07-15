@@ -6,6 +6,9 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_datetime, now_datetime
 
+from posawesome.posawesome.api.cashier_pin_security import (
+    redact_cashier_pin_request_context,
+)
 from posawesome.posawesome.api.idempotency import (
     doctype_supports_client_request_id,
     find_invoice_by_client_request_id,
@@ -463,6 +466,7 @@ def submit_submitted_invoice_edit(
     company=None,
     cashier_pin=None,
 ):
+    redact_cashier_pin_request_context()
     from posawesome.posawesome.api.pos_access import get_authorized_pos_profile
 
     doctype = _normalize_doctype(doctype)

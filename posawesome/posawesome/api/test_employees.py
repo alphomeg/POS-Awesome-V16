@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pathlib
 import sys
 import types
@@ -397,6 +398,43 @@ class TestEmployeesApi(unittest.TestCase):
 
         with self.assertRaisesRegex(Exception, "more than one cashier"):
             self.employees.resolve_cashier_by_pin("Main POS", "1234")
+
+    def test_cashier_pin_request_context_is_redacted_recursively(self):
+        request_form = {
+            "cashier_pin": "7391",
+            "invoice": json.dumps(
+                {
+                    "payments": [
+                        {"mode_of_payment": "Cash", "cashierPin": "7391"}
+                    ]
+                }
+            ),
+        }
+        recorder_form = {
+            "new_pin": "7391",
+            "correction_data": {"current_pin": "7391"},
+        }
+        previous_local = getattr(self.employees.frappe, "local", None)
+        self.employees.frappe.local = types.SimpleNamespace(
+            form_dict=request_form,
+            _recorder=types.SimpleNamespace(form_dict=recorder_form),
+        )
+        self.addCleanup(
+            setattr,
+            self.employees.frappe,
+            "local",
+            previous_local,
+        )
+
+        self.employees.redact_cashier_pin_request_context()
+
+        self.assertEqual(request_form["cashier_pin"], "********")
+        self.assertNotIn("7391", request_form["invoice"])
+        self.assertEqual(recorder_form["new_pin"], "********")
+        self.assertEqual(
+            recorder_form["correction_data"]["current_pin"],
+            "********",
+        )
 
     def test_save_cashier_pin_rejects_profile_local_duplicate(self):
         class FakeUserDoc:
