@@ -11,6 +11,29 @@ vi.mock("../src/utils/smartTender", () => ({
 }));
 
 describe("usePaymentMethods", () => {
+	it("does not request M-Pesa modes when the profile feature is disabled", () => {
+		const call = vi.fn();
+		vi.stubGlobal("frappe", { call });
+		const { get_mpesa_modes, mpesa_modes } = usePaymentMethods({
+			invoiceDoc: ref({ payments: [] }),
+			posProfile: ref({
+				company: "MedPlus Pharmacy",
+				posa_allow_mpesa_reconcile_payments: 0,
+			}),
+			stores: {
+				toastStore: { show: () => undefined },
+				uiStore: { freeze: () => undefined, unfreeze: () => undefined },
+			},
+		});
+		mpesa_modes.value = ["M-Pesa"];
+
+		get_mpesa_modes();
+
+		expect(mpesa_modes.value).toEqual([]);
+		expect(call).not.toHaveBeenCalled();
+		vi.unstubAllGlobals();
+	});
+
 	it("sets the selected payment method to the post-credit outstanding amount", () => {
 		const invoiceDoc = ref<any>({
 			rounded_total: 500,

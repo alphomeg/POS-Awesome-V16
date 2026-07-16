@@ -64,7 +64,12 @@ export function usePaymentMethods(options: PaymentMethodsOptions) {
 
 	// Get M-Pesa payment modes from backend
 	const get_mpesa_modes = () => {
-		const company = unref(posProfile)?.company;
+		const profile = unref(posProfile);
+		if (!profile?.posa_allow_mpesa_reconcile_payments) {
+			mpesa_modes.value = [];
+			return;
+		}
+		const company = profile.company;
 		if (!company) return;
 
 		frappe.call({
