@@ -160,11 +160,26 @@
 					</div>
 
 					<v-card flat class="invoice-section-card invoice-items-card pos-themed-card">
-						<div class="invoice-section-heading">
+						<div class="invoice-section-heading invoice-items-heading">
 							<h3 class="invoice-section-heading__title">{{ __("Invoice Items") }}</h3>
+							<InvoiceItemsActionToolbar
+								v-if="isCounterGridPresentation"
+								:show-search="false"
+								compact
+								:itemSearch="itemSearch"
+								:availableColumns="available_columns"
+								:selectedColumns="selected_columns"
+								@update:selectedColumns="
+									(cols) => {
+										setSelectedColumns(cols);
+										saveColumnPreferences();
+									}
+								"
+							/>
 						</div>
 						<div class="items-table-wrapper">
 							<InvoiceItemsActionToolbar
+								v-if="!isCounterGridPresentation"
 								ref="actionToolbar"
 								:itemSearch="itemSearch"
 								:availableColumns="available_columns"
@@ -1465,19 +1480,19 @@ export default {
 	margin-top: 0 !important;
 	border: 0;
 	border-radius: 0;
-	background: #e7edf2 !important;
+	background: var(--rm-cg-surface-canvas) !important;
 	box-shadow: none;
 	overflow: hidden !important;
 }
 
 .invoice-shell--counter-grid .dynamic-padding {
-	padding: 8px 10px 6px;
-	gap: 8px;
+	padding: 6px 10px 5px;
+	gap: 6px;
 	overflow: hidden;
 }
 
 .invoice-shell--counter-grid .invoice-sections {
-	gap: 8px;
+	gap: 6px;
 	overflow: hidden;
 }
 
@@ -1510,14 +1525,18 @@ export default {
 	border: 1px solid var(--counter-rugged-line);
 	border-radius: 3px;
 	background: var(--counter-rugged-surface) !important;
-	box-shadow: 0 1px 3px rgba(9, 37, 61, 0.14);
+	box-shadow: 0 1px 3px rgba(23, 59, 43, 0.14);
 }
 
 .invoice-shell--counter-grid .invoice-section-heading {
-	display: block;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-height: 38px;
 	padding: 9px 14px;
 	border-bottom: 1px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy);
+	background: var(--rm-cg-teal-700);
 }
 
 .invoice-shell--counter-grid .invoice-section-heading__title {
@@ -1525,6 +1544,25 @@ export default {
 	font-size: 0.88rem;
 	font-weight: 800;
 	text-transform: uppercase;
+}
+
+.invoice-shell--counter-grid .invoice-items-heading {
+	padding: 4px 8px 4px 14px;
+}
+
+.invoice-shell--counter-grid :deep(.column-selector-container--compact) {
+	flex: 0 0 auto;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
+	background: transparent !important;
+}
+
+.invoice-shell--counter-grid :deep(.column-selector-btn--compact) {
+	height: 28px !important;
+	min-height: 28px !important;
+	padding-inline: 10px;
+	font-size: 0.76rem;
 }
 
 .invoice-shell--counter-grid .invoice-top-grid .invoice-section-heading,
@@ -1536,8 +1574,8 @@ export default {
 	flex: 1 1 auto;
 	min-height: 0;
 	padding-bottom: 0;
-	border: 2px solid var(--counter-rugged-navy);
-	box-shadow: 0 3px 8px rgba(9, 37, 61, 0.22);
+	border: 2px solid var(--rm-cg-teal-700);
+	box-shadow: 0 3px 8px rgba(23, 59, 43, 0.18);
 	overflow: hidden;
 }
 
@@ -1563,22 +1601,50 @@ export default {
 	padding: 6px 10px;
 	border-bottom: 2px solid var(--counter-rugged-cyan);
 	border-radius: 0;
-	background: var(--counter-rugged-navy) !important;
+	background: var(--rm-cg-teal-700) !important;
 }
 
 .invoice-shell--counter-grid :deep(.item-search-field .v-field) {
 	border: 1px solid #b8c7d2;
 	border-radius: 3px;
 	background: #ffffff !important;
-	box-shadow: inset 0 1px 2px rgba(9, 37, 61, 0.12);
+	box-shadow: inset 0 1px 2px rgba(23, 59, 43, 0.12);
 }
 
 .invoice-shell--counter-grid :deep(.column-selector-btn) {
 	min-height: 36px;
 	border: 1px solid var(--counter-rugged-cyan);
 	border-radius: 3px !important;
-	background: #123b5c !important;
+	background: var(--rm-cg-forest-800) !important;
 	color: #ffffff !important;
+}
+
+.invoice-shell--counter-grid :deep(.invoice-context-grid .items) {
+	min-height: 54px;
+	margin: 0;
+	padding: 4px 6px !important;
+}
+
+.invoice-shell--counter-grid :deep(.invoice-context-grid .items > .v-col) {
+	padding: 2px 4px !important;
+}
+
+.invoice-shell--counter-grid :deep(.invoice-context-grid .pos-header-bar) {
+	min-height: 54px;
+	margin: 0 !important;
+	padding: 4px 8px !important;
+	border: 0;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+}
+
+.invoice-shell--counter-grid :deep(.invoice-context-grid .pos-header-bar > .v-row) {
+	min-height: 44px;
+	margin: 0;
+}
+
+.invoice-shell--counter-grid :deep(.invoice-context-grid .pos-header-bar .v-col) {
+	padding: 2px 4px !important;
 }
 
 @media (max-width: 1099px) {

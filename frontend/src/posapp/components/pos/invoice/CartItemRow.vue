@@ -958,14 +958,14 @@ td {
 
 .posa-cart-item-row--keyboard-active {
 	position: relative;
-	background: #174a70 !important;
+	background: var(--rm-cg-surface-selected, #174a70) !important;
 	animation: none !important;
 	transition: none !important;
 }
 
 .posa-cart-item-row--keyboard-active > td {
-	background: #174a70 !important;
-	color: #ffffff !important;
+	background: var(--rm-cg-surface-selected, #174a70) !important;
+	color: var(--rm-cg-text, #ffffff) !important;
 	animation: none !important;
 	transition: none !important;
 }
@@ -981,9 +981,9 @@ td {
 }
 
 .posa-cart-item-cell--keyboard-active {
-	background: #174a70 !important;
+	background: var(--rm-cg-surface-editing, #174a70) !important;
 	box-shadow:
-		inset 0 0 0 3px #38bdf8,
+		inset 0 0 0 3px var(--rm-cg-focus, #38bdf8),
 		inset 0 0 0 5px #ffffff;
 	z-index: 2;
 }
@@ -1005,7 +1005,7 @@ td {
 
 .posa-cart-item-row--loss-risk.posa-cart-item-row--keyboard-active > td,
 .posa-cart-item-row--loss-risk .posa-cart-item-cell--keyboard-active {
-	background: #174a70 !important;
-	color: #ffffff !important;
+	background: var(--rm-cg-surface-selected, #174a70) !important;
+	color: var(--rm-cg-text, #ffffff) !important;
 }
 </style>

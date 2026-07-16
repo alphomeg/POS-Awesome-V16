@@ -8,9 +8,12 @@
 			role="gridcell"
 			:data-column-key="column.key"
 		>
-			<span v-if="column.key === 'data-table-expand'" class="counter-grid-entry-index">
-				{{ rowNumber }}
-			</span>
+			<span
+				v-if="column.key === 'data-table-expand'"
+				class="counter-grid-entry-placeholder"
+				aria-hidden="true"
+				>-</span
+			>
 			<label v-else-if="column.key === 'item_name'" class="counter-grid-entry-editor">
 				<v-icon icon="mdi-magnify" size="18" />
 				<input
@@ -19,8 +22,8 @@
 					class="counter-grid-entry-input"
 					data-testid="counter-grid-item-entry"
 					data-pos-keyboard-target="item-search"
-					:aria-label="__('Search item, code, generic or scan barcode')"
-					:placeholder="__('Search item, code, generic or scan barcode')"
+					:aria-label="__('Scan barcode or search item by name, code, or generic')"
+					:placeholder="__('Scan or search item')"
 					autocomplete="off"
 					spellcheck="false"
 					@input="updateValue"
@@ -38,7 +41,6 @@ import { ref } from "vue";
 
 defineProps<{
 	columns: Array<{ key?: string }>;
-	rowNumber: number;
 	modelValue: string;
 }>();
 
@@ -80,14 +82,14 @@ defineExpose({ focus, select });
 .counter-grid-entry-row {
 	height: 52px;
 	background: #e2edf5;
-	border-top: 2px solid #174a70;
+	border-top: 2px solid var(--rm-cg-line-strong);
 }
 
 .counter-grid-entry-cell {
 	padding: 6px 10px;
 	text-align: center;
 	border-right: 1px solid #c9d5df;
-	border-bottom: 1px solid #9db2c4;
+	border-bottom: 1px solid var(--rm-cg-line);
 	background: #eaf2f7;
 	color: #52687a;
 }
@@ -104,7 +106,7 @@ defineExpose({ focus, select });
 	width: 100%;
 	min-height: 38px;
 	padding: 6px 10px;
-	border: 2px solid #0f70d7;
+	border: 2px solid var(--rm-cg-focus);
 	border-radius: 3px;
 	background: #ffffff;
 	color: #10263b;
@@ -114,7 +116,7 @@ defineExpose({ focus, select });
 }
 
 .counter-grid-entry-editor:focus-within {
-	border-color: #0f70d7;
+	border-color: var(--rm-cg-focus);
 	outline: 3px solid #b9dcfb;
 	outline-offset: 1px;
 }
@@ -141,15 +143,11 @@ defineExpose({ focus, select });
 
 .counter-grid-entry-editor kbd {
 	padding: 1px 5px;
-	border: 1px solid #9db2c4;
+	border: 1px solid var(--rm-cg-line);
 	border-radius: 3px;
-	background: #edf3f7;
+	background: var(--rm-cg-surface-muted);
 	color: #17364f;
 	font: inherit;
 	font-size: 0.72rem;
-}
-
-.counter-grid-entry-index {
-	font-variant-numeric: tabular-nums;
 }
 </style>

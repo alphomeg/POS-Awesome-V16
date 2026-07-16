@@ -690,7 +690,7 @@ defineExpose({
 .counter-grid-summary-card {
 	position: static;
 	padding: 8px 10px !important;
-	border-top: 2px solid #174a70;
+	border-top: 2px solid var(--rm-cg-teal-700);
 	border-radius: 0 !important;
 	box-shadow: none;
 	background: #ffffff !important;
@@ -717,16 +717,16 @@ defineExpose({
 	padding: 5px 9px;
 	flex-direction: column;
 	justify-content: center;
-	border: 1px solid #9db2c4;
-	border-left: 4px solid #174a70;
+	border: 1px solid var(--rm-cg-line);
+	border-left: 4px solid var(--rm-cg-line-strong);
 	border-radius: 3px;
-	background: #edf3f7;
+	background: var(--rm-cg-surface-muted);
 }
 
 .counter-grid-summary__metric span {
 	font-size: 0.68rem;
 	font-weight: 600;
-	color: #52687a;
+	color: var(--rm-cg-text-muted);
 }
 
 .counter-grid-summary__metric strong {
@@ -735,18 +735,18 @@ defineExpose({
 	font-variant-numeric: tabular-nums;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: #10263b;
+	color: var(--rm-cg-text);
 }
 
 .counter-grid-summary__metric--total {
-	border-color: #087d45;
-	border-left-color: #087d45;
-	background: #e6f7ee;
+	border-color: var(--rm-cg-success);
+	border-left-color: var(--rm-cg-success);
+	background: var(--rm-cg-action-save-bg);
 }
 
 .counter-grid-summary__metric--total strong {
 	font-size: 1.05rem;
-	color: #087a46;
+	color: var(--rm-cg-success);
 }
 
 .counter-grid-summary__discount {

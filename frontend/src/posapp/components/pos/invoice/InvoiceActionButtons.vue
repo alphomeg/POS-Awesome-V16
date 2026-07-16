@@ -3,7 +3,7 @@
 		<v-btn
 			variant="tonal"
 			prepend-icon="mdi-content-save-outline"
-			class="counter-grid-action"
+			class="counter-grid-action counter-grid-action--save"
 			data-pos-keyboard-target="invoice-action"
 			data-testid="invoice-action-save-clear"
 			:loading="saveLoading"
@@ -14,7 +14,7 @@
 		<v-btn
 			variant="tonal"
 			prepend-icon="mdi-tray-full"
-			class="counter-grid-action"
+			class="counter-grid-action counter-grid-action--drafts"
 			data-pos-keyboard-target="invoice-action"
 			data-testid="invoice-action-drafts"
 			:loading="loadDraftsLoading"
@@ -25,7 +25,7 @@
 		<v-btn
 			variant="tonal"
 			prepend-icon="mdi-folder-search-outline"
-			class="counter-grid-action"
+			class="counter-grid-action counter-grid-action--invoices"
 			data-pos-keyboard-target="invoice-action"
 			data-testid="invoice-action-management"
 			:loading="invoiceManagementLoading"
@@ -37,7 +37,7 @@
 			v-if="pos_profile.posa_allow_return == 1"
 			variant="tonal"
 			prepend-icon="mdi-backup-restore"
-			class="counter-grid-action"
+			class="counter-grid-action counter-grid-action--return"
 			data-pos-keyboard-target="invoice-action"
 			data-testid="invoice-action-returns"
 			:loading="returnsLoading"
@@ -51,7 +51,7 @@
 					v-bind="menuProps"
 					variant="tonal"
 					prepend-icon="mdi-dots-horizontal"
-					class="counter-grid-action"
+					class="counter-grid-action counter-grid-action--more"
 					data-pos-keyboard-target="invoice-action"
 					data-testid="invoice-action-more"
 				>
@@ -336,18 +336,66 @@ const showMoreActions = computed(
 	height: 38px !important;
 	min-width: 0 !important;
 	padding-inline: 10px !important;
-	border: 1px solid #9db2c4 !important;
+	border: 1px solid var(--rm-cg-line) !important;
 	border-radius: 3px !important;
-	background: #e8eef3 !important;
-	color: #10263b !important;
+	background: var(--rm-cg-action-more-bg) !important;
+	color: var(--rm-cg-action-more-text) !important;
 	font-size: 0.76rem !important;
 	font-weight: 650 !important;
+	letter-spacing: 0 !important;
 	text-transform: none !important;
 }
 
 .counter-grid-action:hover {
-	border-color: var(--counter-rugged-blue) !important;
-	background: #dbeafa !important;
+	border-color: currentColor !important;
+	background: var(--rm-cg-action-more-hover) !important;
+}
+
+.counter-grid-action--save {
+	border-color: var(--rm-cg-action-save-text) !important;
+	background: var(--rm-cg-action-save-bg) !important;
+	box-shadow: inset 4px 0 0 var(--rm-cg-action-save-text) !important;
+	color: var(--rm-cg-action-save-text) !important;
+}
+
+.counter-grid-action--save:hover {
+	background: var(--rm-cg-action-save-hover) !important;
+}
+
+.counter-grid-action--drafts {
+	border-color: var(--rm-cg-action-drafts-text) !important;
+	background: var(--rm-cg-action-drafts-bg) !important;
+	color: var(--rm-cg-action-drafts-text) !important;
+}
+
+.counter-grid-action--drafts:hover {
+	background: var(--rm-cg-action-drafts-hover) !important;
+}
+
+.counter-grid-action--invoices {
+	border-color: var(--rm-cg-action-invoices-text) !important;
+	background: var(--rm-cg-action-invoices-bg) !important;
+	color: var(--rm-cg-action-invoices-text) !important;
+}
+
+.counter-grid-action--invoices:hover {
+	background: var(--rm-cg-action-invoices-hover) !important;
+}
+
+.counter-grid-action--return {
+	border-color: var(--rm-cg-action-return-text) !important;
+	background: var(--rm-cg-action-return-bg) !important;
+	color: var(--rm-cg-action-return-text) !important;
+}
+
+.counter-grid-action--return:hover {
+	background: var(--rm-cg-action-return-hover) !important;
+}
+
+.counter-grid-action--more {
+	border-color: var(--rm-cg-action-more-text) !important;
+	background: var(--rm-cg-action-more-bg) !important;
+	color: var(--rm-cg-action-more-text) !important;
 }
 
 .counter-grid-action.text-error,
@@ -378,7 +426,7 @@ const showMoreActions = computed(
 @media (max-width: 1199px) {
 	.counter-grid-action {
 		padding-inline: 6px !important;
-		font-size: 0.72rem !important;
+		font-size: 0.75rem !important;
 	}
 
 	.counter-grid-action :deep(.v-icon) {

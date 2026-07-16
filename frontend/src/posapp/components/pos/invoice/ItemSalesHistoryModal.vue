@@ -904,9 +904,9 @@ watch(historyRows, () => {
 	overflow: hidden;
 	border: 3px solid var(--counter-rugged-navy);
 	border-radius: 5px !important;
-	background: #edf3f7 !important;
-	color: #10263b !important;
-	box-shadow: 0 5px 14px rgba(4, 22, 37, 0.34);
+	background: var(--rm-cg-surface-canvas) !important;
+	color: var(--rm-cg-text) !important;
+	box-shadow: 0 5px 14px rgba(23, 59, 43, 0.24);
 }
 
 .posa-item-history-card--fullscreen {
@@ -926,7 +926,7 @@ watch(historyRows, () => {
 	min-height: 70px;
 	padding: 10px 12px 10px 16px;
 	border-bottom: 2px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy);
+	background: var(--rm-cg-teal-700);
 	color: #ffffff;
 }
 
@@ -944,7 +944,7 @@ watch(historyRows, () => {
 }
 
 .posa-item-history-header__identity .text-subtitle-2 {
-	color: #d6e7f3 !important;
+	color: #e4f4f0 !important;
 }
 
 .posa-item-history-header__metrics {
@@ -955,9 +955,9 @@ watch(historyRows, () => {
 }
 
 .posa-item-history-header__metrics :deep(.v-chip) {
-	border: 1px solid #6ea3c7;
+	border: 1px solid var(--rm-cg-teal-300);
 	border-radius: 3px;
-	background: #174a70 !important;
+	background: var(--rm-cg-forest-800) !important;
 	color: #ffffff !important;
 }
 
@@ -967,7 +967,7 @@ watch(historyRows, () => {
 
 .posa-item-history-header__metrics :deep(.v-btn:not(.v-btn--icon)) {
 	border: 1px solid var(--counter-rugged-cyan);
-	background: #174a70 !important;
+	background: var(--rm-cg-forest-800) !important;
 	color: #ffffff !important;
 }
 
@@ -978,8 +978,8 @@ watch(historyRows, () => {
 .posa-item-history-tabs {
 	padding-inline: 12px;
 	border-bottom: 1px solid var(--counter-rugged-line);
-	background: #dfeaf2;
-	color: #17364f;
+	background: var(--rm-cg-surface-header);
+	color: var(--rm-cg-text);
 }
 
 .posa-item-history-tabs :deep(.v-tab) {
@@ -996,7 +996,7 @@ watch(historyRows, () => {
 	min-height: 0;
 	overflow: auto;
 	overscroll-behavior: contain;
-	background: #edf3f7;
+	background: var(--rm-cg-surface-canvas);
 }
 
 .posa-item-history-filters {
@@ -1023,14 +1023,14 @@ watch(historyRows, () => {
 	min-width: 0;
 	padding: 10px 12px;
 	border: 1px solid var(--counter-rugged-line);
-	border-left: 5px solid var(--counter-rugged-blue);
+	border-left: 5px solid var(--rm-cg-success-brand);
 	border-radius: 3px;
 	background: #ffffff;
-	box-shadow: 0 1px 3px rgba(9, 37, 61, 0.12);
+	box-shadow: 0 1px 3px rgba(23, 59, 43, 0.12);
 }
 
 .summary-tile__label {
-	color: #52687a;
+	color: var(--rm-cg-text-muted);
 	font-size: 0.7rem;
 	font-weight: 700;
 	text-transform: uppercase;
@@ -1039,7 +1039,7 @@ watch(historyRows, () => {
 .summary-tile__value {
 	margin-top: 3px;
 	overflow: hidden;
-	color: #10263b;
+	color: var(--rm-cg-text);
 	font-size: 0.96rem;
 	font-weight: 800;
 	font-variant-numeric: tabular-nums;
@@ -1058,7 +1058,7 @@ watch(historyRows, () => {
 }
 
 .posa-item-history-table {
-	border: 2px solid var(--counter-rugged-navy-raised);
+	border: 2px solid var(--rm-cg-line-strong);
 	border-radius: 3px;
 	overflow: auto;
 	background: #ffffff;
@@ -1074,10 +1074,10 @@ watch(historyRows, () => {
 
 .posa-item-history-table :deep(th) {
 	height: 40px;
-	border-right: 1px solid #70b9e4;
-	border-bottom: 2px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy-raised) !important;
-	color: #ffffff !important;
+	border-right: 1px solid var(--rm-cg-line);
+	border-bottom: 2px solid var(--rm-cg-line-strong);
+	background: var(--rm-cg-surface-header) !important;
+	color: var(--rm-cg-text) !important;
 	font-size: 0.72rem;
 	font-weight: 800;
 	text-transform: uppercase;
@@ -1087,17 +1087,22 @@ watch(historyRows, () => {
 	border-right: 1px solid var(--counter-rugged-soft-line);
 	border-bottom: 1px solid var(--counter-rugged-line);
 	background: #ffffff;
-	color: #10263b;
+	color: var(--rm-cg-text);
 	font-variant-numeric: tabular-nums;
 }
 
 .posa-item-history-table :deep(tbody tr:nth-child(even) td) {
-	background: #edf4f8;
+	background: var(--rm-cg-surface-muted);
 }
 
 .posa-item-history-row--active td {
-	background: #d7eafd !important;
-	box-shadow: inset 4px 0 0 var(--counter-rugged-blue);
+	background: var(--rm-cg-surface-selected) !important;
+	box-shadow: none;
+
+}
+
+.posa-item-history-row--active td:first-child {
+	box-shadow: inset 4px 0 0 var(--rm-cg-focus);
 }
 
 .posa-modal-keyboard-box {
@@ -1108,12 +1113,17 @@ watch(historyRows, () => {
 	z-index: 4;
 }
 
+.posa-item-history-card:focus-visible {
+	outline: 2px solid var(--rm-cg-focus) !important;
+	outline-offset: -5px;
+}
+
 .posa-item-history-table tr.posa-modal-keyboard-box {
 	outline-offset: -3px;
 }
 
 .posa-item-history-table tr.posa-modal-keyboard-box td {
-	background: #d7eafd !important;
+	background: var(--rm-cg-surface-selected) !important;
 }
 
 .posa-item-history-footer,
@@ -1129,14 +1139,14 @@ watch(historyRows, () => {
 }
 
 .posa-item-history-actions {
-	border-top: 2px solid var(--counter-rugged-navy-raised);
+	border-top: 2px solid var(--rm-cg-teal-700);
 	background: #ffffff;
 }
 
 .posa-item-history-actions :deep(.v-btn) {
 	border: 1px solid #b7202a;
 	border-radius: 3px !important;
-	background: #dc343d !important;
+	background: var(--rm-cg-danger) !important;
 	color: #ffffff !important;
 }
 
@@ -1149,17 +1159,17 @@ watch(historyRows, () => {
 .invoice-detail-card {
 	border: 3px solid var(--counter-rugged-navy);
 	border-radius: 5px !important;
-	background: #edf3f7 !important;
+	background: var(--rm-cg-surface-canvas) !important;
 }
 
 .invoice-detail-header {
 	border-bottom: 2px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy);
+	background: var(--rm-cg-teal-700);
 	color: #ffffff;
 }
 
 .invoice-detail-header .text-subtitle-2 {
-	color: #d6e7f3 !important;
+	color: #e4f4f0 !important;
 }
 
 .invoice-detail-header :deep(.v-btn) {

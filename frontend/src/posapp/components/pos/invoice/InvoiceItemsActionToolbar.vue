@@ -1,6 +1,11 @@
 <template>
-	<div class="column-selector-container">
+	<div
+		class="column-selector-container"
+		:class="{ 'column-selector-container--compact': compact }"
+		:data-testid="compact ? 'counter-grid-column-toolbar' : 'invoice-item-toolbar'"
+	>
 		<v-text-field
+			v-if="showSearch"
 			ref="itemSearchField"
 			:model-value="itemSearch"
 			@update:model-value="$emit('update:itemSearch', $event)"
@@ -10,18 +15,21 @@
 			class="item-search-field pos-themed-input"
 			:label="__('Search items or barcode')"
 			prepend-inner-icon="mdi-magnify"
-				hide-details
-				clearable
-				autocomplete="off"
-				data-pos-arrow-enters-invoice-grid
-			></v-text-field>
+			hide-details
+			clearable
+			autocomplete="off"
+			data-pos-arrow-enters-invoice-grid
+			data-testid="invoice-item-filter"
+		></v-text-field>
 		<v-btn
 			density="compact"
 			variant="text"
 			color="primary"
-			prepend-icon="mdi-cog-outline"
+			prepend-icon="mdi-view-column-outline"
 			@click="toggleColumnSelection"
 			class="column-selector-btn"
+			:class="{ 'column-selector-btn--compact': compact }"
+			data-testid="invoice-column-settings"
 		>
 			{{ __("Columns") }}
 		</v-btn>
@@ -48,9 +56,7 @@
 						>
 							<v-switch
 								:model-value="isTempColumnSelected(column.key)"
-								@update:model-value="
-									(value) => setTempColumnSelection(column.key, value)
-								"
+								@update:model-value="(value) => setTempColumnSelection(column.key, value)"
 								:label="column.title"
 								hide-details
 								density="compact"
@@ -94,6 +100,14 @@ const props = defineProps({
 		type: Array,
 		default: () => [],
 	},
+	showSearch: {
+		type: Boolean,
+		default: true,
+	},
+	compact: {
+		type: Boolean,
+		default: false,
+	},
 });
 
 const emit = defineEmits(["update:itemSearch", "update:selectedColumns"]);
@@ -117,13 +131,13 @@ const updateSelectedColumns = () => {
 };
 
 const focusSearch = () => {
+	if (!props.showSearch) return false;
 	itemSearchField.value?.focus?.();
+	return true;
 };
 
 const normalizeColumns = (columns) =>
-	Array.isArray(columns)
-		? [...new Set(columns.filter((column) => typeof column === "string"))]
-		: [];
+	Array.isArray(columns) ? [...new Set(columns.filter((column) => typeof column === "string"))] : [];
 
 const isTempColumnSelected = (key) => tempSelectedColumns.value.includes(key);
 
@@ -141,3 +155,11 @@ defineExpose({
 	focusSearch,
 });
 </script>
+
+<style scoped>
+.column-selector-container--compact {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+}
+</style>

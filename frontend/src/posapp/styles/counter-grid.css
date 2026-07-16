@@ -1,10 +1,11 @@
 /*
  * RetailMind Counter Grid presentation tokens.
  *
- * The legacy aliases keep the existing component styles stable while the
- * rm-cg names provide one documented source of truth for new UI work.
+ * Fresh Operations follows the green-led RetailMind Process Invoice language.
+ * Legacy aliases remain while component styles migrate to semantic rm-cg names.
  */
 .pos-main-container--counter-grid,
+.pos-navbar-enhanced--counter-grid,
 .invoice-shell--counter-grid,
 .counter-grid-actions,
 .counter-grid-overlay-content,
@@ -16,34 +17,65 @@
 .invoice-detail-card,
 .item-quick-edit,
 .payment-shell--counter-grid {
-	--rm-cg-navy-950: #09253d;
-	--rm-cg-navy-800: #174a70;
-	--rm-cg-blue-600: #0f70d7;
-	--rm-cg-cyan-400: #38bdf8;
+	--rm-cg-forest-950: #173b2b;
+	--rm-cg-forest-800: #214936;
+	--rm-cg-forest-line: #4b765f;
+	--rm-cg-teal-700: #087f7a;
+	--rm-cg-teal-600: #0f8f85;
+	--rm-cg-teal-300: #6bbfb5;
+	--rm-cg-blue-600: #2563eb;
+	--rm-cg-info: #1677d2;
 	--rm-cg-surface: #ffffff;
-	--rm-cg-surface-muted: #edf3f7;
-	--rm-cg-surface-selected: #e8f2ff;
-	--rm-cg-surface-editing: #effaf4;
-	--rm-cg-line: #9db2c4;
-	--rm-cg-line-soft: #c9d5df;
-	--rm-cg-text: #102a43;
-	--rm-cg-text-muted: #526678;
+	--rm-cg-surface-canvas: #f4f8f5;
+	--rm-cg-surface-muted: #edf5f0;
+	--rm-cg-surface-header: #e9f6ef;
+	--rm-cg-surface-selected: #e8f3ff;
+	--rm-cg-surface-editing: #edf8f2;
+	--rm-cg-line: #a9c4b5;
+	--rm-cg-line-strong: #6f9f86;
+	--rm-cg-line-soft: #cadbd1;
+	--rm-cg-text: #172033;
+	--rm-cg-text-muted: #536273;
 	--rm-cg-text-on-dark: #ffffff;
-	--rm-cg-success: #087d45;
+	--rm-cg-text-on-dark-muted: #c9ddd1;
+	--rm-cg-success: #087443;
+	--rm-cg-success-brand: #0f8f55;
 	--rm-cg-warning: #a95d00;
-	--rm-cg-danger: #dc343d;
+	--rm-cg-danger: #c43d4d;
 	--rm-cg-disabled: #687381;
-	--rm-cg-focus: #0f70d7;
-	--rm-cg-focus-on-dark: #38bdf8;
+	--rm-cg-focus: #2563eb;
+	--rm-cg-focus-on-dark: #7dd3fc;
 	--rm-cg-focus-inner: #ffffff;
+
+	--rm-cg-action-save-bg: #dff1e7;
+	--rm-cg-action-save-hover: #cce8da;
+	--rm-cg-action-save-text: #0b7044;
+	--rm-cg-action-drafts-bg: #eef2ff;
+	--rm-cg-action-drafts-hover: #e0e7ff;
+	--rm-cg-action-drafts-text: #4338ca;
+	--rm-cg-action-invoices-bg: #e8f3ff;
+	--rm-cg-action-invoices-hover: #d7eaff;
+	--rm-cg-action-invoices-text: #1268d5;
+	--rm-cg-action-return-bg: #fff1d6;
+	--rm-cg-action-return-hover: #ffe4b5;
+	--rm-cg-action-return-text: #8a4b00;
+	--rm-cg-action-more-bg: #e9eef3;
+	--rm-cg-action-more-hover: #dce4eb;
+	--rm-cg-action-more-text: #334155;
+
 	--rm-cg-radius-control: 4px;
 	--rm-cg-radius-surface: 6px;
-	--rm-cg-shadow-overlay: 0 10px 28px rgba(9, 37, 61, 0.24);
+	--rm-cg-shadow-overlay: 0 10px 28px rgba(23, 59, 43, 0.22);
 
-	--counter-rugged-navy: var(--rm-cg-navy-950);
-	--counter-rugged-navy-raised: var(--rm-cg-navy-800);
+	/* Temporary compatibility aliases for the existing template selectors. */
+	--rm-cg-navy-950: var(--rm-cg-forest-950);
+	--rm-cg-navy-800: var(--rm-cg-teal-700);
+	--rm-cg-cyan-400: var(--rm-cg-teal-300);
+
+	--counter-rugged-navy: var(--rm-cg-forest-950);
+	--counter-rugged-navy-raised: var(--rm-cg-teal-700);
 	--counter-rugged-blue: var(--rm-cg-blue-600);
-	--counter-rugged-cyan: var(--rm-cg-cyan-400);
+	--counter-rugged-cyan: var(--rm-cg-teal-300);
 	--counter-rugged-green: var(--rm-cg-success);
 	--counter-rugged-red: var(--rm-cg-danger);
 	--counter-rugged-line: var(--rm-cg-line);
@@ -68,7 +100,7 @@
 .counter-grid-overlay-content :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible,
 .posa-item-history-dialog :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible,
 .item-quick-edit-dialog :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible {
-	outline: 3px solid var(--rm-cg-focus, #0f70d7) !important;
+	outline: 3px solid var(--rm-cg-focus, #2563eb) !important;
 	outline-offset: 2px;
 }
 
@@ -77,6 +109,11 @@
 .counter-grid-overlay-content .v-btn,
 .counter-grid-overlay-content .v-field {
 	transition: none !important;
+}
+
+.pos-main-container--counter-grid .v-btn,
+.counter-grid-overlay-content .v-btn {
+	letter-spacing: 0 !important;
 }
 
 .pos-main-container--counter-grid,
@@ -90,12 +127,12 @@
 .payment-shell--counter-grid {
 	height: calc(100vh - 48px);
 	height: calc(100dvh - 48px);
-	background: var(--rm-cg-surface-muted);
+	background: var(--rm-cg-surface-canvas);
 	color: var(--rm-cg-text);
 }
 
 .payment-shell--counter-grid .payment-card {
-	border: 3px solid var(--rm-cg-navy-950);
+	border: 3px solid var(--rm-cg-forest-950);
 	border-radius: var(--rm-cg-radius-surface) !important;
 	background: var(--rm-cg-surface) !important;
 	box-shadow: none !important;
@@ -104,7 +141,7 @@
 .payment-shell--counter-grid .payment-scroll {
 	padding: 8px;
 	gap: 8px;
-	background: var(--rm-cg-surface-muted);
+	background: var(--rm-cg-surface-canvas);
 }
 
 .payment-shell--counter-grid .payment-sections--dialog {
@@ -125,8 +162,8 @@
 .payment-shell--counter-grid .payment-section__header {
 	margin: -10px -10px 0;
 	padding: 7px 10px;
-	border-bottom: 2px solid var(--rm-cg-cyan-400);
-	background: var(--rm-cg-navy-950);
+	border-bottom: 2px solid var(--rm-cg-teal-300);
+	background: var(--rm-cg-teal-700);
 }
 
 .payment-shell--counter-grid .payment-section__header .payment-section__title {

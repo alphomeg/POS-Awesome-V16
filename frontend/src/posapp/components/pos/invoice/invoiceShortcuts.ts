@@ -472,6 +472,10 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 			if (isLetter(event, "f")) {
 				consumeEvent(event);
 				showCompactPanel(this.eventBus, "invoice");
+				if (this.isCounterGridPresentation) {
+					this.focusItemSearchField?.();
+					return;
+				}
 				if (this.$refs.actionToolbar?.focusSearch) {
 					this.$refs.actionToolbar.focusSearch();
 					return;
@@ -526,12 +530,7 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 
 				try {
 					const shouldPrint = isPrintShortcut;
-					const paymentAmount = await this.confirmPaymentSubmission(
-						this.getShortcutPaymentAmount(),
-					);
-					if (paymentAmount === null) {
-						return;
-					}
+					const paymentAmount = this.getShortcutPaymentAmount();
 					await this.flushBackgroundUpdates?.();
 					this.triggerBackgroundFlush?.flush?.();
 					this.schedulePricingRuleApplication?.flush?.();

@@ -447,6 +447,24 @@ describe("invoiceShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
+	it("routes Alt+F to the real Counter Grid entry instead of the Classic cart filter", async () => {
+		const focusSearch = vi.fn();
+		const vm = {
+			...createVm(),
+			isCounterGridPresentation: true,
+			$refs: {
+				actionToolbar: { focusSearch },
+			},
+		};
+		const event = createAltEvent("f", "KeyF");
+
+		await (invoiceShortcuts as any).handleInvoiceShortcut.call(vm, event);
+
+		expect(vm.focusItemSearchField).toHaveBeenCalledTimes(1);
+		expect(focusSearch).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+	});
+
 	it("switches compact layout to payments before queueing submit and print", async () => {
 		const vm = {
 			...createVm(),
@@ -467,10 +485,10 @@ describe("invoiceShortcuts", () => {
 			"queue_submit_payment_shortcut",
 			{
 				print: true,
-				amount: 150,
+				amount: 125,
 			},
 		);
-		expect(vm.confirmPaymentSubmission).toHaveBeenCalledWith(125);
+		expect(vm.confirmPaymentSubmission).not.toHaveBeenCalled();
 		expect(vm.show_payment).toHaveBeenCalledTimes(1);
 		expect(vm.show_payment.mock.invocationCallOrder[0]).toBeLessThan(
 			vm.eventBus.emit.mock.invocationCallOrder.find(

@@ -64,7 +64,7 @@ async function expectBackground(locator: Locator, expected: string) {
 		.toBe(expected);
 }
 
-test.describe("Counter Grid rugged visual system", () => {
+test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 	test.describe.configure({ mode: "serial" });
 
 	let context: BrowserContext;
@@ -106,7 +106,7 @@ test.describe("Counter Grid rugged visual system", () => {
 		}
 	});
 
-	test("keeps the navy grid hierarchy inside every certified desktop width", async () => {
+	test("keeps the green-led grid hierarchy inside every certified desktop width", async () => {
 		await page.setViewportSize({ width: 1366, height: 768 });
 
 		for (const viewport of [
@@ -119,33 +119,79 @@ test.describe("Counter Grid rugged visual system", () => {
 			await expect(page.getByTestId("counter-grid-pos")).toBeVisible();
 			await expectBackground(
 				page.locator(".pos-navbar-enhanced--counter-grid"),
-				"rgb(9, 37, 61)",
+				"rgb(23, 59, 43)",
 			);
 			await expectBackground(
 				page.locator(".invoice-items-card > .invoice-section-heading"),
-				"rgb(9, 37, 61)",
+				"rgb(8, 127, 122)",
 			);
 			await expectBackground(
 				page.locator(".posa-cart-table thead th").first(),
-				"rgb(23, 74, 112)",
+				"rgb(233, 246, 239)",
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-pay"),
-				"rgb(8, 125, 69)",
+				"rgb(8, 116, 67)",
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-cancel-sale"),
-				"rgb(220, 52, 61)",
+				"rgb(196, 61, 77)",
 			);
+			await expectBackground(
+				page.getByTestId("invoice-action-save-clear"),
+				"rgb(223, 241, 231)",
+			);
+			await expectBackground(
+				page.getByTestId("invoice-action-drafts"),
+				"rgb(238, 242, 255)",
+			);
+			await expectBackground(
+				page.getByTestId("invoice-action-management"),
+				"rgb(232, 243, 255)",
+			);
+			await expectBackground(
+				page.getByTestId("invoice-action-returns"),
+				"rgb(255, 241, 214)",
+			);
+			await expectBackground(
+				page.getByTestId("invoice-action-more"),
+				"rgb(233, 238, 243)",
+			);
+			await expect(page.getByTestId("invoice-item-filter")).toHaveCount(
+				0,
+			);
+			await expect(
+				page.getByTestId("invoice-column-settings"),
+			).toBeVisible();
+			await expect(
+				page.getByTestId("counter-grid-history-header"),
+			).toBeInViewport();
+			await expect(
+				page
+					.locator(".posa-cart-table thead th")
+					.filter({ hasText: /Actions/i }),
+			).toBeInViewport();
+			const discountAmountHeader = page
+				.locator(".posa-cart-table thead th")
+				.filter({ hasText: /Discount Amount/i });
+			if (viewport.width === 1024) {
+				await expect(discountAmountHeader).toHaveCount(0);
+			} else {
+				await expect(discountAmountHeader).toBeVisible();
+			}
+			const tableBounds = await page
+				.locator(".posa-items-table-container--counter-grid")
+				.boundingBox();
+			expect(tableBounds?.height || 0).toBeGreaterThanOrEqual(300);
 			await expectNoViewportOverflow(page);
 			await page.screenshot({
-				path: `test-results/counter-grid-rugged-${viewport.width}x${viewport.height}.png`,
+				path: `test-results/counter-grid-retailmind-${viewport.width}x${viewport.height}.png`,
 				fullPage: true,
 			});
 		}
 	});
 
-	test("uses the rugged search, history, and update-item surfaces", async () => {
+	test("uses the RetailMind search, history, and update-item surfaces", async () => {
 		await page.setViewportSize({ width: 1366, height: 768 });
 
 		const entry = page.getByTestId("counter-grid-item-entry");
@@ -163,11 +209,11 @@ test.describe("Counter Grid rugged visual system", () => {
 		await expect(selectedResult).toHaveCount(1);
 		await expectBackground(
 			selectedResult.locator("td").first(),
-			"rgb(15, 112, 215)",
+			"rgb(22, 119, 210)",
 		);
 		await expectBackground(
 			page.locator(".counter-item-search-header"),
-			"rgb(9, 37, 61)",
+			"rgb(8, 127, 122)",
 		);
 
 		const searchInput = page
@@ -347,7 +393,7 @@ test.describe("Counter Grid rugged visual system", () => {
 			page.locator('[data-pharmacy-active="true"]'),
 		).toHaveAttribute("data-item-code", "02017");
 		await page.screenshot({
-			path: "test-results/counter-grid-rugged-item-search.png",
+			path: "test-results/counter-grid-retailmind-item-search.png",
 			fullPage: true,
 		});
 
@@ -357,16 +403,28 @@ test.describe("Counter Grid rugged visual system", () => {
 			.press("Enter");
 		const cartRow = page.getByTestId("cart-row-02017").first();
 		await expect(cartRow).toBeVisible({ timeout: 30_000 });
+		await expect(
+			cartRow.getByRole("button", { name: "Remove item" }),
+		).toBeInViewport();
+		await expect(
+			cartRow.getByRole("button", {
+				name: "Open item sales history and details",
+			}),
+		).toBeInViewport();
+		await page.screenshot({
+			path: "test-results/counter-grid-retailmind-populated.png",
+			fullPage: true,
+		});
 		await cartRow.click();
 		await page.keyboard.press("F12");
 		const history = page.getByTestId("item-history-modal");
 		await expect(history).toBeVisible({ timeout: 30_000 });
 		await expectBackground(
 			history.locator(".posa-item-history-header"),
-			"rgb(9, 37, 61)",
+			"rgb(8, 127, 122)",
 		);
 		await page.screenshot({
-			path: "test-results/counter-grid-rugged-item-history.png",
+			path: "test-results/counter-grid-retailmind-item-history.png",
 			fullPage: true,
 		});
 
@@ -375,14 +433,14 @@ test.describe("Counter Grid rugged visual system", () => {
 		await expect(quickEdit).toBeVisible({ timeout: 30_000 });
 		await expectBackground(
 			quickEdit.locator(".item-quick-edit__title"),
-			"rgb(9, 37, 61)",
+			"rgb(8, 127, 122)",
 		);
 		await expect(
 			quickEdit.locator(".item-quick-edit__section-title").first(),
-		).toHaveCSS("background-color", "rgb(23, 74, 112)");
+		).toHaveCSS("background-color", "rgb(233, 246, 239)");
 		await expectNoViewportOverflow(page);
 		await page.screenshot({
-			path: "test-results/counter-grid-rugged-item-update.png",
+			path: "test-results/counter-grid-retailmind-item-update.png",
 			fullPage: true,
 		});
 		await quickEdit
@@ -391,7 +449,7 @@ test.describe("Counter Grid rugged visual system", () => {
 		await expect(quickEdit).toBeHidden({ timeout: 30_000 });
 	});
 
-	test("uses the centered rugged payment surface", async () => {
+	test("uses the centered RetailMind payment surface", async () => {
 		await page.setViewportSize({ width: 1366, height: 768 });
 		await page.keyboard.press("F9");
 
@@ -405,7 +463,7 @@ test.describe("Counter Grid rugged visual system", () => {
 		);
 		await expectBackground(
 			payment.locator(".payment-section__header").first(),
-			"rgb(9, 37, 61)",
+			"rgb(8, 127, 122)",
 		);
 
 		const bounds = await paymentContent.boundingBox();
@@ -415,7 +473,7 @@ test.describe("Counter Grid rugged visual system", () => {
 		).toBeLessThanOrEqual(2);
 		await expectNoViewportOverflow(page);
 		await page.screenshot({
-			path: "test-results/counter-grid-rugged-payment.png",
+			path: "test-results/counter-grid-retailmind-payment.png",
 			fullPage: true,
 		});
 

@@ -48,12 +48,6 @@
 }
 
 .posa-items-table-container--counter-grid .posa-cart-table {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
 	border: 0;
 	border-radius: 0;
 	box-shadow: none;
@@ -63,10 +57,10 @@
 .posa-items-table-container--counter-grid .posa-cart-table th {
 	height: 46px;
 	padding: 8px 10px;
-	border-right: 1px solid #70b9e4;
-	border-bottom: 2px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy-raised) !important;
-	color: #ffffff !important;
+	border-right: 1px solid var(--rm-cg-line);
+	border-bottom: 2px solid var(--rm-cg-line-strong);
+	background: var(--rm-cg-surface-header) !important;
+	color: var(--rm-cg-text) !important;
 	font-size: 0.76rem;
 	font-weight: 800;
 	letter-spacing: 0;
@@ -79,7 +73,7 @@
 	border-right: 1px solid var(--counter-rugged-soft-line);
 	border-bottom: 1px solid var(--counter-rugged-line);
 	background: #ffffff;
-	color: #10263b;
+	color: var(--rm-cg-text);
 	font-weight: 550;
 }
 
@@ -88,15 +82,15 @@
 }
 
 .posa-items-table-container--counter-grid .posa-cart-table tbody tr:hover {
-	background: #dcecf7;
+	background: #eef8f2;
 }
 
 .posa-items-table-container--counter-grid .posa-cart-table tbody tr:hover > td {
-	background: #dcecf7;
+	background: #eef8f2;
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-row > td:first-child {
-	box-shadow: inset 4px 0 0 #8ca8bb;
+	box-shadow: inset 4px 0 0 var(--rm-cg-line-strong);
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-row > td[data-column-key="item_name"] {
@@ -104,8 +98,8 @@
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active > td {
-	background: var(--counter-rugged-navy-raised) !important;
-	color: #ffffff !important;
+	background: var(--rm-cg-surface-selected) !important;
+	color: var(--rm-cg-text) !important;
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active > td:first-child {
@@ -113,9 +107,9 @@
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-cell--keyboard-active {
-	background: var(--counter-rugged-navy-raised) !important;
+	background: var(--rm-cg-surface-editing) !important;
 	box-shadow:
-		inset 0 0 0 3px var(--counter-rugged-cyan),
+		inset 0 0 0 3px var(--rm-cg-focus),
 		inset 0 0 0 5px #ffffff !important;
 }
 
@@ -129,7 +123,7 @@
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active > td *,
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active input,
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active button {
-	color: #ffffff !important;
+	color: var(--rm-cg-text) !important;
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active .v-field,
@@ -142,18 +136,12 @@
 }
 
 .posa-items-table-container--counter-grid .posa-cart-item-row--keyboard-active .v-field__outline {
-	color: var(--counter-rugged-cyan) !important;
+	color: var(--rm-cg-focus) !important;
 	--v-field-border-opacity: 1;
 }
 
 /* Direct table hook avoids Vuetify's generated container hierarchy outranking the grid skin. */
 .posa-cart-table--counter-grid {
-	--counter-rugged-navy: #09253d;
-	--counter-rugged-navy-raised: #174a70;
-	--counter-rugged-blue: #0f70d7;
-	--counter-rugged-cyan: #38bdf8;
-	--counter-rugged-line: #9db2c4;
-	--counter-rugged-soft-line: #c9d5df;
 	border: 0 !important;
 	border-radius: 0 !important;
 	background: #ffffff !important;
@@ -163,10 +151,10 @@
 .posa-cart-table--counter-grid th {
 	height: 46px !important;
 	padding: 8px 10px !important;
-	border-right: 1px solid #70b9e4 !important;
-	border-bottom: 2px solid var(--counter-rugged-cyan) !important;
-	background: var(--counter-rugged-navy-raised) !important;
-	color: #ffffff !important;
+	border-right: 1px solid var(--rm-cg-line) !important;
+	border-bottom: 2px solid var(--rm-cg-line-strong) !important;
+	background: var(--rm-cg-surface-header) !important;
+	color: var(--rm-cg-text) !important;
 	font-size: 0.76rem !important;
 	font-weight: 800 !important;
 	letter-spacing: 0 !important;
@@ -179,22 +167,22 @@
 	border-right: 1px solid var(--counter-rugged-soft-line) !important;
 	border-bottom: 1px solid var(--counter-rugged-line) !important;
 	background: #ffffff;
-	color: #10263b;
+	color: var(--rm-cg-text);
 }
 
 .posa-cart-table--counter-grid tbody tr:hover > td {
-	background: #dcecf7;
+	background: #eef8f2;
 }
 
 .posa-cart-table--counter-grid .posa-cart-item-row--keyboard-active > td {
-	background: var(--counter-rugged-navy-raised) !important;
-	color: #ffffff !important;
+	background: var(--rm-cg-surface-selected) !important;
+	color: var(--rm-cg-text) !important;
 }
 
 .posa-cart-table--counter-grid .posa-cart-item-cell--keyboard-active {
-	background: var(--counter-rugged-navy-raised) !important;
+	background: var(--rm-cg-surface-editing) !important;
 	box-shadow:
-		inset 0 0 0 3px var(--counter-rugged-cyan),
+		inset 0 0 0 3px var(--rm-cg-focus),
 		inset 0 0 0 5px #ffffff !important;
 }
 

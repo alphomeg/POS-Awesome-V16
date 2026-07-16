@@ -415,11 +415,11 @@ export default {
 }
 
 .pos-navbar-enhanced--counter-grid {
-	background: #09253d !important;
+	background: var(--rm-cg-forest-950) !important;
 	background-image: none !important;
 	backdrop-filter: none !important;
-	border-bottom: 2px solid #38bdf8 !important;
-	box-shadow: 0 3px 0 rgba(5, 20, 34, 0.38) !important;
+	border-bottom: 2px solid var(--rm-cg-teal-300) !important;
+	box-shadow: 0 3px 0 rgba(10, 44, 30, 0.32) !important;
 	color: #ffffff !important;
 	transition: none !important;
 }
@@ -427,38 +427,40 @@ export default {
 .pos-navbar-enhanced--counter-grid .pos-navbar-title-light,
 .pos-navbar-enhanced--counter-grid .pos-navbar-title-compact {
 	color: #ffffff !important;
+	letter-spacing: 0 !important;
 }
 
 .pos-navbar-enhanced--counter-grid .pos-navbar-title-bold {
-	color: #39a0ff !important;
+	color: #79d6c9 !important;
+	letter-spacing: 0 !important;
 }
 
 .pos-navbar-enhanced--counter-grid .nav-icon,
 .pos-navbar-enhanced--counter-grid .offline-invoices-btn,
 .pos-navbar-enhanced--counter-grid .profile-chip {
-	background: #102f4a !important;
-	border: 1px solid #315773 !important;
+	background: var(--rm-cg-forest-800) !important;
+	border: 1px solid var(--rm-cg-forest-line) !important;
 	border-radius: 5px !important;
 	box-shadow: none !important;
 	color: #ffffff !important;
 }
 
 .pos-navbar-enhanced--counter-grid .profile-chip__meta {
-	color: #c4d4e1 !important;
+	color: var(--rm-cg-text-on-dark-muted) !important;
 }
 
 .pos-navbar-enhanced--counter-grid .pos-text-primary,
 .pos-navbar-enhanced--counter-grid .v-icon.pos-text-primary,
 .pos-navbar-enhanced--counter-grid .mdi-menu-down,
 .pos-navbar-enhanced--counter-grid .v-icon--end.pos-text-primary {
-	color: #eaf6ff !important;
+	color: #effaf4 !important;
 }
 
 .pos-navbar-enhanced--counter-grid :deep(.status-btn-enhanced),
 .pos-navbar-enhanced--counter-grid :deep(.notification-bell-trigger),
 .pos-navbar-enhanced--counter-grid :deep(.menu-btn-compact) {
-	background: #102f4a !important;
-	border: 1px solid #315773 !important;
+	background: var(--rm-cg-forest-800) !important;
+	border: 1px solid var(--rm-cg-forest-line) !important;
 	border-radius: 5px !important;
 	box-shadow: none !important;
 	color: #ffffff !important;

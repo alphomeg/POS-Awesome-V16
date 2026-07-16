@@ -282,7 +282,7 @@ test.describe("Counter Grid shell", () => {
 		);
 		await expect(firstRow.locator("td").first()).toHaveCSS(
 			"background-color",
-			"rgb(23, 74, 112)",
+			"rgb(232, 243, 255)",
 		);
 		await expect(secondRow.locator("td").first()).toHaveCSS(
 			"background-color",

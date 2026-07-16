@@ -14,7 +14,7 @@
 	>
 		<v-data-table-virtual
 			ref="virtualTable"
-			:headers="responsiveHeaders"
+			:headers="tableHeaders"
 			:items="displayItems"
 			show-expand
 			item-value="posa_row_id"
@@ -31,6 +31,20 @@
 			:search="counterGrid ? '' : itemSearch"
 			:custom-filter="customItemFilter"
 		>
+			<template v-slot:header.data-table-expand>
+				<v-tooltip location="bottom" :text="__('Item history and details')">
+					<template #activator="{ props: tooltipProps }">
+						<v-icon
+							v-bind="tooltipProps"
+							icon="mdi-chart-line"
+							size="18"
+							role="img"
+							:aria-label="__('Item history and details')"
+							data-testid="counter-grid-history-header"
+						/>
+					</template>
+				</v-tooltip>
+			</template>
 			<template #no-data>
 				<div class="posa-cart-empty-state">
 					<div class="posa-cart-empty-state__icon-wrap">
@@ -46,7 +60,6 @@
 					v-if="isCounterGridEntry(item)"
 					v-model="counterGridEntryQuery"
 					:columns="finalVisibleColumns"
-					:row-number="items.length + 1"
 					@submit="openCounterGridItemSearch"
 					@navigate-back="focusPreviousCounterGridEntry"
 				/>
@@ -294,6 +307,7 @@ const memoizedIsNegative = computed(() => {
 });
 
 const {
+	containerWidth,
 	breakpoint,
 	responsiveHeaders,
 	containerStyles,
@@ -304,17 +318,48 @@ const {
 	containerHeight,
 } = responsive;
 
+const COUNTER_GRID_COMPACT_COLUMN_WIDTHS: Record<string, { width: number; minWidth: number }> = {
+	item_name: { width: 220, minWidth: 200 },
+	qty: { width: 100, minWidth: 90 },
+	price_list_rate: { width: 125, minWidth: 115 },
+	discount_percentage: { width: 100, minWidth: 90 },
+	discount_amount: { width: 125, minWidth: 115 },
+	rate: { width: 95, minWidth: 90 },
+	amount: { width: 105, minWidth: 95 },
+	actions: { width: 84, minWidth: 78 },
+	posa_is_offer: { width: 82, minWidth: 76 },
+	uom: { width: 82, minWidth: 76 },
+};
+
+const tableHeaders = computed(() => {
+	if (!props.counterGrid || containerWidth.value > 1100) {
+		return responsiveHeaders.value;
+	}
+
+	const compactHeaders = responsiveHeaders.value.filter(
+		(header: any) =>
+			header.key !== "discount_amount" ||
+			!responsiveHeaders.value.some((candidate: any) => candidate.key === "discount_percentage"),
+	);
+
+	return compactHeaders.map((header: any) => ({
+		...header,
+		...(COUNTER_GRID_COMPACT_COLUMN_WIDTHS[header.key] || {}),
+	}));
+});
+
 const dynamicHeaderProps = computed(() => ({
 	class: `responsive-header container-${breakpoint.value}`,
 }));
 
-const finalVisibleColumns = computed(() => [...responsiveHeaders.value, DATA_TABLE_EXPAND_COLUMN]);
+const finalVisibleColumns = computed(() => [...tableHeaders.value, DATA_TABLE_EXPAND_COLUMN]);
 const navigableGridColumnKeys = computed(() => getNavigableCartColumnKeys(finalVisibleColumns.value));
 const gridContainerClasses = computed(() => ({
 	"posa-cart-grid-active": gridMode.value !== "inactive",
 	"posa-cart-grid-row-mode": gridMode.value === "row",
 	"posa-cart-grid-cell-mode": gridMode.value === "cell",
 	"posa-items-table-container--counter-grid": props.counterGrid,
+	"posa-items-table-container--counter-grid-compact": props.counterGrid && containerWidth.value <= 1100,
 }));
 const virtualScrollConfig = computed(() => {
 	const itemCount = items.value?.length || 0;
@@ -1118,13 +1163,13 @@ defineExpose({
 }
 
 .posa-items-table-container--counter-grid :deep(.posa-cart-table thead th) {
-	background: #174a70 !important;
-	color: #ffffff !important;
+	background: var(--rm-cg-surface-header) !important;
+	color: var(--rm-cg-text) !important;
 }
 
 .posa-items-table-container--counter-grid
 	:deep(.posa-cart-table tbody tr:not(.posa-cart-item-row--keyboard-active):hover td) {
-	background: #dcecf7 !important;
+	background: #eef8f2 !important;
 }
 
 .posa-items-table-container--counter-grid :deep(.posa-cart-item-row),
@@ -1135,7 +1180,19 @@ defineExpose({
 }
 
 .posa-items-table-container--counter-grid :deep(.posa-cart-item-row--keyboard-active > td) {
-	background: #174a70 !important;
-	color: #ffffff !important;
+	background: var(--rm-cg-surface-selected) !important;
+	color: var(--rm-cg-text) !important;
+}
+
+.posa-items-table-container--counter-grid-compact :deep(.v-data-table__table) {
+	width: 100% !important;
+	min-width: 0 !important;
+	table-layout: fixed;
+}
+
+.posa-items-table-container--counter-grid-compact :deep(th),
+.posa-items-table-container--counter-grid-compact :deep(td) {
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 </style>

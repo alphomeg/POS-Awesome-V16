@@ -1002,7 +1002,7 @@ export default {
 	grid-template-rows: minmax(0, 1fr) 30px;
 	height: 100%;
 	min-height: 0;
-	background: #e7edf2;
+	background: var(--rm-cg-surface-canvas);
 }
 
 .counter-grid-status {
@@ -1012,8 +1012,8 @@ export default {
 	min-width: 0;
 	padding: 0 14px;
 	border-top: 2px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy);
-	color: #e5eef5;
+	background: var(--rm-cg-surface);
+	color: var(--rm-cg-text-muted);
 	font-size: 0.78rem;
 }
 
@@ -1028,13 +1028,13 @@ export default {
 }
 
 .counter-grid-status :deep(.v-icon) {
-	color: var(--counter-rugged-cyan);
+	color: var(--rm-cg-success-brand);
 }
 
 .counter-grid-status__template {
 	margin-inline-start: auto;
 	font-weight: 700;
-	color: #ffffff;
+	color: var(--rm-cg-forest-950);
 }
 
 .counter-item-search-surface,
@@ -1048,8 +1048,8 @@ export default {
 	overflow: hidden;
 	border: 3px solid var(--counter-rugged-navy);
 	border-radius: 5px;
-	background: var(--counter-rugged-muted);
-	box-shadow: 0 5px 14px rgba(4, 22, 37, 0.34);
+	background: var(--rm-cg-surface-canvas);
+	box-shadow: 0 5px 14px rgba(23, 59, 43, 0.24);
 }
 
 .counter-item-search-header {
@@ -1060,7 +1060,7 @@ export default {
 	min-height: 62px;
 	padding: 8px 10px 8px 16px;
 	border-bottom: 2px solid var(--counter-rugged-cyan);
-	background: var(--counter-rugged-navy);
+	background: var(--rm-cg-teal-700);
 }
 
 .counter-item-search-header__copy {
@@ -1077,7 +1077,7 @@ export default {
 
 .counter-item-search-header__copy span {
 	overflow: hidden;
-	color: #d6e7f3;
+	color: #ffffff;
 	font-size: 0.78rem;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1089,7 +1089,7 @@ export default {
 }
 
 .counter-item-search-header :deep(.v-btn:hover) {
-	background: #174a70 !important;
+	background: var(--rm-cg-forest-800) !important;
 }
 
 .counter-item-search-header__source {
@@ -1100,7 +1100,7 @@ export default {
 .counter-item-search-header__source :deep(.v-field) {
 	border-radius: 3px;
 	background: #ffffff;
-	color: #09253d;
+	color: var(--rm-cg-text);
 }
 
 .counter-item-search-surface :deep(.items-selector-shell) {
@@ -1119,7 +1119,7 @@ export default {
 	border-radius: 0;
 	box-shadow: none;
 	resize: none !important;
-	background: var(--counter-rugged-muted) !important;
+	background: var(--rm-cg-surface-canvas) !important;
 }
 
 @media (max-width: 1199px) {

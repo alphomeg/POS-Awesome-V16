@@ -547,7 +547,7 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 	gap: 12px;
 	min-height: 52px;
 	padding: 6px 10px;
-	border-bottom: 2px solid var(--counter-rugged-navy-raised);
+	border-bottom: 2px solid var(--rm-cg-line-strong);
 	background: #ffffff;
 }
 
@@ -599,7 +599,7 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 }
 
 .pharmacy-alternate-context strong {
-	color: var(--counter-rugged-navy);
+	color: var(--rm-cg-forest-950);
 	font-size: 0.86rem;
 }
 
@@ -634,7 +634,7 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 	flex-direction: column;
 	gap: 8px;
 	padding: 24px;
-	background: #edf3f7;
+	background: var(--rm-cg-surface-canvas);
 	color: #42566a;
 	text-align: center;
 }
@@ -653,10 +653,10 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 .pharmacy-results-table :deep(th) {
 	height: 40px !important;
 	padding: 0 8px !important;
-	border-right: 1px solid #b5c9d8 !important;
-	border-bottom: 2px solid var(--counter-rugged-navy-raised) !important;
-	background: #dfeaf2 !important;
-	color: #10263b !important;
+	border-right: 1px solid var(--rm-cg-line) !important;
+	border-bottom: 2px solid var(--rm-cg-line-strong) !important;
+	background: var(--rm-cg-surface-header) !important;
+	color: var(--rm-cg-text) !important;
 	font-size: 0.72rem;
 	font-weight: 800 !important;
 	text-transform: uppercase;
@@ -668,7 +668,7 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 	border-right: 1px solid var(--counter-rugged-soft-line) !important;
 	border-bottom: 1px solid var(--counter-rugged-line) !important;
 	background: #ffffff;
-	color: #10263b;
+	color: var(--rm-cg-text);
 	font-size: 0.78rem;
 	font-weight: 520;
 	font-variant-numeric: tabular-nums;
@@ -687,23 +687,23 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 }
 
 .pharmacy-results-table :deep(tbody tr:nth-child(even):not(.item-row-highlighted) > td) {
-	background: #edf4f8;
+	background: var(--rm-cg-surface-muted);
 }
 
 .pharmacy-results-table :deep(tbody tr:not(.item-row-highlighted):hover > td) {
-	background: #dcecf7 !important;
+	background: var(--rm-cg-surface-editing) !important;
 }
 
 .pharmacy-results-table :deep(tbody tr.item-row-highlighted > td),
 .pharmacy-results-table :deep(tbody tr[aria-selected="true"] > td) {
-	background: var(--counter-rugged-blue) !important;
+	background: var(--rm-cg-info) !important;
 	color: #ffffff !important;
 	font-weight: 650;
 }
 
 .pharmacy-results-table :deep(tbody tr.item-row-highlighted > td:first-child),
 .pharmacy-results-table :deep(tbody tr[aria-selected="true"] > td:first-child) {
-	box-shadow: inset 5px 0 0 var(--counter-rugged-cyan);
+	box-shadow: inset 5px 0 0 var(--rm-cg-focus-on-dark);
 }
 
 .pharmacy-results-table :deep(tbody tr.item-row-highlighted .pharmacy-product-cell strong),

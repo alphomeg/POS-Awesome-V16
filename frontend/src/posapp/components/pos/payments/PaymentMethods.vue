@@ -212,7 +212,7 @@ const blurTarget = (event) => {
 .payment-method-card__badge {
 	padding: 6px 10px;
 	border-radius: 999px;
-	background: #174a70;
+	background: var(--rm-cg-teal-700, #174a70);
 	color: #ffffff;
 	font-size: 0.78rem;
 	font-weight: 700;

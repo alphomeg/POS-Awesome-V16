@@ -22,7 +22,6 @@ describe("CounterGridEntryRow", () => {
 					<CounterGridEntryRow
 						v-model="query"
 						:columns="[{ key: 'data-table-expand' }, { key: 'item_name' }, { key: 'qty' }]"
-						:row-number="3"
 						@submit="submitted = $event"
 						@navigate-back="navigationMethod = $event"
 					/>
@@ -67,7 +66,6 @@ describe("CounterGridEntryRow", () => {
 					<CounterGridEntryRow
 						v-model="query"
 						:columns="[{ key: 'item_name' }]"
-						:row-number="1"
 						@submit="submitted = $event"
 					/>
 				</tbody></table>
