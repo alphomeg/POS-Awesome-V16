@@ -15,6 +15,7 @@ const offlineMocks = vi.hoisted(() => ({
 	getCachedPriceListItems: vi.fn(async () => null),
 	getItemsLastSync: vi.fn(() => null),
 	isOffline: vi.fn(() => false),
+	isOfflineStorageReady: vi.fn(() => true),
 }));
 
 const cacheMocks = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ vi.mock("../src/offline/index", () => ({
 	getCachedPriceListItems: offlineMocks.getCachedPriceListItems,
 	getItemsLastSync: offlineMocks.getItemsLastSync,
 	isOffline: offlineMocks.isOffline,
+	isOfflineStorageReady: offlineMocks.isOfflineStorageReady,
 }));
 
 vi.mock("../src/posapp/composables/pos/items/store/useItemsCache", () => ({
@@ -220,6 +222,7 @@ describe("itemsStore loadItems", () => {
 		offlineMocks.getAllStoredItems.mockResolvedValue([]);
 		offlineMocks.searchStoredItems.mockResolvedValue([]);
 		offlineMocks.isOffline.mockReturnValue(false);
+		offlineMocks.isOfflineStorageReady.mockReturnValue(true);
 		cacheMocks.getCachedItems.mockResolvedValue(null);
 		cacheMocks.getCachedSearchResult.mockReturnValue(null);
 		itemsSearchMocks.performLocalSearch.mockImplementation(
@@ -515,6 +518,29 @@ describe("itemsStore loadItems", () => {
 				"POS-SERVER-ONLY_Main WH",
 			);
 		});
+	});
+
+	it("uses bounded server items when browser storage is degraded", async () => {
+		offlineMocks.isOfflineStorageReady.mockReturnValue(false);
+		const store = useItemsStore();
+
+		await store.initialize({
+			name: "POS-DEGRADED",
+			warehouse: "Main WH",
+			selling_price_list: "Retail",
+			currency: "PKR",
+			item_groups: [],
+			posa_local_storage: 1,
+			posa_use_limit_search: 1,
+		} as any);
+
+		expect(offlineMocks.getStoredItemsCountByScope).not.toHaveBeenCalled();
+		expect(offlineMocks.getAllStoredItems).not.toHaveBeenCalled();
+		expect(offlineMocks.searchStoredItems).not.toHaveBeenCalled();
+		expect(itemServiceMocks.getItemsData).toHaveBeenCalledTimes(1);
+		expect(itemsSyncMocks.backgroundSyncItems).not.toHaveBeenCalled();
+		expect(offlineMocks.clearStoredItems).not.toHaveBeenCalled();
+		expect(store.items).toHaveLength(1);
 	});
 
 	it("bypasses memory result cache when scoped offline catalog is large", async () => {

@@ -126,6 +126,8 @@ import {
 	getSyncResourceState,
 	listSyncResourceStates,
 	setTaxInclusiveSetting,
+	isOfflineStorageReady,
+	getOfflineStorageInitializationError,
 } from "../../offline/index";
 import { SyncCoordinator } from "../../offline/sync/SyncCoordinator";
 import { createOfflineSyncRuntime } from "../../offline/sync/runtime";
@@ -508,7 +510,12 @@ async function refreshOfflinePricingRules(options = {}) {
 }
 
 function canRunOfflineSync() {
-	return !!(getOfflineSyncProfile()?.name && !getIsManualOffline() && navigator.onLine);
+	return !!(
+		isOfflineStorageReady() &&
+		getOfflineSyncProfile()?.name &&
+		!getIsManualOffline() &&
+		navigator.onLine
+	);
 }
 
 function canRunTimerOfflineSync() {
@@ -1007,9 +1014,24 @@ const initializeOfflineQueueReadiness = async () => {
 
 const initializeData = async () => {
 	await initPromise;
-	await initializeOfflineQueueReadiness();
-	await hydrateOfflineSyncResourceStates();
-	checkDbHealth().catch(() => {});
+	const offlineStorageReady = isOfflineStorageReady();
+	if (offlineStorageReady) {
+		await initializeOfflineQueueReadiness();
+		await hydrateOfflineSyncResourceStates();
+		checkDbHealth().catch(() => {});
+	} else {
+		offlineQueueInitializationError.value = getOfflineStorageInitializationError();
+		console.error(
+			"POS browser storage is deferred; continuing in online server-only mode",
+			offlineQueueInitializationError.value,
+		);
+		toastStore.show({
+			title: __("Local storage deferred"),
+			detail: __("Online POS is available. Existing offline records remain preserved for recovery."),
+			color: "warning",
+			timeout: 8000,
+		});
+	}
 	// Offline-first bootstrap: hydrate register state from IndexedDB before server checks.
 	const openingData = getValidCachedOpeningForCurrentUser(getOpeningStorage(), frappe?.session?.user);
 	if (openingData) {
@@ -1019,7 +1041,7 @@ const initializeData = async () => {
 		}
 	}
 
-	if (queueHealthCheck()) {
+	if (offlineStorageReady && queueHealthCheck()) {
 		const pruned = purgeOldQueueEntries();
 		if (pruned > 0) {
 			alert("Old synced offline queue entries were pruned.");
@@ -1029,7 +1051,9 @@ const initializeData = async () => {
 	await syncStore.updatePendingCount();
 	syncTotals.value = getLastSyncTotals();
 
-	void checkCacheCapacity(90, notifyCacheCapacityIfActionable);
+	if (offlineStorageReady) {
+		void checkCacheCapacity(90, notifyCacheCapacityIfActionable);
+	}
 
 	// Check if running on IP host
 	isIpHost.value = /^\d+\.\d+\.\d+\.\d+/.test(window.location.hostname);

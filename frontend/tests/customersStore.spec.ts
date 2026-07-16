@@ -10,6 +10,7 @@ import type {
 
 const setCustomerStorageMock = vi.fn(async () => undefined);
 const saveStoredValueSnapshotMock = vi.fn();
+const isOfflineStorageReadyMock = vi.fn(() => true);
 
 vi.mock("../src/offline/index", () => ({
 	db: {
@@ -32,6 +33,7 @@ vi.mock("../src/offline/index", () => ({
 	getCustomerStorageCount: vi.fn(async () => 0),
 	clearCustomerStorage: vi.fn(async () => undefined),
 	isOffline: vi.fn(() => false),
+	isOfflineStorageReady: () => isOfflineStorageReadyMock(),
 	refreshBootstrapSnapshotFromCacheState: vi.fn(),
 }));
 
@@ -40,6 +42,7 @@ describe("customersStore profile and customer dto handling", () => {
 		setActivePinia(createPinia());
 		setCustomerStorageMock.mockClear();
 		saveStoredValueSnapshotMock.mockClear();
+		isOfflineStorageReadyMock.mockReturnValue(true);
 		(globalThis as any).frappe = {
 			call: vi.fn(),
 		};
@@ -150,5 +153,37 @@ describe("customersStore profile and customer dto handling", () => {
 		expect(store.loadedCustomerCount).toBe(450);
 		expect(observedCounts).toContain(201);
 		expect(observedCounts).toContain(449);
+	});
+
+	it("loads one server-only customer page when browser storage is degraded", async () => {
+		isOfflineStorageReadyMock.mockReturnValue(false);
+		const store = useCustomersStore();
+		store.setPosProfile({ name: "Main POS", company: "Test Co" });
+		const catalog = [
+			{ name: "CUST-0001", customer_name: "Customer One" },
+			{ name: "CUST-0002", customer_name: "Customer Two" },
+		];
+
+		(globalThis as any).frappe.call = vi.fn(async (request: any) => {
+			const response = request.method.endsWith("get_customers_count")
+				? { message: catalog.length }
+				: { message: catalog };
+			request.callback?.(response);
+			return response;
+		});
+
+		await store.get_customer_names();
+
+		expect(store.customersLoaded).toBe(true);
+		expect(store.loadProgress).toBe(100);
+		expect(store.customers).toEqual(catalog);
+		expect(setCustomerStorageMock).not.toHaveBeenCalled();
+		const customerCalls = (globalThis as any).frappe.call.mock.calls
+			.map(([request]: any[]) => request)
+			.filter((request: any) =>
+				request.method.endsWith("get_customer_names"),
+			);
+		expect(customerCalls).toHaveLength(1);
+		expect(customerCalls[0].args.limit).toBe(200);
 	});
 });

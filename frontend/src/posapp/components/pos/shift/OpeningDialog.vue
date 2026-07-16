@@ -142,6 +142,7 @@ import {
 	setBootstrapSnapshot,
 	initPromise,
 	checkDbHealth,
+	isOfflineStorageReady,
 } from "../../../../offline/index";
 import { createBootstrapSnapshotFromRegisterData } from "../../../../offline/bootstrapSnapshot";
 import authService from "../../../services/authService";
@@ -223,7 +224,9 @@ watch(pos_profile, (val) => {
 
 async function get_opening_dialog_data() {
 	await initPromise;
-	await checkDbHealth();
+	if (isOfflineStorageReady()) {
+		await checkDbHealth();
+	}
 	const currentUser = frappe?.session?.user || "";
 
 	// Load cached data first for offline usage

@@ -44,6 +44,76 @@ type AnyRecord = Record<string, any>;
 // --- Dexie initialization ---------------------------------------------------
 export const db = new Dexie("posawesome_offline");
 
+export type OfflineStorageInitializationState =
+	| "pending"
+	| "ready"
+	| "degraded";
+
+const OFFLINE_STORAGE_BOOT_TIMEOUT_MS = 8_000;
+const OFFLINE_STORAGE_ESTIMATE_TIMEOUT_MS = 1_000;
+const OFFLINE_STORAGE_DEGRADED_THRESHOLD_BYTES = 1024 * 1024 * 1024;
+let offlineStorageInitializationState: OfflineStorageInitializationState =
+	"pending";
+let offlineStorageInitializationError: unknown = null;
+
+export function getOfflineStorageInitializationState() {
+	return offlineStorageInitializationState;
+}
+
+export function getOfflineStorageInitializationError() {
+	return offlineStorageInitializationError;
+}
+
+export function isOfflineStorageReady() {
+	return offlineStorageInitializationState === "ready" && db.isOpen();
+}
+
+export function isOfflineStorageDegraded() {
+	return offlineStorageInitializationState === "degraded";
+}
+
+function withStorageTimeout<T>(
+	operation: Promise<T>,
+	timeoutMs: number,
+	message: string,
+	onTimeout?: () => void,
+) {
+	return new Promise<T>((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			try {
+				onTimeout?.();
+			} finally {
+				reject(new Error(message));
+			}
+		}, timeoutMs);
+		operation.then(resolve, reject).finally(() => clearTimeout(timeout));
+	});
+}
+
+async function getEstimatedOfflineStorageUsage() {
+	if (
+		typeof navigator === "undefined" ||
+		!navigator.storage ||
+		typeof navigator.storage.estimate !== "function"
+	) {
+		return 0;
+	}
+
+	try {
+		const estimate = (await withStorageTimeout(
+			navigator.storage.estimate(),
+			OFFLINE_STORAGE_ESTIMATE_TIMEOUT_MS,
+			"Browser storage estimate timed out",
+		)) as StorageEstimate & {
+			usageDetails?: { indexedDB?: number };
+		};
+		return Number(estimate.usageDetails?.indexedDB || estimate.usage || 0);
+	} catch (error) {
+		console.warn("Unable to estimate POS browser storage", error);
+		return 0;
+	}
+}
+
 const BASE_SCHEMA = {
 	keyval: "&key",
 	queue: "&key",
@@ -310,17 +380,6 @@ db.version(18)
 	);
 
 let persistWorker: Worker | null = null;
-if (typeof Worker !== "undefined") {
-	try {
-		// Use the plain URL so the service worker cache matches when offline
-		const workerUrl =
-			"/assets/posawesome/dist/js/posapp/workers/itemWorker.js";
-		persistWorker = new Worker(workerUrl, { type: "classic" });
-	} catch (e) {
-		console.error("Failed to init persist worker", e);
-		persistWorker = null;
-	}
-}
 
 const MEMORY_DEFAULTS: AnyRecord = {
 	offline_invoices: [],
@@ -496,7 +555,7 @@ const inFlightWorkerBatches = new Map<number, PersistWorkerBatch>();
 const activePersistOperations = new Set<Promise<void>>();
 let persistFlushScheduled = false;
 let nextPersistBatchId = 1;
-let persistWorkerHealthy = Boolean(persistWorker);
+let persistWorkerHealthy = false;
 let directPersistChain: Promise<void> = Promise.resolve();
 
 export async function hydrateMemoryKeys(
@@ -573,12 +632,44 @@ export async function hydrateMemoryKeys(
 	}
 }
 
-async function initializeMemoryKeys(keys: readonly string[]) {
+async function initializeMemoryKeys(
+	keys: readonly string[],
+	options: { trackStorageState?: boolean } = {},
+) {
+	const { trackStorageState = false } = options;
 	try {
-		await db.open();
-		await hydrateMemoryKeys(keys);
+		if (trackStorageState) {
+			const estimatedUsage = await getEstimatedOfflineStorageUsage();
+			if (estimatedUsage >= OFFLINE_STORAGE_DEGRADED_THRESHOLD_BYTES) {
+				throw new Error(
+					`POS browser storage is oversized (${estimatedUsage} bytes); preserving it for deferred recovery`,
+				);
+			}
+		}
+
+		await withStorageTimeout(
+			(async () => {
+				await db.open();
+				await hydrateMemoryKeys(keys);
+			})(),
+			OFFLINE_STORAGE_BOOT_TIMEOUT_MS,
+			"POS browser storage initialization timed out",
+			() => db.close(),
+		);
+		if (trackStorageState) {
+			offlineStorageInitializationState = "ready";
+			offlineStorageInitializationError = null;
+			initializePersistWorker();
+		}
+		return true;
 	} catch (error) {
 		console.error("Failed to initialize offline DB", error);
+		if (trackStorageState) {
+			offlineStorageInitializationState = "degraded";
+			offlineStorageInitializationError = error;
+			db.close();
+		}
+		return false;
 	}
 }
 
@@ -608,23 +699,30 @@ async function runPostHydrationTasks() {
 	}
 }
 
-export const startupInitPromise = initializeMemoryKeys(STARTUP_MEMORY_KEYS);
+const startupMemoryInitialization = initializeMemoryKeys(STARTUP_MEMORY_KEYS, {
+	trackStorageState: true,
+});
 
-export const initPromise = startupInitPromise.then(
-	() =>
-		new Promise<void>((resolve) => {
-			scheduleIdleTask(() => {
-				const startupKeys = new Set<string>(STARTUP_MEMORY_KEYS);
-				const remainingKeys = Object.keys(memory).filter(
-					(key) => !startupKeys.has(key),
-				);
-				void initializeMemoryKeys(remainingKeys).then(async () => {
-					await runPostHydrationTasks();
-					scheduleIdleOfflinePruning();
-					resolve();
+export const startupInitPromise = startupMemoryInitialization.then(
+	() => undefined,
+);
+
+export const initPromise = startupMemoryInitialization.then((storageReady) =>
+	storageReady
+		? new Promise<void>((resolve) => {
+				scheduleIdleTask(() => {
+					const startupKeys = new Set<string>(STARTUP_MEMORY_KEYS);
+					const remainingKeys = Object.keys(memory).filter(
+						(key) => !startupKeys.has(key),
+					);
+					void initializeMemoryKeys(remainingKeys).then(async () => {
+						await runPostHydrationTasks();
+						scheduleIdleOfflinePruning();
+						resolve();
+					});
 				});
-			});
-		}),
+			})
+		: Promise.resolve(),
 );
 
 export async function withDbTransaction<T>(
@@ -762,27 +860,54 @@ function failAllWorkerBatches(error: unknown) {
 	}
 }
 
-if (persistWorker) {
-	persistWorker.onmessage = (event: MessageEvent) => {
-		const data = event.data || {};
-		if (data.type === "persisted_batch") {
-			settleWorkerBatch(Number(data.batchId));
-		} else if (data.type === "persist_batch_failed") {
-			failAllWorkerBatches(
-				new Error(
-					data.error ||
-						`Persistence worker rejected batch ${Number(data.batchId)}`,
-				),
-			);
-		}
-	};
-	persistWorker.onerror = (event: ErrorEvent) => {
-		failAllWorkerBatches(event.error || new Error(event.message));
-	};
+function initializePersistWorker() {
+	if (
+		persistWorker ||
+		typeof Worker === "undefined" ||
+		!isOfflineStorageReady()
+	) {
+		return;
+	}
+
+	try {
+		// Use the plain URL so the service worker cache matches when offline.
+		const workerUrl =
+			"/assets/posawesome/dist/js/posapp/workers/itemWorker.js";
+		persistWorker = new Worker(workerUrl, { type: "classic" });
+		persistWorkerHealthy = true;
+		persistWorker.onmessage = (event: MessageEvent) => {
+			const data = event.data || {};
+			if (data.type === "persisted_batch") {
+				settleWorkerBatch(Number(data.batchId));
+			} else if (data.type === "persist_batch_failed") {
+				failAllWorkerBatches(
+					new Error(
+						data.error ||
+							`Persistence worker rejected batch ${Number(data.batchId)}`,
+					),
+				);
+			}
+		};
+		persistWorker.onerror = (event: ErrorEvent) => {
+			failAllWorkerBatches(event.error || new Error(event.message));
+		};
+	} catch (error) {
+		console.error("Failed to init persist worker", error);
+		persistWorker = null;
+		persistWorkerHealthy = false;
+	}
 }
 
 function dispatchPersistBatch(entries: PersistEntry[]) {
 	if (!entries.length) {
+		return Promise.resolve();
+	}
+	if (offlineStorageInitializationState === "pending") {
+		return startupMemoryInitialization.then((storageReady) =>
+			storageReady ? dispatchPersistBatch(entries) : undefined,
+		);
+	}
+	if (isOfflineStorageDegraded()) {
 		return Promise.resolve();
 	}
 
@@ -1093,7 +1218,7 @@ export function persist(key: string, value: unknown = memory[key]) {
 	}
 
 	writeLocalStorageMirror(key, value);
-	if (shouldPersistToIndexedDb(key)) {
+	if (shouldPersistToIndexedDb(key) && !isOfflineStorageDegraded()) {
 		pendingPersistEntries.set(key, value);
 		schedulePersistFlush();
 	}
@@ -1252,6 +1377,9 @@ export async function clearDerivedOfflineCaches() {
 }
 
 export async function quickDbHealthCheck() {
+	if (isOfflineStorageDegraded()) {
+		return false;
+	}
 	try {
 		if (!db.isOpen()) {
 			await db.open();
@@ -1265,6 +1393,9 @@ export async function quickDbHealthCheck() {
 }
 
 export async function repairDbAfterFailedHealthCheck(error?: unknown) {
+	if (isOfflineStorageDegraded()) {
+		return false;
+	}
 	try {
 		if (db.isOpen()) {
 			db.close();

@@ -222,10 +222,11 @@ describe("offline persistence batching", () => {
 		await Promise.resolve();
 		persist("item_details_cache", { version: 2 });
 		const secondFlush = flushPersistQueue();
-		await Promise.resolve();
+		await vi.waitFor(() => {
+			expect(ControlledWorker.instances[0]?.messages).toHaveLength(2);
+		});
 
 		const worker = ControlledWorker.instances[0] as ControlledWorker;
-		expect(worker.messages).toHaveLength(2);
 		worker.rejectBatch(worker.messages[1] as WorkerMessage);
 		await Promise.all([firstFlush, secondFlush]);
 

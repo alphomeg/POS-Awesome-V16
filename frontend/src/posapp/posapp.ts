@@ -38,6 +38,7 @@ import { reconcileBuildChangeOnStartup } from "./utils/buildCacheReconciler";
 import {
 	startupInitPromise,
 	isOffline,
+	isOfflineStorageReady,
 	registerPostHydrationTask,
 } from "../offline";
 import App from "./App.vue";
@@ -157,6 +158,9 @@ registerPostHydrationTask(async () => {
 });
 
 export async function runPosBootSync() {
+	if (!isOfflineStorageReady()) {
+		return;
+	}
 	await queueBuildReconciliation(true);
 }
 

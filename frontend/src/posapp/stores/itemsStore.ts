@@ -10,6 +10,7 @@ import itemService from "../services/itemService";
 import {
 	getItemsLastSync,
 	isOffline,
+	isOfflineStorageReady,
 	refreshBootstrapSnapshotFromCacheState,
 } from "../../offline/index";
 
@@ -260,12 +261,15 @@ export const useItemsStore = defineStore("items", () => {
 		);
 	};
 
-	const shouldPersistItems = () => {
+	const isCatalogPersistenceConfigured = () => {
 		const configured = posProfile.value?.posa_local_storage;
 		return configured == null
 			? true
 			: normalizeBooleanSetting(configured);
 	};
+
+	const shouldPersistItems = () =>
+		isCatalogPersistenceConfigured() && isOfflineStorageReady();
 
 	const shouldUseIndexedSearch = () => {
 		if (limitSearchEnabled.value || !shouldPersistItems()) {
@@ -823,7 +827,10 @@ export const useItemsStore = defineStore("items", () => {
 			await loadItems({ forceServer: false });
 		}
 
-		if (!shouldPersistItems()) {
+		if (
+			!isCatalogPersistenceConfigured() &&
+			isOfflineStorageReady()
+		) {
 			void clearStoredItemsCompat(getStorageScope()).catch((error) => {
 				console.warn("Failed to remove disabled browser catalog", error);
 			});

@@ -18,6 +18,7 @@ vi.mock("../src/offline/index", () => ({
 	clearOpeningStorage: offlineState.clearOpeningStorage,
 	setTaxTemplate: vi.fn(),
 	isOffline: vi.fn(() => false),
+	isOfflineStorageReady: vi.fn(() => true),
 	getBootstrapSnapshot: vi.fn(() => null),
 	setBootstrapSnapshot: vi.fn(),
 }));

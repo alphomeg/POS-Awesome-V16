@@ -12,6 +12,7 @@ import {
 	isOffline,
 	getBootstrapSnapshot,
 	setBootstrapSnapshot,
+	isOfflineStorageReady,
 } from "../../../../offline/index";
 import { getValidCachedOpeningForCurrentUser } from "../../../utils/openingCache";
 import { createBootstrapSnapshotFromRegisterData } from "../../../../offline/bootstrapSnapshot";
@@ -113,7 +114,9 @@ export function usePosShift(openDialog?: () => void) {
 
 	async function check_opening_entry() {
 		await initPromise;
-		await checkDbHealth();
+		if (isOfflineStorageReady()) {
+			await checkDbHealth();
+		}
 		const cachedOpening = getValidCachedOpeningForCurrentUser(
 			getOpeningStorage(),
 			frappe?.session?.user,

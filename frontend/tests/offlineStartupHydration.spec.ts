@@ -6,18 +6,73 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 describe("offline startup hydration", () => {
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
 		vi.resetModules();
 		delete (globalThis as any).requestIdleCallback;
+		delete (navigator as any).storage;
 		window.localStorage.clear();
+	});
+
+	it("defers oversized origin storage without opening IndexedDB or its worker", async () => {
+		const workerConstructor = vi.fn();
+		vi.stubGlobal("Worker", workerConstructor);
+		Object.defineProperty(navigator, "storage", {
+			configurable: true,
+			value: {
+				estimate: vi.fn(async () => ({
+					usage: 2 * 1024 * 1024 * 1024,
+					usageDetails: { indexedDB: 2 * 1024 * 1024 * 1024 },
+				})),
+			},
+		});
+
+		const {
+			db,
+			initPromise,
+			isOfflineStorageDegraded,
+			startupInitPromise,
+		} = await import("../src/offline/db");
+
+		await startupInitPromise;
+		await initPromise;
+
+		expect(isOfflineStorageDegraded()).toBe(true);
+		expect(db.isOpen()).toBe(false);
+		expect(workerConstructor).not.toHaveBeenCalled();
+	});
+
+	it("degrades when IndexedDB never finishes opening", async () => {
+		vi.useFakeTimers();
+		const workerConstructor = vi.fn();
+		vi.stubGlobal("Worker", workerConstructor);
+		vi.spyOn(indexedDB, "open").mockReturnValue({} as IDBOpenDBRequest);
+
+		const {
+			db,
+			initPromise,
+			isOfflineStorageDegraded,
+			startupInitPromise,
+		} = await import("../src/offline/db");
+
+		await vi.advanceTimersByTimeAsync(8_001);
+		await startupInitPromise;
+		await initPromise;
+
+		expect(isOfflineStorageDegraded()).toBe(true);
+		expect(db.isOpen()).toBe(false);
+		expect(workerConstructor).not.toHaveBeenCalled();
 	});
 
 	it("resolves startup readiness without waiting for idle full hydration", async () => {
 		const idleCallbacks: Array<() => void> = [];
-		(globalThis as any).requestIdleCallback = vi.fn((callback: () => void) => {
-			idleCallbacks.push(callback);
-			return idleCallbacks.length;
-		});
+		(globalThis as any).requestIdleCallback = vi.fn(
+			(callback: () => void) => {
+				idleCallbacks.push(callback);
+				return idleCallbacks.length;
+			},
+		);
 
 		const { startupInitPromise, initPromise } = await import(
 			"../src/offline/db"
@@ -41,10 +96,12 @@ describe("offline startup hydration", () => {
 
 	it("completes registered post-hydration work before full readiness", async () => {
 		const idleCallbacks: Array<() => void> = [];
-		(globalThis as any).requestIdleCallback = vi.fn((callback: () => void) => {
-			idleCallbacks.push(callback);
-			return idleCallbacks.length;
-		});
+		(globalThis as any).requestIdleCallback = vi.fn(
+			(callback: () => void) => {
+				idleCallbacks.push(callback);
+				return idleCallbacks.length;
+			},
+		);
 		const postHydrationTask = vi.fn(async () => undefined);
 		const { initPromise, registerPostHydrationTask, startupInitPromise } =
 			await import("../src/offline/db");
@@ -58,7 +115,9 @@ describe("offline startup hydration", () => {
 	});
 
 	it("hydrates grouped tables with bulk reads and preserves fallback precedence", async () => {
-		const { db, hydrateMemoryKeys, memory } = await import("../src/offline/db");
+		const { db, hydrateMemoryKeys, memory } = await import(
+			"../src/offline/db"
+		);
 		await db.open();
 		await Promise.all([
 			db.table("settings").clear(),
@@ -110,14 +169,16 @@ describe("offline startup hydration", () => {
 			releaseRead = resolve;
 		});
 
-		vi.spyOn(settings, "bulkGet").mockImplementation(async (keys: any[]) => {
-			await readBlocked;
-			return keys.map((key) =>
-				key === "manual_offline"
-					? { key, value: false }
-					: undefined,
-			);
-		});
+		vi.spyOn(settings, "bulkGet").mockImplementation(
+			async (keys: any[]) => {
+				await readBlocked;
+				return keys.map((key) =>
+					key === "manual_offline"
+						? { key, value: false }
+						: undefined,
+				);
+			},
+		);
 
 		const hydration = hydrateMemoryKeys(["manual_offline"]);
 		memory.manual_offline = true;
