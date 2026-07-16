@@ -1030,6 +1030,7 @@ const triggerSearchFocusRecovery = () => {
 		uiStore.triggerItemSearchFocus();
 		if (eventBus && typeof eventBus.emit === "function") {
 			eventBus.emit("focus_item_search");
+			eventBus.emit("focus_invoice_item_entry");
 		}
 	});
 };
@@ -1082,6 +1083,7 @@ const queueSearchRefocusRecovery = () => {
 };
 
 const back_to_invoice = () => {
+	const shouldRestoreShortcutFocus = paymentShortcutHostOpen.value;
 	releaseActiveFocus();
 	paymentVisible.value = false;
 	if (paymentDialogOpen.value) {
@@ -1092,6 +1094,9 @@ const back_to_invoice = () => {
 	}
 	if (activeView.value === "payment") {
 		uiStore.setActiveView("items");
+	}
+	if (shouldRestoreShortcutFocus) {
+		triggerSearchFocusRecovery();
 	}
 	queueSearchRefocusRecovery();
 };

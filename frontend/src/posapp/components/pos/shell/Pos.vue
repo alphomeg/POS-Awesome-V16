@@ -517,6 +517,15 @@ export default {
 				eventBus?.emit?.("focus_item_search");
 			});
 		};
+		const focusInvoiceItemEntry = () => {
+			nextTick(() => {
+				if (counterGridActive.value) {
+					invoicePanel.value?.focusCounterGridEntry?.();
+					return;
+				}
+				focusItemSearchField();
+			});
+		};
 
 		const handlePaymentDialogUpdate = (value) => {
 			if (value || !usePaymentDialog.value) {
@@ -533,11 +542,7 @@ export default {
 			if (!usePaymentDialog.value) {
 				return;
 			}
-			if (counterGridActive.value) {
-				nextTick(() => invoicePanel.value?.focusCounterGridEntry?.());
-				return;
-			}
-			focusItemSearchField();
+			focusInvoiceItemEntry();
 		};
 
 		const setCompactPanel = (panel) => {
@@ -736,6 +741,7 @@ export default {
 					shift.submit_closing_pos(data);
 				});
 				eventBus.on("focus_additional_discount", focusAdditionalDiscountField);
+				eventBus.on("focus_invoice_item_entry", focusInvoiceItemEntry);
 				eventBus.on("set_compact_panel", setCompactPanel);
 				eventBus.on("open_counter_item_search", openCounterItemSearch);
 				eventBus.on("open_cart_alternates", openCartAlternates);
@@ -760,6 +766,7 @@ export default {
 			if (eventBus) {
 				eventBus.off("submit_closing_pos");
 				eventBus.off("focus_additional_discount", focusAdditionalDiscountField);
+				eventBus.off("focus_invoice_item_entry", focusInvoiceItemEntry);
 				eventBus.off("set_compact_panel", setCompactPanel);
 				eventBus.off("open_counter_item_search", openCounterItemSearch);
 				eventBus.off("open_cart_alternates", openCartAlternates);
