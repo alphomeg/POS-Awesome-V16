@@ -88,6 +88,11 @@
 	letter-spacing: 0;
 }
 
+/* Closed dialog hosts render zero-height Vuetify rows; remove their layout gutters. */
+.pos-main-container--counter-grid > .v-row.justify-center {
+	margin: 0;
+}
+
 .counter-grid-overlay-content {
 	max-height: calc(100vh - 24px);
 	max-height: calc(100dvh - 24px);

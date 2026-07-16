@@ -121,6 +121,17 @@ test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 				page.locator(".pos-navbar-enhanced--counter-grid"),
 				"rgb(23, 59, 43)",
 			);
+			const navbarBounds = await page
+				.locator(".pos-navbar-enhanced--counter-grid")
+				.boundingBox();
+			const invoiceModeAlertBounds = await page
+				.locator(".invoice-status-alert")
+				.boundingBox();
+			expect(navbarBounds).not.toBeNull();
+			expect(invoiceModeAlertBounds).not.toBeNull();
+			expect(invoiceModeAlertBounds!.y).toBeGreaterThanOrEqual(
+				navbarBounds!.y + navbarBounds!.height + 2,
+			);
 			await expectBackground(
 				page.locator(".invoice-items-card > .invoice-section-heading"),
 				"rgb(8, 127, 122)",

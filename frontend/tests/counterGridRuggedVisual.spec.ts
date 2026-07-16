@@ -76,6 +76,9 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(tokens).toContain("--rm-cg-action-drafts-bg: #eef2ff");
 		expect(tokens).toContain("--rm-cg-action-return-bg: #fff1d6");
 		expect(tokens).toContain(
+			".pos-main-container--counter-grid > .v-row.justify-center",
+		);
+		expect(tokens).toContain(
 			"--counter-rugged-green: var(--rm-cg-success)",
 		);
 		expect(navbar).toContain("pos-navbar-enhanced--counter-grid");
