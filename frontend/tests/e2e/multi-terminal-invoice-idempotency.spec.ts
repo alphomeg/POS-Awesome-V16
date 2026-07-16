@@ -1,41 +1,29 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
-import {
-	cleanupProvisionedTerminalCashier,
-	clickWithTerminalUnlockRetry,
-	ensureAuthoritativeTerminalUnlock,
-	unlockTerminalDialogIfVisible,
-} from "./helpers/terminalAuth";
-
 const ENABLED = process.env.POSA_MULTI_TERMINAL_E2E === "1";
 const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const ITEM_CODE = process.env.POSA_COUNTER_GRID_PERF_ITEM || "02017";
+const EXPECTED_PROFILE =
+	process.env.POSA_COUNTER_GRID_POS_PROFILE || "POS Awesome - MedPlus";
+const CASHIER_PIN = process.env.POSA_E2E_CASHIER_PIN || "";
 const SUBMIT_METHOD = "posawesome.posawesome.api.invoices.submit_invoice";
-const OUTBOX_METHOD =
-	"posawesome.posawesome.api.offline_sync.invoices.submit_invoice_outbox_entry";
 
 test.skip(
 	!ENABLED,
 	"Set POSA_MULTI_TERMINAL_E2E=1 to run the authenticated multi-terminal idempotency test.",
 );
 
-test.afterEach(async ({ page }) => {
-	await cleanupProvisionedTerminalCashier(page);
-});
-
 type InvoicePayload = Record<string, any>;
 type SubmissionPayload = {
 	data: Record<string, any>;
 	invoice: InvoicePayload;
+	cashier_pin: string;
 };
-type OutboxResponse = {
-	acknowledged: boolean;
+type SubmissionResponse = {
+	name: string;
+	doctype: string;
+	docstatus: number;
 	client_request_id: string;
-	invoice: {
-		name: string;
-		doctype: string;
-		docstatus: number;
-	};
 	replayed?: boolean;
 };
 
@@ -95,13 +83,17 @@ async function waitForPos(page: Page) {
 			"Multi-terminal E2E requires POSA_SMOKE_SID or login credentials.",
 		);
 	}
-	await ensureAuthoritativeTerminalUnlock(page);
 	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
 		timeout: 90_000,
 	});
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
+	await expect(page.locator('[data-test="pos-navbar"]')).toHaveAttribute(
+		"data-pos-profile",
+		EXPECTED_PROFILE,
+		{ timeout: 90_000 },
+	);
 }
 
 async function addSingleItem(page: Page) {
@@ -126,6 +118,26 @@ async function addSingleItem(page: Page) {
 }
 
 async function captureSubmissionPayload(page: Page) {
+	await page.getByTestId("payment-submit").click();
+	const signingDialog = page.getByTestId("cashier-sale-signing-dialog");
+	await expect(signingDialog).toBeVisible({ timeout: 15_000 });
+	const pinInput = signingDialog
+		.getByTestId("cashier-sale-pin-input")
+		.locator("input");
+	await expect(pinInput).toBeFocused();
+	const paymentMethods = signingDialog.getByTestId(
+		"cashier-sale-payment-method",
+	);
+	const labels = await paymentMethods.locator("span").allTextContents();
+	const cashIndex = labels.indexOf("Cash");
+	expect(
+		cashIndex,
+		`${EXPECTED_PROFILE} must expose the exact Cash payment method.`,
+	).toBeGreaterThanOrEqual(0);
+	await paymentMethods.nth(cashIndex).click();
+	await pinInput.fill(CASHIER_PIN);
+	await pinInput.focus();
+
 	await page.evaluate((submitMethod) => {
 		const scope = window as any;
 		const originalCall = scope.frappe.call.bind(scope.frappe);
@@ -148,7 +160,7 @@ async function captureSubmissionPayload(page: Page) {
 		};
 	}, SUBMIT_METHOD);
 
-	await page.getByTestId("payment-submit").click();
+	await pinInput.press("Enter");
 	await expect
 		.poll(
 			() =>
@@ -231,17 +243,21 @@ async function submitUntilResolved(
 	for (let attempt = 0; attempt < 60; attempt += 1) {
 		try {
 			const response = await withTimeout(
-				callFrappe<OutboxResponse>(page, OUTBOX_METHOD, {
-					client_request_id: clientRequestId,
+				callFrappe<SubmissionResponse>(page, SUBMIT_METHOD, {
 					invoice: payload.invoice,
 					data: payload.data,
+					submit_in_background: 0,
+					cashier_pin: payload.cashier_pin,
 				}),
 				12_000,
-				`Outbox submission timed out for ${clientRequestId}`,
+				`Signed submission timed out for ${clientRequestId}`,
 			);
-			if (response?.acknowledged && response.invoice?.name)
+			if (
+				response?.client_request_id === clientRequestId &&
+				response.name
+			)
 				return response;
-			lastError = new Error("Outbox response was not acknowledged");
+			lastError = new Error("Signed submission was not acknowledged");
 		} catch (error) {
 			lastError = error;
 		}
@@ -290,14 +306,15 @@ test("two terminals resolve one canonical invoice without duplicates", async ({
 	page,
 }) => {
 	test.setTimeout(5 * 60_000);
+	if (!CASHIER_PIN) {
+		throw new Error(
+			"Multi-terminal idempotency requires POSA_E2E_CASHIER_PIN.",
+		);
+	}
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await waitForPos(page);
 	await addSingleItem(page);
-	await unlockTerminalDialogIfVisible(page);
-	await clickWithTerminalUnlockRetry(
-		page,
-		page.getByTestId("invoice-action-pay"),
-	);
+	await page.getByTestId("invoice-action-pay").click();
 	await expect(page.getByTestId("payment-root")).toBeVisible({
 		timeout: 30_000,
 	});
@@ -319,6 +336,9 @@ test("two terminals resolve one canonical invoice without duplicates", async ({
 		.toString(36)
 		.slice(2, 10)}`;
 	const payload: SubmissionPayload = JSON.parse(JSON.stringify(captured));
+	expect(payload.cashier_pin).toBe(CASHIER_PIN);
+	expect(payload.invoice).not.toHaveProperty("cashier_pin");
+	expect(payload.data).not.toHaveProperty("cashier_pin");
 	payload.invoice.posa_client_request_id = requestId;
 	payload.data.client_request_id = requestId;
 	payload.data.idempotency_key = requestId;
@@ -345,11 +365,10 @@ test("two terminals resolve one canonical invoice without duplicates", async ({
 
 		expect(firstResult.client_request_id).toBe(requestId);
 		expect(secondResult.client_request_id).toBe(requestId);
-		expect(firstResult.invoice.name).toBe(secondResult.invoice.name);
-		expect(firstResult.invoice.docstatus).toBe(1);
-		expect(secondResult.invoice.docstatus).toBe(1);
-		authoritativeDoctype =
-			firstResult.invoice.doctype || authoritativeDoctype;
+		expect(firstResult.name).toBe(secondResult.name);
+		expect(firstResult.docstatus).toBe(1);
+		expect(secondResult.docstatus).toBe(1);
+		authoritativeDoctype = firstResult.doctype || authoritativeDoctype;
 
 		const invoices = await findInvoicesByRequestId(
 			firstTerminal,
@@ -358,7 +377,7 @@ test("two terminals resolve one canonical invoice without duplicates", async ({
 		);
 		expect(invoices).toEqual([
 			expect.objectContaining({
-				name: firstResult.invoice.name,
+				name: firstResult.name,
 				docstatus: 1,
 			}),
 		]);

@@ -2,17 +2,11 @@ import { writeFile } from "node:fs/promises";
 
 import { expect, test, type Page } from "@playwright/test";
 
-import {
-	cleanupProvisionedTerminalCashier,
-	clickWithTerminalUnlockRetry,
-	ensureAuthoritativeTerminalUnlock,
-	unlockTerminalDialogIfVisible,
-} from "./helpers/terminalAuth";
-
 const ENABLED = process.env.POSA_COUNTER_GRID_PERF_E2E === "1";
 const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const PROFILE =
 	process.env.POSA_COUNTER_GRID_POS_PROFILE || "POS Awesome - MedPlus";
+const CASHIER_PIN = process.env.POSA_E2E_CASHIER_PIN || "";
 const ITEM_CODE = process.env.POSA_COUNTER_GRID_PERF_ITEM || "02017";
 const SEARCH_QUERY = process.env.POSA_COUNTER_GRID_PERF_SEARCH || "arinac";
 const SAMPLE_COUNT = Math.max(
@@ -33,10 +27,6 @@ test.skip(
 	!ENABLED,
 	"Set POSA_COUNTER_GRID_PERF_E2E=1 to run real submission performance tests.",
 );
-
-test.afterEach(async ({ page }) => {
-	await cleanupProvisionedTerminalCashier(page);
-});
 
 async function callFrappe<T = any>(
 	page: Page,
@@ -62,13 +52,17 @@ async function waitForPos(page: Page) {
 			"Counter Grid performance E2E requires POSA_SMOKE_SID or login credentials.",
 		);
 	}
-	await ensureAuthoritativeTerminalUnlock(page);
 	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
 		timeout: 90_000,
 	});
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
+	await expect(page.locator('[data-test="pos-navbar"]')).toHaveAttribute(
+		"data-pos-profile",
+		PROFILE,
+		{ timeout: 90_000 },
+	);
 }
 
 async function addSingleItem(page: Page) {
@@ -192,11 +186,6 @@ async function resolveInvoiceDoctype(page: Page) {
 		: "Sales Invoice";
 }
 
-async function cancelInvoice(page: Page, doctype: string, name: string) {
-	if (!name) return;
-	await callFrappe(page, "frappe.client.cancel", { doctype, name });
-}
-
 function percentile95(values: number[]) {
 	const sorted = [...values].sort((left, right) => left - right);
 	return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] || 0;
@@ -307,6 +296,11 @@ test("warm one-item cash submission stays below the p95 target", async ({
 	page,
 }) => {
 	test.setTimeout(15 * 60_000);
+	if (!CASHIER_PIN) {
+		throw new Error(
+			"Warm submission performance requires POSA_E2E_CASHIER_PIN.",
+		);
+	}
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await waitForPos(page);
 	const invoiceDoctype = await resolveInvoiceDoctype(page);
@@ -345,129 +339,128 @@ test("warm one-item cash submission stays below the p95 target", async ({
 		status?: number;
 		ledgerState?: string;
 	}> = [];
-	const uncancelled = new Set<string>();
 
-	try {
-		for (let run = 0; run < WARMUP_COUNT + SAMPLE_COUNT; run += 1) {
-			await establishWarmOnlineState(page);
-			await addSingleItem(page);
-			await unlockTerminalDialogIfVisible(page);
-			await clickWithTerminalUnlockRetry(
-				page,
-				page.getByTestId("invoice-action-pay"),
-			);
-			const paymentRoot = page.getByTestId("payment-root");
-			await expect(paymentRoot).toBeVisible({ timeout: 30_000 });
-			const submit = page.getByTestId("payment-submit");
-			await expect(submit).toBeEnabled({ timeout: 15_000 });
-			await establishWarmOnlineState(page);
+	for (let run = 0; run < WARMUP_COUNT + SAMPLE_COUNT; run += 1) {
+		await establishWarmOnlineState(page);
+		await addSingleItem(page);
+		await page.getByTestId("invoice-action-pay").click();
+		const paymentRoot = page.getByTestId("payment-root");
+		await expect(paymentRoot).toBeVisible({ timeout: 30_000 });
+		const submit = page.getByTestId("payment-submit");
+		await expect(submit).toBeEnabled({ timeout: 15_000 });
+		await establishWarmOnlineState(page);
+		await submit.click();
 
-			const eventCount = await page.evaluate(
-				() => (window as any).__posaSubmissionPerfEvents.length,
-			);
-			const dispatchCount = await page.evaluate(
-				() => (window as any).__posaSubmissionDispatchEvents.length,
-			);
-			const startedAt = await page.evaluate(() => performance.now());
-			await submit.click();
-			await expect
-				.poll(
-					() =>
-						page.evaluate(
-							() =>
-								(window as any).__posaSubmissionDispatchEvents
-									.length,
-						),
-					{ timeout: 15_000 },
-				)
-				.toBeGreaterThan(dispatchCount);
-			await expect
-				.poll(
-					() =>
-						page.evaluate(
-							() =>
-								(window as any).__posaSubmissionPerfEvents
-									.length,
-						),
-					{ timeout: 30_000 },
-				)
-				.toBeGreaterThan(eventCount);
-			const response = await page.evaluate(
-				(index) => (window as any).__posaSubmissionPerfEvents[index],
-				eventCount,
-			);
-			const dispatch = await page.evaluate(
-				(index) => (window as any).__posaSubmissionDispatchEvents[index],
-				dispatchCount,
-			);
-			expect(response.requestId).toBeTruthy();
-			expect(response.invoice).toBeTruthy();
-			await expect(paymentRoot).toBeHidden({ timeout: 30_000 });
-			const entry = page.getByTestId("counter-grid-item-entry");
-			await expect(entry).toBeVisible({
-				timeout: 30_000,
-			});
-			await expect(entry).toHaveValue("");
-			await expect(entry).toBeFocused();
-			await expect(
-				page.locator('[data-testid^="cart-row-"]'),
-			).toHaveCount(0);
-			if (!response.wasSubmitted) {
-				expect(
-					await hasDurableInvoiceIntent(page, response.requestId),
-				).toBe(true);
-			}
-			const finishedAt = await page.evaluate(() => performance.now());
+		const signingDialog = page.getByTestId("cashier-sale-signing-dialog");
+		await expect(signingDialog).toBeVisible({ timeout: 15_000 });
+		const pinInput = signingDialog
+			.getByTestId("cashier-sale-pin-input")
+			.locator("input");
+		await expect(pinInput).toBeFocused();
+		const paymentMethods = signingDialog.getByTestId(
+			"cashier-sale-payment-method",
+		);
+		const labels = await paymentMethods.locator("span").allTextContents();
+		const cashIndex = labels.indexOf("Cash");
+		expect(
+			cashIndex,
+			`${PROFILE} must expose the exact Cash payment method.`,
+		).toBeGreaterThanOrEqual(0);
+		await paymentMethods.nth(cashIndex).click();
+		await pinInput.fill(CASHIER_PIN);
+		await pinInput.focus();
 
-			let submittedInvoice: Awaited<
-				ReturnType<typeof findSubmittedInvoiceByRequestId>
-			> = null;
-			await expect
-				.poll(
-					async () => {
-						submittedInvoice =
-							await findSubmittedInvoiceByRequestId(
-								page,
-								invoiceDoctype,
-								response.requestId,
-							);
-						return submittedInvoice?.name || "";
-					},
-					{ timeout: 60_000 },
-				)
-				.toBe(response.invoice);
-			const invoiceName = submittedInvoice?.name || "";
-			uncancelled.add(invoiceName);
-
-			samples.push({
-				run: run + 1,
-				warmup: run < WARMUP_COUNT,
-				latencyMs: Number((finishedAt - startedAt).toFixed(2)),
-				invoice: invoiceName,
-				requestId: response.requestId,
-				dispatchLatencyMs: Number(
-					(dispatch.timestamp - startedAt).toFixed(2),
-				),
-				responseLatencyMs: Number(
-					(response.timestamp - dispatch.timestamp).toFixed(2),
-				),
-				uiFinalizeMs: Number((finishedAt - response.timestamp).toFixed(2)),
-				wasSubmitted: response.wasSubmitted,
-				queued: response.queued,
-				docstatus: response.docstatus,
-				status: response.status,
-				ledgerState: response.ledgerState,
-			});
-
-			await cancelInvoice(page, invoiceDoctype, invoiceName);
-			uncancelled.delete(invoiceName);
+		const eventCount = await page.evaluate(
+			() => (window as any).__posaSubmissionPerfEvents.length,
+		);
+		const dispatchCount = await page.evaluate(
+			() => (window as any).__posaSubmissionDispatchEvents.length,
+		);
+		const startedAt = await page.evaluate(() => performance.now());
+		await pinInput.press("Enter");
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						() =>
+							(window as any).__posaSubmissionDispatchEvents
+								.length,
+					),
+				{ timeout: 15_000 },
+			)
+			.toBeGreaterThan(dispatchCount);
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						() => (window as any).__posaSubmissionPerfEvents.length,
+					),
+				{ timeout: 30_000 },
+			)
+			.toBeGreaterThan(eventCount);
+		const response = await page.evaluate(
+			(index) => (window as any).__posaSubmissionPerfEvents[index],
+			eventCount,
+		);
+		const dispatch = await page.evaluate(
+			(index) => (window as any).__posaSubmissionDispatchEvents[index],
+			dispatchCount,
+		);
+		expect(response.requestId).toBeTruthy();
+		expect(response.invoice).toBeTruthy();
+		await expect(signingDialog).toBeHidden({ timeout: 30_000 });
+		await expect(paymentRoot).toBeHidden({ timeout: 30_000 });
+		const entry = page.getByTestId("counter-grid-item-entry");
+		await expect(entry).toBeVisible({
+			timeout: 30_000,
+		});
+		await expect(entry).toHaveValue("");
+		await expect(entry).toBeFocused();
+		await expect(page.locator('[data-testid^="cart-row-"]')).toHaveCount(0);
+		if (!response.wasSubmitted) {
+			expect(
+				await hasDurableInvoiceIntent(page, response.requestId),
+			).toBe(true);
 		}
-	} finally {
-		for (const invoiceName of uncancelled) {
-			await cancelInvoice(page, invoiceDoctype, invoiceName).catch(
-				() => {},
-			);
-		}
+		const finishedAt = await page.evaluate(() => performance.now());
+
+		let submittedInvoice: Awaited<
+			ReturnType<typeof findSubmittedInvoiceByRequestId>
+		> = null;
+		await expect
+			.poll(
+				async () => {
+					submittedInvoice = await findSubmittedInvoiceByRequestId(
+						page,
+						invoiceDoctype,
+						response.requestId,
+					);
+					return submittedInvoice?.name || "";
+				},
+				{ timeout: 60_000 },
+			)
+			.toBe(response.invoice);
+		const invoiceName = submittedInvoice?.name || "";
+
+		samples.push({
+			run: run + 1,
+			warmup: run < WARMUP_COUNT,
+			latencyMs: Number((finishedAt - startedAt).toFixed(2)),
+			invoice: invoiceName,
+			requestId: response.requestId,
+			dispatchLatencyMs: Number(
+				(dispatch.timestamp - startedAt).toFixed(2),
+			),
+			responseLatencyMs: Number(
+				(response.timestamp - dispatch.timestamp).toFixed(2),
+			),
+			uiFinalizeMs: Number((finishedAt - response.timestamp).toFixed(2)),
+			wasSubmitted: response.wasSubmitted,
+			queued: response.queued,
+			docstatus: response.docstatus,
+			status: response.status,
+			ledgerState: response.ledgerState,
+		});
 	}
 
 	const measured = samples
