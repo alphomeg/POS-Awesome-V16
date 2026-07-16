@@ -1675,9 +1675,10 @@ class TestManualPostingDatePreservation(unittest.TestCase):
                     "posting_date": "2026-03-19",
                     "items": [],
                     "payments": [],
+                    "posa_client_request_id": "manual-posting-001",
                 }
             ),
-            json.dumps({}),
+            json.dumps({"client_request_id": "manual-posting-001"}),
             submit_in_background=0,
             cashier_pin="1234",
         )
@@ -1780,9 +1781,10 @@ class TestManualPostingDatePreservation(unittest.TestCase):
                         ],
                         "taxes": [tax_row],
                         "payments": [],
+                        "posa_client_request_id": "manual-posting-vat-001",
                     }
                 ),
-                json.dumps({}),
+                json.dumps({"client_request_id": "manual-posting-vat-001"}),
                 submit_in_background=0,
                 cashier_pin="1234",
             )
@@ -1863,9 +1865,10 @@ class TestManualPostingDatePreservation(unittest.TestCase):
                     "additional_discount_percentage": 10,
                     "discount_amount": -10,
                     "items": [],
+                    "posa_client_request_id": "manual-posting-return-001",
                 }
             ),
-            json.dumps({}),
+            json.dumps({"client_request_id": "manual-posting-return-001"}),
             submit_in_background=0,
             cashier_pin="1234",
         )
@@ -1895,6 +1898,104 @@ class TestInvoiceIdempotency(unittest.TestCase):
             lambda *_args, **_kwargs: "cashier@example.com"
         )
         self.creation._validate_invoice_opening_shift = lambda *args, **kwargs: None
+
+    def test_submit_invoice_requires_client_request_id_before_cashier_resolution(self):
+        resolve_cashier = Mock(
+            side_effect=AssertionError("cashier PIN must not be consumed without an idempotency key")
+        )
+        self.creation._resolve_cashier_by_pin = resolve_cashier
+
+        with self.assertRaisesRegex(Exception, "client_request_id is required"):
+            self.creation.submit_invoice(
+                json.dumps(
+                    {
+                        "doctype": "Sales Invoice",
+                        "pos_profile": "Main POS",
+                        "company": "Test Company",
+                    }
+                ),
+                json.dumps({}),
+                cashier_pin="1234",
+            )
+
+        resolve_cashier.assert_not_called()
+
+    def test_submit_invoice_stamps_server_resolved_cashier_on_pos_invoice(self):
+        invoice_doc = FakeDoc(
+            doctype="POS Invoice",
+            name="ACC-PSINV-CASHIER-0001",
+            docstatus=0,
+            pos_profile="Main POS",
+            company="Test Company",
+            currency="USD",
+            customer="CUST-0001",
+            is_return=0,
+            items=[],
+            payments=[],
+            taxes=[],
+            redeem_loyalty_points=0,
+            loyalty_program=None,
+            cost_center=None,
+            write_off_amount=0,
+            rounded_total=10,
+            grand_total=10,
+            conversion_rate=1,
+            remarks="",
+        )
+        invoice_doc.submit = lambda: setattr(invoice_doc, "docstatus", 1)
+        ledger_doc = FakeDoc(
+            doctype="POS Invoice Submission Ledger",
+            name="ledger-pos-cashier-001",
+            ledger_key="ledger-pos-cashier-001",
+            client_request_id="pos-cashier-001",
+            company="Test Company",
+            pos_profile="Main POS",
+            document_type="POS Invoice",
+            state="RECEIVED",
+        )
+
+        self.creation.frappe.db.get_value = lambda *args, **kwargs: 0
+        self.creation.frappe.db.exists = lambda doctype, name: (
+            doctype == "POS Invoice" and name == invoice_doc.name
+        )
+        self.creation.frappe.get_value = lambda *args, **kwargs: 0
+        self.creation.frappe.get_doc = lambda *args, **kwargs: invoice_doc
+        self.creation._save_draft_with_latest_timestamp = lambda doc: doc
+        self.creation._apply_invoice_gift_card_settlement = lambda *args, **kwargs: None
+        self.creation._process_post_submit_payments = lambda *args, **kwargs: None
+
+        with (
+            patch.object(self.creation, "_get_submission_ledger", return_value=None),
+            patch.object(self.creation, "find_invoice_by_client_request_id", return_value=None),
+            patch.object(
+                self.creation,
+                "_get_or_create_submission_ledger",
+                return_value=(ledger_doc, True),
+            ),
+        ):
+            result = self.creation.submit_invoice(
+                json.dumps(
+                    {
+                        "doctype": "POS Invoice",
+                        "_force_invoice_doctype": "POS Invoice",
+                        "name": invoice_doc.name,
+                        "pos_profile": "Main POS",
+                        "company": "Test Company",
+                        "currency": "USD",
+                        "customer": "CUST-0001",
+                        "items": [],
+                        "payments": [],
+                        "posa_client_request_id": "pos-cashier-001",
+                    }
+                ),
+                json.dumps({"client_request_id": "pos-cashier-001"}),
+                cashier_pin="1234",
+            )
+
+        self.assertEqual(result["doctype"], "POS Invoice")
+        self.assertEqual(result["docstatus"], 1)
+        self.assertEqual(result["posa_cashier"], "cashier@example.com")
+        self.assertEqual(invoice_doc.posa_cashier, "cashier@example.com")
 
     def test_forged_profile_or_company_values_are_rejected_before_authorization(self):
         authorize = Mock(

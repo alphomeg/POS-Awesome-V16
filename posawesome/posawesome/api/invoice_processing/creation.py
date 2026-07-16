@@ -1884,6 +1884,8 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         data[TRUSTED_SHIFT_AUDIT_KEY] = dict(trusted_shift_audit)
     _reject_embedded_cashier_pin(invoice, data)
     client_request_id = normalize_invoice_request_identity(invoice, data)
+    if not client_request_id:
+        frappe.throw(_("client_request_id is required for invoice submission."))
     _sanitize_delivery_dates(invoice)
     _apply_manual_posting_controls(invoice)
     submit_in_background = cint(submit_in_background)
