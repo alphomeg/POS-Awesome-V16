@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { KEY_TABLE_MAP } from "../src/offline/db";
+import { db, KEY_TABLE_MAP } from "../src/offline/db";
 
 function extractWorkerKeyTableMapKeys(source: string): string[] {
 	const match = source.match(/const\s+KEY_TABLE_MAP\s*=\s*\{([\s\S]*?)\n\};/);
@@ -76,6 +76,31 @@ describe("offline key map parity", () => {
 		expect(workerSource).toContain("item_price_records");
 		expect(workerSource).toContain("pricing_rule_records");
 		expect(workerSource).toContain("currency_rate_records");
+		const leanItemsSchema = 'items: "&item_code,profile_scope"';
+		const leanCatalogSchema =
+			'"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],profile_scope,item_code"';
+		expect(appDbSource).toContain(leanItemsSchema);
+		expect(workerSource).toContain(leanItemsSchema);
+		expect(appDbSource).toContain(leanCatalogSchema);
+		expect(workerSource).toContain(leanCatalogSchema);
+	});
+
+	it("opens the lean V18 catalog schema", async () => {
+		await db.open();
+
+		expect(db.verno).toBe(18);
+		expect(
+			db.table("items").schema.indexes.map((index) => index.name),
+		).toEqual(["profile_scope"]);
+		expect(
+			db
+				.table("item_catalog_rows")
+				.schema.indexes.map((index) => index.name),
+		).toEqual([
+			"[profile_scope+catalog_generation]",
+			"profile_scope",
+			"item_code",
+		]);
 	});
 
 	it("keeps worker persistence table-grouped and bulk-written", () => {

@@ -53,7 +53,14 @@ const SCHEMA_V17 = {
 	item_catalog_state: "&profile_scope,active_generation,updated_at",
 };
 
-const SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V17);
+const SCHEMA_V18 = {
+	...SCHEMA_V17,
+	items: "&item_code,profile_scope",
+	item_catalog_rows:
+		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],profile_scope,item_code",
+};
+
+const SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V18);
 
 const normalizeSearchValue = (value) =>
 	String(value || "")
@@ -231,6 +238,14 @@ const dbReady = (async () => {
 	db.version(16).stores(SCHEMA_V16);
 	db.version(17)
 		.stores(SCHEMA_V17)
+		.upgrade((tx) =>
+			tx.table("settings").put({
+				key: "schema_signature",
+				value: SCHEMA_SIGNATURE,
+			}),
+		);
+	db.version(18)
+		.stores(SCHEMA_V18)
 		.upgrade((tx) =>
 			tx.table("settings").put({
 				key: "schema_signature",

@@ -104,6 +104,13 @@ export const useItemsStore = defineStore("items", () => {
 		return [];
 	};
 
+	const clearStoredItemsCompat = async (scope = "") => {
+		const clearStoredItemsFn = await getOfflineFn("clearStoredItems");
+		if (typeof clearStoredItemsFn === "function") {
+			await clearStoredItemsFn(scope);
+		}
+	};
+
 	const searchStoredItemsCompat = async (args: any) => {
 		const searchFn = await getOfflineFn("searchStoredItems");
 		if (typeof searchFn !== "function") {
@@ -253,14 +260,17 @@ export const useItemsStore = defineStore("items", () => {
 		);
 	};
 
-	const shouldUseIndexedSearch = () => {
-		if (limitSearchEnabled.value) {
-			return false;
-		}
-		return true;
+	const shouldPersistItems = () => {
+		const configured = posProfile.value?.posa_local_storage;
+		return configured == null
+			? true
+			: normalizeBooleanSetting(configured);
 	};
 
-	const shouldPersistItems = () => {
+	const shouldUseIndexedSearch = () => {
+		if (limitSearchEnabled.value || !shouldPersistItems()) {
+			return false;
+		}
 		return true;
 	};
 
@@ -397,6 +407,9 @@ export const useItemsStore = defineStore("items", () => {
 		group: string,
 		limit: number,
 	) => {
+		if (!shouldPersistItems()) {
+			return [];
+		}
 		const normalizedGroup =
 			typeof group === "string" && group.length > 0 ? group : "ALL";
 		const stored = await searchStoredItemsCompat({
@@ -789,8 +802,15 @@ export const useItemsStore = defineStore("items", () => {
 
 		await loadItemGroups(posProfile.value);
 		await assessCacheHealth();
+		if (!shouldPersistItems()) {
+			setItems([], { totalCount: 0 });
+			itemsLoaded.value = false;
+			resetCachedPagination();
+			syncBootstrapItemReadiness(0);
+		}
+
 		await Promise.allSettled([
-			loadCachedItems(),
+			shouldPersistItems() ? loadCachedItems() : Promise.resolve(),
 			fastCounterEnabled.value
 				? loadHotCatalog({ force: true })
 				: Promise.resolve(clearHotCatalog()),
@@ -801,6 +821,12 @@ export const useItemsStore = defineStore("items", () => {
 			(!limitSearchEnabled.value && items.value.length === 0);
 		if (needsInitialServerCatalog && !isOffline()) {
 			await loadItems({ forceServer: false });
+		}
+
+		if (!shouldPersistItems()) {
+			void clearStoredItemsCompat(getStorageScope()).catch((error) => {
+				console.warn("Failed to remove disabled browser catalog", error);
+			});
 		}
 	};
 

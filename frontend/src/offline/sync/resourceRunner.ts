@@ -34,6 +34,7 @@ type SupportedSyncProfile = SyncScopedProfile & {
 	currency?: string | null;
 	selling_price_list?: string | null;
 	posa_allow_multi_currency?: boolean;
+	posa_local_storage?: boolean;
 	payments?: any[];
 };
 
@@ -55,6 +56,21 @@ type RunSupportedOfflineSyncResourceArgs = {
 
 function getPersistedWatermark(state: SyncResourceState | null | undefined) {
 	return state?.watermark || null;
+}
+
+function normalizeBooleanSetting(value: unknown, fallback = false) {
+	if (value == null || value === "") {
+		return fallback;
+	}
+	if (typeof value === "string") {
+		return ["1", "true", "yes", "on"].includes(
+			value.trim().toLowerCase(),
+		);
+	}
+	if (typeof value === "number") {
+		return value === 1;
+	}
+	return Boolean(value);
 }
 
 export function isSupportedOfflineSyncResourceId(
@@ -95,7 +111,13 @@ export function buildOfflineSyncProfile(
 		modified: profile.modified || null,
 		currency: profile.currency || null,
 		selling_price_list: profile.selling_price_list || null,
-		posa_allow_multi_currency: !!profile.posa_allow_multi_currency,
+		posa_allow_multi_currency: normalizeBooleanSetting(
+			profile.posa_allow_multi_currency,
+		),
+		posa_local_storage: normalizeBooleanSetting(
+			profile.posa_local_storage,
+			true,
+		),
 		payments: Array.isArray(profile.payments) ? profile.payments : [],
 	};
 }
@@ -176,6 +198,15 @@ export async function runSupportedOfflineSyncResource({
 					),
 			});
 		case "items":
+			if (posProfile.posa_local_storage === false) {
+				return {
+					resourceId: "items" as const,
+					status: "idle" as const,
+					watermark: getPersistedWatermark(persistedState),
+					schemaVersion: persistedState?.schemaVersion || null,
+					response: {},
+				};
+			}
 			return syncItemsResource({
 				...sharedArgs,
 				priceList: posProfile.selling_price_list || null,

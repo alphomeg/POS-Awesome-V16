@@ -11,6 +11,7 @@ const offlineMocks = vi.hoisted(() => ({
 	getStoredItemsCountByScope: vi.fn(async () => 0),
 	getAllStoredItems: vi.fn(async () => []),
 	searchStoredItems: vi.fn(async () => []),
+	clearStoredItems: vi.fn(async () => undefined),
 	getCachedPriceListItems: vi.fn(async () => null),
 	getItemsLastSync: vi.fn(() => null),
 	isOffline: vi.fn(() => false),
@@ -48,6 +49,7 @@ vi.mock("../src/offline/index", () => ({
 	getStoredItemsCountByScope: offlineMocks.getStoredItemsCountByScope,
 	getAllStoredItems: offlineMocks.getAllStoredItems,
 	searchStoredItems: offlineMocks.searchStoredItems,
+	clearStoredItems: offlineMocks.clearStoredItems,
 	getCachedPriceListItems: offlineMocks.getCachedPriceListItems,
 	getItemsLastSync: offlineMocks.getItemsLastSync,
 	isOffline: offlineMocks.isOffline,
@@ -487,6 +489,32 @@ describe("itemsStore loadItems", () => {
 			expect.anything(),
 			expect.anything(),
 		);
+	});
+
+	it("bypasses the durable catalog when browser local storage is disabled", async () => {
+		const store = useItemsStore();
+
+		await store.initialize({
+			name: "POS-SERVER-ONLY",
+			warehouse: "Main WH",
+			selling_price_list: "Retail",
+			currency: "PKR",
+			item_groups: [],
+			posa_local_storage: 0,
+			posa_use_limit_search: 1,
+			posa_force_server_items: 1,
+		} as any);
+
+		expect(offlineMocks.getStoredItemsCountByScope).not.toHaveBeenCalled();
+		expect(offlineMocks.getAllStoredItems).not.toHaveBeenCalled();
+		expect(offlineMocks.searchStoredItems).not.toHaveBeenCalled();
+		expect(itemServiceMocks.getItemsData).toHaveBeenCalledTimes(1);
+		expect(itemsSyncMocks.backgroundSyncItems).not.toHaveBeenCalled();
+		await vi.waitFor(() => {
+			expect(offlineMocks.clearStoredItems).toHaveBeenCalledWith(
+				"POS-SERVER-ONLY_Main WH",
+			);
+		});
 	});
 
 	it("bypasses memory result cache when scoped offline catalog is large", async () => {

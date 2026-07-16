@@ -85,8 +85,22 @@ describe("offline sync resource runner", () => {
 			currency: null,
 			selling_price_list: "Retail",
 			posa_allow_multi_currency: true,
+			posa_local_storage: true,
 			payments: [{ mode_of_payment: "Cash" }],
 		});
+	});
+
+	it("normalizes an explicitly disabled browser catalog", () => {
+		expect(
+			buildOfflineSyncProfile({
+				name: "POS-1",
+				posa_local_storage: "0",
+			}),
+		).toEqual(
+			expect.objectContaining({
+				posa_local_storage: false,
+			}),
+		);
 	});
 
 	it("filters resources and states down to the supported online sync set", () => {
@@ -179,6 +193,38 @@ describe("offline sync resource runner", () => {
 				schema_version: "2026-04-09",
 			}),
 		);
+	});
+
+	it("skips the full item resource when browser catalog storage is disabled", async () => {
+		const getPersistedState = vi.fn(async () => ({
+			resourceId: "items",
+			status: "fresh",
+			watermark: "existing-watermark",
+			schemaVersion: "2026-04-09",
+		}) as any);
+		const callOfflineSyncMethod = vi.fn();
+
+		await expect(
+			runSupportedOfflineSyncResource({
+				resource: { id: "items" } as any,
+				posProfile: {
+					name: "POS-1",
+					posa_local_storage: false,
+				},
+				schemaVersion: "2026-07-16",
+				getPersistedState,
+				callOfflineSyncMethod,
+			}),
+		).resolves.toEqual({
+			resourceId: "items",
+			status: "idle",
+			watermark: "existing-watermark",
+			schemaVersion: "2026-04-09",
+			response: {},
+		});
+
+		expect(adapterMocks.syncItemsResource).not.toHaveBeenCalled();
+		expect(callOfflineSyncMethod).not.toHaveBeenCalled();
 	});
 
 	it("routes Item Prices through their independent paginated endpoint", async () => {

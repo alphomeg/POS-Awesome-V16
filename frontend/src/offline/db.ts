@@ -95,7 +95,14 @@ const SCHEMA_V17 = {
 		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],profile_scope,catalog_generation,item_code,item_name,item_group,item_code_lc,item_name_lc,*barcodes,*barcodes_lc,*name_keywords,*name_keywords_lc,*serials,*batches",
 	item_catalog_state: "&profile_scope,active_generation,updated_at",
 };
-const OFFLINE_DB_SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V17);
+
+const SCHEMA_V18 = {
+	...SCHEMA_V17,
+	items: "&item_code,profile_scope",
+	item_catalog_rows:
+		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],profile_scope,item_code",
+};
+const OFFLINE_DB_SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V18);
 
 export const KEY_TABLE_MAP: Record<string, string> = {
 	offline_invoices: "queue",
@@ -287,6 +294,14 @@ db.version(15).stores(SCHEMA_V15);
 db.version(16).stores(SCHEMA_V16);
 db.version(17)
 	.stores(SCHEMA_V17)
+	.upgrade((tx) =>
+		tx.table("settings").put({
+			key: "schema_signature",
+			value: OFFLINE_DB_SCHEMA_SIGNATURE,
+		}),
+	);
+db.version(18)
+	.stores(SCHEMA_V18)
 	.upgrade((tx) =>
 		tx.table("settings").put({
 			key: "schema_signature",
