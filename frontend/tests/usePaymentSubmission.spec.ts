@@ -1162,7 +1162,7 @@ describe("usePaymentSubmission", () => {
 		);
 	});
 
-	it("normalizes loyalty redemption fields before saving an offline invoice", async () => {
+	it("blocks offline final invoice submission without saving an unsigned invoice", async () => {
 		const offlineModule = await import("../src/offline/index");
 		(offlineModule.isOffline as any).mockReturnValue(true);
 
@@ -1221,20 +1221,13 @@ describe("usePaymentSubmission", () => {
 			}),
 		});
 
-		await submitInvoice(false, {
-			onFinishNavigation: vi.fn(),
-		});
-
-		expect(offlineModule.saveOfflineInvoice).toHaveBeenCalledWith(
-			expect.objectContaining({
-				invoice: expect.objectContaining({
-					loyalty_amount: 40,
-					redeem_loyalty_points: 1,
-					loyalty_points: 4,
-					loyalty_program: "Retail Loyalty",
-				}),
+		await expect(
+			submitInvoice(false, {
+				onFinishNavigation: vi.fn(),
 			}),
-		);
+		).rejects.toThrow("cashier PIN verification");
+
+		expect(offlineModule.saveOfflineInvoice).not.toHaveBeenCalled();
 
 		(offlineModule.isOffline as any).mockReturnValue(false);
 	});
@@ -1295,7 +1288,9 @@ describe("usePaymentSubmission", () => {
 			submitInvoice(false, {
 				onFinishNavigation: vi.fn(),
 			}),
-		).rejects.toThrow("Gift card redemption requires an online connection");
+		).rejects.toThrow("cashier PIN verification");
+
+		expect(offlineModule.saveOfflineInvoice).not.toHaveBeenCalled();
 
 		(offlineModule.isOffline as any).mockReturnValue(false);
 	});
@@ -1398,6 +1393,97 @@ describe("usePaymentSubmission", () => {
 			"Invoice",
 			expect.any(Object),
 		);
+	});
+
+	it("passes cashier PIN as a transient service argument without persisting it", async () => {
+		const offlineModule = await import("../src/offline/index");
+		const invoiceService = (
+			await import("../src/posapp/services/invoiceService")
+		).default;
+		(invoiceService.submitInvoice as any).mockResolvedValue({
+			name: "ACC-SINV-SIGNED",
+			doctype: "Sales Invoice",
+			docstatus: 1,
+			posa_cashier: "cashier@example.com",
+		});
+
+		const invoiceDoc = ref<any>({
+			name: "ACC-SINV-SIGNED",
+			doctype: "Sales Invoice",
+			is_return: 0,
+			customer: "Walk In",
+			company: "Test Company",
+			currency: "USD",
+			conversion_rate: 1,
+			update_stock: 0,
+			items: [{ item_code: "ITEM-1", qty: 1 }],
+			payments: [{ mode_of_payment: "Cash", amount: 100, type: "Cash" }],
+			rounded_total: 100,
+			grand_total: 100,
+		});
+
+		const { submitInvoice } = usePaymentSubmission({
+			invoiceDoc,
+			posProfile: ref({
+				name: "Main POS",
+				company: "Test Company",
+				currency: "USD",
+				customer: "Default Customer",
+				posa_allow_submissions_in_background_job: 0,
+				create_pos_invoice_instead_of_sales_invoice: 0,
+			}),
+			stockSettings: ref({}),
+			invoiceType: ref("Invoice"),
+			formatFloat: (value) => Number(value || 0),
+			stores: {
+				toastStore: { show: vi.fn() },
+				uiStore: {
+					setLastInvoice: vi.fn(),
+					setLastStockAdjustment: vi.fn(),
+				},
+				customersStore: { setSelectedCustomer: vi.fn() },
+				invoiceStore: { invoiceDoc: invoiceDoc.value },
+			},
+			isCashback: ref(false),
+			paidChange: ref(0),
+			creditChange: ref(0),
+			redeemedCustomerCredit: ref(0),
+			customerCreditDict: ref([]),
+			diff_payment: ref(0),
+		});
+
+		await submitInvoice(
+			false,
+			{
+				onFinishNavigation: vi.fn(),
+			},
+			{
+				cashierSignature: {
+					cashierPin: "2468",
+					modeOfPayment: "Cash",
+				},
+			},
+		);
+
+		expect(invoiceService.submitInvoice).toHaveBeenCalledWith(
+			expect.any(Object),
+			expect.any(Object),
+			"Invoice",
+			expect.any(Object),
+			"2468",
+		);
+		expect(offlineModule.persistInvoiceIntentJournal).toHaveBeenCalled();
+		expect(offlineModule.enqueueInvoiceOutboxEntry).toHaveBeenCalled();
+		const persistedPayload = JSON.stringify(
+			(offlineModule.persistInvoiceIntentJournal as any).mock.calls[0][0],
+		);
+		const outboxPayload = JSON.stringify(
+			(offlineModule.enqueueInvoiceOutboxEntry as any).mock.calls[0][0],
+		);
+		expect(persistedPayload).not.toContain("2468");
+		expect(persistedPayload).not.toContain("cashier_pin");
+		expect(outboxPayload).not.toContain("2468");
+		expect(outboxPayload).not.toContain("cashier_pin");
 	});
 
 	it("maps validation envelope failures and preserves the request id", async () => {

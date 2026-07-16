@@ -70,9 +70,10 @@ describe("invoiceShortcuts", () => {
 			"queue_submit_payment_shortcut",
 			{
 				print: false,
-				amount: 150,
+				amount: 125,
 			},
 		);
+		expect(vm.confirmPaymentSubmission).not.toHaveBeenCalled();
 	});
 
 	it("uses F4 to open the employee switch flow", async () => {

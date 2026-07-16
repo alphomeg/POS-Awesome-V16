@@ -8,6 +8,7 @@ function getSubmitInvoiceCall(
 	invoiceDoc: InvoiceDoc | string,
 	invoiceType: string,
 	posProfile: POSProfile,
+	cashierPin?: string | null,
 ) {
 	const doctype = resolvePosDocumentDoctype({
 		invoiceType,
@@ -27,6 +28,13 @@ function getSubmitInvoiceCall(
 		submit_in_background:
 			posProfile.posa_allow_submissions_in_background_job,
 	};
+	if (
+		cashierPin &&
+		doctype !== "Sales Order" &&
+		doctype !== "Quotation"
+	) {
+		(args as any).cashier_pin = cashierPin;
+	}
 
 	return { method, args };
 }
@@ -37,12 +45,14 @@ const invoiceService = {
 		invoiceDoc: InvoiceDoc | string,
 		invoiceType: string,
 		posProfile: POSProfile,
+		cashierPin?: string | null,
 	): Promise<ApiEnvelope<any>> {
 		const { method, args } = getSubmitInvoiceCall(
 			data,
 			invoiceDoc,
 			invoiceType,
 			posProfile,
+			cashierPin,
 		);
 		return api.callEnvelope(method, args);
 	},
@@ -52,9 +62,16 @@ const invoiceService = {
 		invoiceDoc: InvoiceDoc | string,
 		invoiceType: string,
 		posProfile: POSProfile,
+		cashierPin?: string | null,
 	): Promise<any> {
 		return unwrapApiResult(
-			await this.submitInvoice(data, invoiceDoc, invoiceType, posProfile),
+			await this.submitInvoice(
+				data,
+				invoiceDoc,
+				invoiceType,
+				posProfile,
+				cashierPin,
+			),
 		);
 	},
 };

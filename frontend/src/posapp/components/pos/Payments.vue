@@ -262,6 +262,17 @@
 			@update:phone-dialog="phone_dialog = $event"
 			@request-payment="request_payment"
 		/>
+		<CashierSaleSigningDialog
+			v-model="cashierSigningDialogOpen"
+			:payments="signingPaymentMethods"
+			:amount="cashierSigningAmount"
+			:currency="invoice_doc?.currency || pos_profile?.currency || ''"
+			:format-currency="formatCurrency"
+			:loading="loading"
+			:preferred-mode="cashierSigningPreferredMode"
+			@submit="handleCashierSigningSubmit"
+			@cancel="handleCashierSigningCancel"
+		/>
 		<GiftCardDialog
 			:model-value="giftCardDialogOpen"
 			:card-code="giftCardCode"
@@ -320,6 +331,7 @@ import {
 	resolveReturnDefaultAmount,
 	shouldApplyReturnRefundCap,
 } from "../../utils/paymentInitialization";
+import { resolvePosDocumentDoctype } from "../../utils/posDocumentMode";
 import { resolvePaymentPrintFormatDoctypes } from "../../utils/paymentPrintDoctype";
 import { resolvePaymentPrintFormat } from "../../utils/paymentPrintFormat";
 import { parseBooleanSetting } from "../../utils/stock";
@@ -339,6 +351,7 @@ import PaymentCustomerCreditDetails from "./payments/PaymentCustomerCreditDetail
 import PaymentOptions from "./payments/PaymentOptions.vue";
 import PaymentSelectionFields from "./payments/PaymentSelectionFields.vue";
 import PaymentDialogs from "./payments/PaymentDialogs.vue";
+import CashierSaleSigningDialog from "./payments/CashierSaleSigningDialog.vue";
 
 defineProps({
 	dialogMode: {
@@ -418,6 +431,9 @@ const giftCardLoading = ref(false);
 const giftCardMode = ref("redeem");
 const giftCardError = ref("");
 const giftCardRedemptions = ref([]);
+const cashierSigningDialogOpen = ref(false);
+const cashierSigningAmount = ref(0);
+let cashierSigningResolver = null;
 
 // Computed Properties
 const invoice_doc = computed({
@@ -504,6 +520,24 @@ const getWriteOffLimit = (profile) => {
 };
 
 const writeOffProfileLimit = computed(() => getWriteOffLimit(pos_profile.value));
+
+const signingPaymentMethods = computed(() => {
+	const profilePayments = Array.isArray(pos_profile.value?.payments) ? pos_profile.value.payments : [];
+	if (profilePayments.length) return profilePayments;
+	return Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : [];
+});
+
+const cashierSigningPreferredMode = computed(() => {
+	const paymentRows = Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : [];
+	const positivePayment = paymentRows.find((payment) => flt(payment?.amount || 0, currency_precision.value) > 0);
+	if (positivePayment?.mode_of_payment) {
+		return positivePayment.mode_of_payment;
+	}
+	const defaultPayment = signingPaymentMethods.value.find(
+		(payment) => payment?.default === 1 || payment?.default === true,
+	);
+	return defaultPayment?.mode_of_payment || signingPaymentMethods.value[0]?.mode_of_payment || "";
+});
 
 const request_payment_field = computed(() => {
 	return (
@@ -1670,6 +1704,117 @@ const scheduleBackgroundStatusCheck = ({
 	}, 10000);
 };
 
+const requiresCashierSigning = () => {
+	const doctype = resolvePosDocumentDoctype({
+		invoiceType: invoiceType.value,
+		posProfile: pos_profile.value,
+	});
+	return doctype === "Sales Invoice" || doctype === "POS Invoice";
+};
+
+const resolveSigningPaymentAmount = () => {
+	const doc = invoice_doc.value;
+	if (!doc) return 0;
+	const netAmount = Math.abs(flt(netInvoiceSettlementAmount.value || 0, currency_precision.value));
+	if (netAmount > 0) return netAmount;
+	return Math.abs(flt(doc.rounded_total || doc.grand_total || 0, currency_precision.value));
+};
+
+const shouldPreserveExistingPaymentSplit = () => {
+	const doc = invoice_doc.value;
+	if (!doc || !Array.isArray(doc.payments)) {
+		return false;
+	}
+	const positiveRows = doc.payments.filter(
+		(payment) => Math.abs(flt(payment?.amount || 0, currency_precision.value)) > 0.0001,
+	);
+	return (
+		positiveRows.length > 1 ||
+		flt(loyalty_amount.value || doc.loyalty_amount || 0, currency_precision.value) > 0 ||
+		flt(redeemed_customer_credit.value || 0, currency_precision.value) > 0 ||
+		(Array.isArray(giftCardRedemptions.value) && giftCardRedemptions.value.length > 0)
+	);
+};
+
+const applySigningPaymentMethod = (modeOfPayment) => {
+	const mode = String(modeOfPayment || "").trim();
+	const doc = invoice_doc.value;
+	if (!mode || !doc || !Array.isArray(doc.payments)) {
+		return;
+	}
+
+	const selectedPayment = doc.payments.find(
+		(payment) => String(payment?.mode_of_payment || "").trim() === mode,
+	);
+	if (!selectedPayment) {
+		return;
+	}
+
+	if (shouldPreserveExistingPaymentSplit()) {
+		last_payment_change_was_cash.value = isCashLikePayment(selectedPayment);
+		return;
+	}
+
+	const amount = resolveSigningPaymentAmount();
+	if (amount <= 0) {
+		return;
+	}
+
+	const signedAmount = doc.is_return ? resolveReturnDefaultAmount(doc, amount) : amount;
+	doc.payments.forEach((payment) => {
+		const isSelected = payment === selectedPayment;
+		payment.amount = isSelected ? flt(signedAmount, currency_precision.value) : 0;
+		if (payment.base_amount !== undefined) {
+			payment.base_amount = isSelected
+				? flt(toCompanyCurrency(paymentCurrencyContext(), signedAmount), currency_precision.value)
+				: 0;
+		}
+	});
+	last_payment_change_was_cash.value = isCashLikePayment(selectedPayment);
+};
+
+const settleCashierSigning = (result) => {
+	const resolver = cashierSigningResolver;
+	cashierSigningResolver = null;
+	cashierSigningDialogOpen.value = false;
+	resolver?.(result);
+};
+
+const requestCashierSigning = () => {
+	if (!requiresCashierSigning()) {
+		return Promise.resolve(null);
+	}
+	if (isOffline()) {
+		return Promise.reject(
+			new Error(
+				__(
+					"Final sale submission requires an online connection for cashier PIN verification. The cart is still available for retry.",
+				),
+			),
+		);
+	}
+	cashierSigningAmount.value = resolveSigningPaymentAmount();
+	cashierSigningDialogOpen.value = true;
+	return new Promise((resolve) => {
+		cashierSigningResolver = resolve;
+	});
+};
+
+const handleCashierSigningSubmit = (payload) => {
+	if (!payload?.cashierPin) {
+		return;
+	}
+	applySigningPaymentMethod(payload.modeOfPayment);
+	settleCashierSigning({
+		cashierPin: payload.cashierPin,
+		modeOfPayment: payload.modeOfPayment,
+	});
+};
+
+const handleCashierSigningCancel = () => {
+	settleCashierSigning(null);
+};
+
 // Submission Wrapper
 const submit = async (_event, payment_received = false, print = false) => {
 	await submitInvoiceWrapper(print, undefined, {
@@ -1683,8 +1828,12 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 	}
 
 	submissionInFlight.value = true;
-	loading.value = true;
 	try {
+		const cashierSignature = await requestCashierSigning();
+		if (requiresCashierSigning() && !cashierSignature) {
+			return;
+		}
+		loading.value = true;
 		await validateSubmission(options.paymentReceived || false);
 		await submitInvoice(print, {
 			onPrint: (doc, printOptions = {}) => {
@@ -1722,6 +1871,8 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 				scheduleBackgroundStatusCheck(payload);
 			},
 			...callbackOverrides,
+		}, {
+			cashierSignature,
 		});
 	} catch (error) {
 		console.error("Submission failed propagate:", error);

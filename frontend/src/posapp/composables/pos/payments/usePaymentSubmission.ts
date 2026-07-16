@@ -3,7 +3,6 @@ import invoiceService from "../../../services/invoiceService";
 import { isApiEnvelopeError, unwrapApiResult } from "../../../services/api";
 import {
 	enqueueInvoiceOutboxEntry,
-	saveOfflineInvoice,
 	isOffline,
 	persistInvoiceIntentJournal,
 	removeInvoiceOutboxEntry,
@@ -50,6 +49,11 @@ export interface PaymentSubmissionOptions {
 	};
 }
 
+export interface CashierSignature {
+	cashierPin: string;
+	modeOfPayment?: string;
+}
+
 export interface SubmissionCallbacks {
 	onSuccess?: (_message: any) => void;
 	onPrint?: (
@@ -69,6 +73,10 @@ export interface SubmissionCallbacks {
 		waitForPostSubmitPayments?: boolean;
 		waitForInvoiceProcessing?: boolean;
 	}) => void;
+}
+
+export interface SubmitInvoiceOptions {
+	cashierSignature?: CashierSignature | null;
 }
 
 export function usePaymentSubmission(options: PaymentSubmissionOptions) {
@@ -144,6 +152,14 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		}
 
 		return true;
+	};
+
+	const isCashierSignedInvoiceSubmission = (profile: any, type: string) => {
+		const doctype = resolvePosDocumentDoctype({
+			invoiceType: type,
+			posProfile: profile,
+		});
+		return doctype === "Sales Invoice" || doctype === "POS Invoice";
 	};
 
 	const validateStockBeforeOnlineSubmission = async (
@@ -817,6 +833,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 	const submitInvoice = async (
 		print: boolean,
 		callbacks: SubmissionCallbacks = {},
+		submitOptions: SubmitInvoiceOptions = {},
 	): Promise<any> => {
 		const doc = unref(invoiceDoc);
 		const profile = unref(posProfile);
@@ -951,42 +968,20 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				hasGiftCardRedemption ||
 				pChange > 0 ||
 				cChange > 0);
+		const requiresCashierSignature = isCashierSignedInvoiceSubmission(
+			profile,
+			type,
+		);
+		const cashierPin = String(
+			submitOptions.cashierSignature?.cashierPin || "",
+		).trim();
 
 		if (isOffline()) {
-			if (hasGiftCardRedemption) {
-				throw new Error(
-					__("Gift card redemption requires an online connection"),
-				);
-			}
-			try {
-				await saveOfflineInvoice({ data, invoice: submissionDoc });
-				stores?.syncStore?.updatePendingCount();
-				stores?.toastStore?.show({
-					title: __("Invoice saved offline"),
-					color: "warning",
-				});
-
-				if (print && onPrint) {
-					onPrint(doc);
-				}
-
-				if (stores?.customersStore?.setSelectedCustomer) {
-					stores.customersStore.setSelectedCustomer(
-						profile?.customer || null,
-					);
-				}
-
-				if (onFinishNavigation) onFinishNavigation(true);
-
-				return { offline: true };
-			} catch (error: any) {
-				const errorMsg = error.message || __("Unknown error");
-				stores?.toastStore?.show({
-					title: __("Cannot Save Offline Invoice: ") + errorMsg,
-					color: "error",
-				});
-				throw error;
-			}
+			throw new Error(
+				__(
+					"Final sale submission requires an online connection for cashier PIN verification. The cart is still available for retry.",
+				),
+			);
 		}
 
 		// Online Submission
@@ -1012,13 +1007,12 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 					}),
 				);
 			}
+			const submitArgs: any[] = [data, submissionDoc, type, profile];
+			if (requiresCashierSignature && cashierPin) {
+				submitArgs.push(cashierPin);
+			}
 			const message = unwrapApiResult(
-				await invoiceService.submitInvoice(
-					data,
-					submissionDoc,
-					type,
-					profile,
-				),
+				await (invoiceService.submitInvoice as any)(...submitArgs),
 			);
 
 			const r = { message };
@@ -1351,7 +1345,10 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				console.log("Retrying submission with fixed payment amounts");
 				return new Promise((resolve) =>
 					setTimeout(
-						() => resolve(submitInvoice(print, callbacks)),
+						() =>
+							resolve(
+								submitInvoice(print, callbacks, submitOptions),
+							),
 						500,
 					),
 				);
