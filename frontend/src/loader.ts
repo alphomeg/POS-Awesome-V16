@@ -332,11 +332,6 @@ async function mountShell({
 
 function setupDeskPageChrome(pageRef?: any) {
 	$("div.navbar-fixed-top").find(".container").css("padding", "0");
-	if (!document.getElementById("posa-vuetify-css")) {
-		$("head").append(
-			"<link id='posa-vuetify-css' href='/assets/posawesome/node_modules/vuetify/dist/vuetify.min.css' rel='stylesheet'>",
-		);
-	}
 
 	if (
 		!pageRef ||
