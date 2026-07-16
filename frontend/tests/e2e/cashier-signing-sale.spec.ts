@@ -5,6 +5,7 @@ const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const EXPECTED_PROFILE = process.env.POSA_SIGNING_E2E_PROFILE || "";
 const EXPECTED_CASHIER = process.env.POSA_SIGNING_E2E_CASHIER || "";
 const CASHIER_PIN = process.env.POSA_E2E_CASHIER_PIN || "";
+const SUBMISSION_TRIGGER = process.env.POSA_SIGNING_E2E_TRIGGER || "pay";
 const KNOWN_ITEM_CODES = ["02017", "02016", "02249", "A3106", "22203"];
 
 test.skip(
@@ -130,17 +131,38 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		);
 	});
 
-	await addKnownItem(page);
-	await page.getByTestId("invoice-action-pay").click();
-	await expect(page.getByTestId("payment-root")).toBeVisible({
-		timeout: 30_000,
-	});
-	await expect(page.getByTestId("payment-submit")).toBeEnabled({
-		timeout: 15_000,
-	});
-	await page.getByTestId("payment-submit").click();
-
+	const itemCode = await addKnownItem(page);
 	const signingDialog = page.getByTestId("cashier-sale-signing-dialog");
+	if (SUBMISSION_TRIGGER === "shortcuts") {
+		await page.keyboard.press("Alt+P");
+		await expect(signingDialog).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByTestId("payment-root")).toBeHidden();
+		await expect(page.locator("[role='dialog']:visible")).toHaveCount(1);
+		await expect(
+			signingDialog.getByTestId("cashier-sale-pin-input").locator("input"),
+		).toBeFocused();
+		await signingDialog.getByTestId("cashier-sale-cancel").click();
+		await expect(signingDialog).toBeHidden({ timeout: 15_000 });
+		await expect(page.getByTestId(`cart-row-${itemCode}`).first()).toBeVisible();
+
+		await page.keyboard.press("Alt+X");
+		await expect(signingDialog).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByTestId("payment-root")).toBeHidden();
+		await expect(page.locator("[role='dialog']:visible")).toHaveCount(1);
+		await expect(
+			signingDialog.getByTestId("cashier-sale-pin-input").locator("input"),
+		).toBeFocused();
+	} else {
+		await page.getByTestId("invoice-action-pay").click();
+		await expect(page.getByTestId("payment-root")).toBeVisible({
+			timeout: 30_000,
+		});
+		await expect(page.getByTestId("payment-submit")).toBeEnabled({
+			timeout: 15_000,
+		});
+		await page.getByTestId("payment-submit").click();
+	}
+
 	await expect(signingDialog).toBeVisible({ timeout: 15_000 });
 	const paymentMethods = signingDialog.getByTestId(
 		"cashier-sale-payment-method",

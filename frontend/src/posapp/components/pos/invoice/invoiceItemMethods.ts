@@ -318,8 +318,8 @@ const invoiceItemMethods: Record<string, unknown> &
 	},
 
 	// Dialogs
-	show_payment() {
-		return Dialogs.show_payment(this);
+	show_payment(options?: { shortcutOnly?: boolean }) {
+		return Dialogs.show_payment(this, options);
 	},
 	get_draft_invoices(source = "invoice") {
 		return Dialogs.get_draft_invoices(this, source as "invoice" | "order" | "quote");

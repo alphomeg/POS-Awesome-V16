@@ -35,6 +35,8 @@ const createPaymentContext = () => ({
 	uiStore: {
 		openPaymentDialog: vi.fn(),
 		closePaymentDialog: vi.fn(),
+		openPaymentShortcutHost: vi.fn(),
+		closePaymentShortcutHost: vi.fn(),
 		setActiveView: vi.fn(),
 	},
 	eventBus: { emit: vi.fn() },
@@ -79,5 +81,40 @@ describe("invoice payment dialogs", () => {
 		expect(context.uiStore.setActiveView).toHaveBeenCalledWith("items");
 		expect(context.eventBus.emit).toHaveBeenCalledWith("set_compact_panel", "invoice");
 		expect(context.eventBus.emit).toHaveBeenCalledWith("show_payment", "false");
+	});
+
+	it("closes the shortcut host without opening the payment view", () => {
+		const context = {
+			_suppressClosePayments: false,
+			paymentVisible: true,
+			uiStore: {
+				paymentDialogOpen: false,
+				paymentShortcutHostOpen: true,
+				closePaymentShortcutHost: vi.fn(),
+				setActiveView: vi.fn(),
+			},
+			eventBus: { emit: vi.fn() },
+		};
+
+		close_payments(context);
+
+		expect(context.uiStore.closePaymentShortcutHost).toHaveBeenCalledTimes(1);
+		expect(context.uiStore.setActiveView).toHaveBeenCalledWith("items");
+		expect(context.eventBus.emit).toHaveBeenCalledWith("show_payment", "false");
+	});
+
+	it("routes shortcut payment preparation to the signing host", async () => {
+		Object.defineProperty(window, "innerWidth", {
+			value: 1366,
+			writable: true,
+			configurable: true,
+		});
+		const context = createPaymentContext();
+
+		await show_payment(context, { shortcutOnly: true });
+
+		expect(context.uiStore.openPaymentShortcutHost).toHaveBeenCalledTimes(1);
+		expect(context.uiStore.openPaymentDialog).not.toHaveBeenCalled();
+		expect(context.uiStore.setActiveView).not.toHaveBeenCalledWith("payment");
 	});
 });

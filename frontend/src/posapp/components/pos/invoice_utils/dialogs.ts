@@ -13,7 +13,10 @@ const showCompactPanel = (context: any, panel: "selector" | "invoice") => {
 	context?.eventBus?.emit?.("set_compact_panel", panel);
 };
 
-export async function show_payment(context: any) {
+export async function show_payment(
+	context: any,
+	options: { shortcutOnly?: boolean } = {},
+) {
 	if (context._suppressClosePaymentsTimer) {
 		clearTimeout(context._suppressClosePaymentsTimer);
 		context._suppressClosePaymentsTimer = null;
@@ -137,10 +140,13 @@ export async function show_payment(context: any) {
 		const useDesktopPaymentDialog =
 			typeof window !== "undefined" && window.innerWidth >= 992;
 
-		if (useDesktopPaymentDialog && context.uiStore?.openPaymentDialog) {
+		if (options.shortcutOnly && context.uiStore?.openPaymentShortcutHost) {
+			context.uiStore.openPaymentShortcutHost();
+		} else if (useDesktopPaymentDialog && context.uiStore?.openPaymentDialog) {
 			context.uiStore.openPaymentDialog();
 		} else if (context.uiStore?.setActiveView) {
 			context.uiStore.closePaymentDialog?.();
+			context.uiStore.closePaymentShortcutHost?.();
 			context.uiStore.setActiveView("payment");
 		}
 		showCompactPanel(context, "selector");
@@ -284,11 +290,15 @@ export function close_payments(context: any) {
 	if (
 		typeof context.paymentVisible !== "undefined" &&
 		!context.paymentVisible &&
-		!context.uiStore?.paymentDialogOpen
+		!context.uiStore?.paymentDialogOpen &&
+		!context.uiStore?.paymentShortcutHostOpen
 	) {
 		return;
 	}
 
+	if (context.uiStore?.paymentShortcutHostOpen) {
+		context.uiStore.closePaymentShortcutHost?.();
+	}
 	if (context.uiStore?.paymentDialogOpen && context.uiStore?.closePaymentDialog) {
 		context.uiStore.closePaymentDialog();
 	} else if (context.uiStore?.setActiveView) {

@@ -6,6 +6,7 @@
 		content-class="cashier-sale-signing-dialog"
 		:retain-focus="false"
 		@update:model-value="handleModelUpdate"
+		@after-enter="focusPinInput"
 	>
 		<v-card class="cashier-sale-signing-card" data-testid="cashier-sale-signing-dialog">
 			<v-card-title class="cashier-sale-signing-card__header">
@@ -212,6 +213,11 @@ const reset = () => {
 	selectPreferredMode();
 };
 
+const focusPinInput = () => {
+	const input = pinInput.value?.$el?.querySelector?.("input");
+	input?.focus?.();
+};
+
 const cancel = () => {
 	emit("cancel");
 	emit("update:modelValue", false);
@@ -244,10 +250,7 @@ watch(
 	(isOpen) => {
 		if (isOpen) {
 			reset();
-			nextTick(() => {
-				const input = pinInput.value?.$el?.querySelector?.("input");
-				input?.focus?.();
-			});
+			nextTick(focusPinInput);
 		}
 	},
 );

@@ -74,6 +74,7 @@ describe("invoiceShortcuts", () => {
 			},
 		);
 		expect(vm.confirmPaymentSubmission).not.toHaveBeenCalled();
+		expect(vm.show_payment).toHaveBeenCalledWith({ shortcutOnly: true });
 	});
 
 	it("uses F4 to open the employee switch flow", async () => {
@@ -491,6 +492,7 @@ describe("invoiceShortcuts", () => {
 		);
 		expect(vm.confirmPaymentSubmission).not.toHaveBeenCalled();
 		expect(vm.show_payment).toHaveBeenCalledTimes(1);
+		expect(vm.show_payment).toHaveBeenCalledWith({ shortcutOnly: true });
 		expect(vm.show_payment.mock.invocationCallOrder[0]).toBeLessThan(
 			vm.eventBus.emit.mock.invocationCallOrder.find(
 				(_: number, index: number) =>

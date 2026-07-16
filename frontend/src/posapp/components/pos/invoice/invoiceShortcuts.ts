@@ -209,7 +209,7 @@ interface InvoiceShortcutsVm {
 	focusCustomerSearchField?: () => void;
 	get_draft_orders?: () => void;
 	open_returns?: () => void;
-	show_payment?: () => Promise<void> | void;
+	show_payment?: (_options?: { shortcutOnly?: boolean }) => Promise<void> | void;
 	focusAdditionalDiscountField?: () => void;
 	remove_item?: (_item: Record<string, unknown>) => void;
 	get_draft_invoices?: () => void;
@@ -535,7 +535,7 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 					this.triggerBackgroundFlush?.flush?.();
 					this.schedulePricingRuleApplication?.flush?.();
 					showCompactPanel(this.eventBus, "selector");
-					await this.show_payment?.();
+					await this.show_payment?.({ shortcutOnly: true });
 					this.eventBus.emit("queue_submit_payment_shortcut", {
 						print: shouldPrint,
 						amount: paymentAmount,

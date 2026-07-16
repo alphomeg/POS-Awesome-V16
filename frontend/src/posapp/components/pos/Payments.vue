@@ -384,7 +384,7 @@ const {
 } = useFormat();
 
 const { selectedCustomer, customerInfo } = storeToRefs(customersStore);
-const { activeView, paymentDialogOpen } = storeToRefs(uiStore);
+const { activeView, paymentDialogOpen, paymentShortcutHostOpen } = storeToRefs(uiStore);
 const { invoiceType } = storeToRefs(invoiceStore);
 const employeeStore = useEmployeeStore();
 const { currentCashier } = storeToRefs(employeeStore);
@@ -463,7 +463,9 @@ const paymentItemDiscountTotal = computed(() => {
 });
 
 const displayCurrency = computed(() => (invoice_doc.value ? invoice_doc.value.currency : ""));
-const isPaymentOpen = computed(() => activeView.value === "payment" || paymentDialogOpen.value);
+const isPaymentOpen = computed(
+	() => activeView.value === "payment" || paymentDialogOpen.value || paymentShortcutHostOpen.value,
+);
 const netInvoiceSettlementAmount = computed(() => {
 	if (!invoice_doc.value) return 0;
 
@@ -1085,6 +1087,9 @@ const back_to_invoice = () => {
 	if (paymentDialogOpen.value) {
 		uiStore.closePaymentDialog();
 	}
+	if (paymentShortcutHostOpen.value) {
+		uiStore.closePaymentShortcutHost();
+	}
 	if (activeView.value === "payment") {
 		uiStore.setActiveView("items");
 	}
@@ -1373,7 +1378,11 @@ const stabilizePaymentKeyboardFocus = () => {
 		paymentFocusRetryDelays.forEach((delay) => {
 			const timer = window.setTimeout(() => {
 				paymentFocusTimers.delete(timer);
-				if (!isPaymentOpen.value || paymentRoot.value?.contains(document.activeElement)) {
+				if (
+					!isPaymentOpen.value ||
+					cashierSigningDialogOpen.value ||
+					paymentRoot.value?.contains(document.activeElement)
+				) {
 					return;
 				}
 				focusFirstPaymentTarget();
@@ -1813,6 +1822,9 @@ const handleCashierSigningSubmit = (payload) => {
 
 const handleCashierSigningCancel = () => {
 	settleCashierSigning(null);
+	if (paymentShortcutHostOpen.value) {
+		back_to_invoice();
+	}
 };
 
 // Submission Wrapper
@@ -1884,6 +1896,9 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 				color: "error",
 			});
 			frappe.utils.play_sound("error");
+		}
+		if (paymentShortcutHostOpen.value) {
+			back_to_invoice();
 		}
 	} finally {
 		loading.value = false;

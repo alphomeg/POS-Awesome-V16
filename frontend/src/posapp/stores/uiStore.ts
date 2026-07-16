@@ -47,6 +47,7 @@ export const useUIStore = defineStore("ui", () => {
   // Main POS View State (Active View)
   const activeView = ref<string>("items"); // 'items', 'payment', 'offers', 'coupons'
   const paymentDialogOpen = ref(false);
+  const paymentShortcutHostOpen = ref(false);
 
   const invoiceManagementDialog = ref(false);
   const invoiceManagementTargetTab = ref<string>("history");
@@ -64,11 +65,21 @@ export const useUIStore = defineStore("ui", () => {
   };
 
   const openPaymentDialog = () => {
+    paymentShortcutHostOpen.value = false;
     paymentDialogOpen.value = true;
   };
 
   const closePaymentDialog = () => {
     paymentDialogOpen.value = false;
+  };
+
+  const openPaymentShortcutHost = () => {
+    paymentDialogOpen.value = false;
+    paymentShortcutHostOpen.value = true;
+  };
+
+  const closePaymentShortcutHost = () => {
+    paymentShortcutHostOpen.value = false;
   };
 
   const openInvoiceManagement = (targetTab: string = "history", draftSourceKey: string = "invoice") => {
@@ -287,6 +298,7 @@ export const useUIStore = defineStore("ui", () => {
     freezeMessage,
     activeView,
     paymentDialogOpen,
+    paymentShortcutHostOpen,
     invoiceManagementDialog,
     invoiceManagementTargetTab,
     invoiceManagementDraftSource,
@@ -294,6 +306,8 @@ export const useUIStore = defineStore("ui", () => {
     setActiveView,
     openPaymentDialog,
     closePaymentDialog,
+    openPaymentShortcutHost,
+    closePaymentShortcutHost,
     openInvoiceManagement,
     closeInvoiceManagement,
     setPaymentRouteTarget,

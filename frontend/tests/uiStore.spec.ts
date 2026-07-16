@@ -64,4 +64,20 @@ describe("uiStore parked orders", () => {
 		expect(store.invoiceManagementTargetTab).toBe("drafts");
 		expect(store.invoiceManagementDraftSource).toBe("quote");
 	});
+
+	it("keeps shortcut submission separate from the full payment dialog", () => {
+		const store = useUIStore();
+
+		store.openPaymentShortcutHost();
+		expect(store.paymentShortcutHostOpen).toBe(true);
+		expect(store.paymentDialogOpen).toBe(false);
+
+		store.openPaymentDialog();
+		expect(store.paymentShortcutHostOpen).toBe(false);
+		expect(store.paymentDialogOpen).toBe(true);
+
+		store.openPaymentShortcutHost();
+		store.closePaymentShortcutHost();
+		expect(store.paymentShortcutHostOpen).toBe(false);
+	});
 });

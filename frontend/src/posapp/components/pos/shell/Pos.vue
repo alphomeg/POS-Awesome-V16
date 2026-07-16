@@ -17,6 +17,9 @@
 			@close="closeOpeningDialog"
 			@register="handleRegisterPosData"
 		></OpeningDialog>
+		<div v-if="paymentShortcutHostOpen" class="payment-shortcut-host" aria-hidden="true">
+			<Payments />
+		</div>
 		<v-dialog
 			v-if="usePaymentDialog"
 			v-model="paymentDialogOpen"
@@ -33,6 +36,7 @@
 			@after-leave="handlePaymentDialogAfterLeave"
 		>
 			<Payments
+				v-if="paymentDialogOpen"
 				ref="paymentPanel"
 				dialog-mode
 				:class="{ 'payment-shell--counter-grid': counterGridActive }"
@@ -344,7 +348,8 @@ export default {
 		const itemsStore = useItemsStore();
 		const toastStore = useToastStore();
 		const __ = window.__;
-		const { activeView, posProfile, paymentDialogOpen } = storeToRefs(uiStore);
+		const { activeView, posProfile, paymentDialogOpen, paymentShortcutHostOpen } =
+			storeToRefs(uiStore);
 		const { totalItemCount, itemsLoaded } = storeToRefs(itemsStore);
 		const {
 			invoiceDoc,
@@ -849,6 +854,7 @@ export default {
 			additionalDiscountPercentageDisplay,
 			activeView,
 			paymentDialogOpen,
+			paymentShortcutHostOpen,
 			isPhone,
 			usePaymentDialog,
 			counterGridActive,
@@ -980,6 +986,10 @@ export default {
 .payment-dialog :deep(.v-overlay__content) {
 	max-height: calc(100vh - 24px);
 	max-height: calc(100dvh - 24px);
+}
+
+.payment-shortcut-host {
+	display: none;
 }
 
 .dynamic-container {
