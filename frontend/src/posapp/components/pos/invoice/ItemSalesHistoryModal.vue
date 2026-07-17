@@ -19,7 +19,6 @@
 			data-pos-keyboard-root="item-history"
 			data-testid="item-history-modal"
 			@keydown.capture="handleModalKeydown"
-			@click.capture="handleModalClick"
 		>
 			<v-card-title class="posa-item-history-header">
 				<div class="posa-item-history-header__identity">
@@ -410,7 +409,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { isOffline } from "../../../../offline/index";
 import { useResponsive } from "../../../composables/core/useResponsive";
 import { canShowItemQuickEdit } from "../../../utils/itemQuickEditPermission";
@@ -860,13 +859,41 @@ const handleModalClick = (event: MouseEvent) => {
 	}
 };
 
+/* Keep pointer-driven keyboard targeting without making the VCard clickable. */
+let modalClickListenerRoot: HTMLElement | null = null;
+
+const attachModalClickListener = () => {
+	const root = getRootElement();
+	if (!root || modalClickListenerRoot === root) return;
+	detachModalClickListener();
+	root.addEventListener("click", handleModalClick, true);
+	modalClickListenerRoot = root;
+};
+
+const detachModalClickListener = () => {
+	if (!modalClickListenerRoot) return;
+	modalClickListenerRoot.removeEventListener("click", handleModalClick, true);
+	modalClickListenerRoot = null;
+};
+
+onMounted(() => {
+	if (props.modelValue) {
+		void nextTick().then(attachModalClickListener);
+	}
+});
+
+onBeforeUnmount(detachModalClickListener);
+
 watch(
 	() => props.modelValue,
 	async (value) => {
 		if (!value) {
+			detachModalClickListener();
 			clearReloadTimer();
 			return;
 		}
+		await nextTick();
+		attachModalClickListener();
 		activeTab.value = "sales";
 		historyPage.value = 0;
 		selectedInvoiceDetail.value = null;

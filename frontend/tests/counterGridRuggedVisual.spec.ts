@@ -46,7 +46,9 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			["#8a4b00", "#fff1d6"],
 			["#334155", "#e9eef3"],
 		]) {
-			expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+			expect(
+				contrastRatio(foreground, background),
+			).toBeGreaterThanOrEqual(4.5);
 		}
 		expect(contrastRatio("#2563eb", "#ffffff")).toBeGreaterThanOrEqual(3);
 	});
@@ -73,8 +75,18 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			"invoice",
 			"CounterGridTransactionHeader.vue",
 		);
-		const customer = source("components", "pos", "customer", "Customer.vue");
-		const summary = source("components", "pos", "invoice", "InvoiceSummary.vue");
+		const customer = source(
+			"components",
+			"pos",
+			"customer",
+			"Customer.vue",
+		);
+		const summary = source(
+			"components",
+			"pos",
+			"invoice",
+			"InvoiceSummary.vue",
+		);
 
 		expect(tokens).toContain("--rm-cg-forest-950: #173b2b");
 		expect(tokens).toContain("--rm-cg-teal-700: #087f7a");
@@ -95,8 +107,10 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			"--counter-rugged-green: var(--rm-cg-success)",
 		);
 		expect(navbar).toContain("pos-navbar-enhanced--counter-grid");
-		expect(navbar).toContain("background: var(--rm-cg-shell-navbar) !important");
-		expect(navbar).toContain('isCounterGrid ? 74 : 56');
+		expect(navbar).toContain(
+			"background: var(--rm-cg-shell-navbar) !important",
+		);
+		expect(navbar).toContain("isCounterGrid ? 74 : 56");
 		expect(navbar).toContain(
 			"border-bottom: 2px solid var(--rm-cg-teal-300)",
 		);
@@ -125,7 +139,9 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(customer).toContain('presentation === "counter-grid-header"');
 		expect(customer).toContain('data-testid="counter-grid-customer-add"');
 		expect(customer).toContain('data-testid="counter-grid-customer-edit"');
-		expect(customer).toContain('data-testid="counter-grid-customer-reload"');
+		expect(customer).toContain(
+			'data-testid="counter-grid-customer-reload"',
+		);
 		expect(summary).toContain("minmax(0, 2fr)");
 		expect(summary).not.toContain("counter-grid-summary__metric--total");
 		expect(source("components", "pos", "Invoice.vue")).toContain(
@@ -193,9 +209,17 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			expect(modal).toContain('class="counter-grid-legacy-safe-overlay"');
 			expect(modal).toContain("counter-grid-legacy-safe-dialog");
 		}
-		expect(history.match(/class="counter-grid-legacy-safe-overlay"/g)).toHaveLength(2);
-		expect(invoiceManagement.match(/class="counter-grid-legacy-safe-overlay"/g)).toHaveLength(2);
-		expect(quickEdit.match(/class="counter-grid-legacy-safe-overlay"/g)).toHaveLength(1);
+		expect(
+			history.match(/class="counter-grid-legacy-safe-overlay"/g),
+		).toHaveLength(2);
+		expect(
+			invoiceManagement.match(
+				/class="counter-grid-legacy-safe-overlay"/g,
+			),
+		).toHaveLength(3);
+		expect(
+			quickEdit.match(/class="counter-grid-legacy-safe-overlay"/g),
+		).toHaveLength(1);
 		expect(tokens).toContain(
 			".v-overlay.counter-grid-legacy-safe-overlay > .v-overlay__scrim",
 		);
@@ -208,6 +232,48 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(itemsTable).toContain(
 			"window.setTimeout(flushPendingHistoryEdit, 0)",
 		);
+	});
+
+	it("keeps modal keyboard targeting without turning the whole card into a ripple target", () => {
+		const history = source(
+			"components",
+			"pos",
+			"invoice",
+			"ItemSalesHistoryModal.vue",
+		);
+		const quickEdit = source(
+			"components",
+			"pos",
+			"items",
+			"ItemQuickEditDialog.vue",
+		);
+		const invoiceManagement = source(
+			"components",
+			"pos",
+			"flows",
+			"InvoiceManagement.vue",
+		);
+
+		expect(history).not.toContain('@click.capture="handleModalClick"');
+		expect(quickEdit).not.toContain(
+			'@click.capture="handleQuickEditClick"',
+		);
+		expect(invoiceManagement).not.toContain(
+			'@click.capture="handleEditModalClick"',
+		);
+		expect(history).toContain(
+			'addEventListener("click", handleModalClick, true)',
+		);
+		expect(quickEdit).toContain(
+			'addEventListener("click", handleQuickEditClick, true)',
+		);
+		expect(invoiceManagement).toContain(
+			'root.addEventListener("click", listener, true)',
+		);
+		expect(quickEdit).toContain(
+			".posa-quick-edit-keyboard-box.v-input .v-field",
+		);
+		expect(quickEdit).not.toContain("box-shadow: 0 0 0 5px");
 	});
 
 	it("gives the invoice and pharmacy tables crisp cells and a saturated active row", () => {
@@ -242,9 +308,7 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(table).toContain(
 			"border-bottom: 1px solid var(--counter-rugged-line)",
 		);
-		expect(pharmacy).toContain(
-			"background: var(--rm-cg-info) !important",
-		);
+		expect(pharmacy).toContain("background: var(--rm-cg-info) !important");
 		expect(pharmacy).toContain("color: #ffffff !important");
 		expect(pharmacy).toContain(
 			"tbody tr:nth-child(even):not(.item-row-highlighted)",

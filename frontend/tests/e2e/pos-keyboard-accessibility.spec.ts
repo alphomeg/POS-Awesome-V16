@@ -268,6 +268,9 @@ test.describe.serial("Counter Grid keyboard and accessibility", () => {
 		const detailsTab = page.getByTestId("item-history-details-tab");
 		const updateItem = page.getByTestId("item-workspace-update-item");
 		await expect(history).toBeVisible({ timeout: 30_000 });
+		await expect(history).not.toHaveClass(/v-card--link/);
+		await history.locator(".posa-item-history-header__identity").click();
+		await expect(history.locator(".v-ripple__animation")).toHaveCount(0);
 		await expect(salesTab).toHaveAttribute("aria-selected", "true");
 
 		await page.keyboard.press("ArrowRight");
@@ -289,6 +292,12 @@ test.describe.serial("Counter Grid keyboard and accessibility", () => {
 		const quickEdit = page.getByTestId("item-quick-edit-modal");
 		const nameField = page.getByTestId("item-quick-edit-name");
 		await expect(quickEdit).toBeVisible({ timeout: 30_000 });
+		await expect(quickEdit).not.toHaveClass(/v-card--link/);
+		await quickEdit
+			.locator(".item-quick-edit__section-title")
+			.first()
+			.click();
+		await expect(quickEdit.locator(".v-ripple__animation")).toHaveCount(0);
 		await expect(nameField).toHaveClass(/posa-quick-edit-keyboard-box/);
 		await page.keyboard.press("Enter");
 		await expect(nameField.locator("input")).toBeFocused({

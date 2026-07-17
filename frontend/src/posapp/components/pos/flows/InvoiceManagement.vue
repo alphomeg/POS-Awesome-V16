@@ -1519,9 +1519,11 @@
 
 	<v-dialog
 		v-model="editDialog"
+		class="counter-grid-legacy-safe-overlay"
 		max-width="1160px"
 		scrollable
-		content-class="invoice-edit-modal-content"
+		:transition="false"
+		content-class="invoice-edit-modal-content counter-grid-legacy-safe-dialog"
 		:theme="isDarkTheme ? 'dark' : 'light'"
 	>
 		<v-card
@@ -1532,7 +1534,6 @@
 			]"
 			data-testid="invoice-edit-modal"
 			@keydown.capture="handleEditModalKeydown"
-			@click.capture="handleEditModalClick"
 		>
 			<v-card-title class="d-flex align-center justify-space-between flex-wrap ga-3">
 				<div>
@@ -2034,6 +2035,8 @@ export default {
 		editKeyboardTargetKey: "",
 		editKeyboardEditing: false,
 		editKeyboardGeneratedId: 0,
+		editModalClickListenerRoot: null,
+		editModalClickListener: null,
 		newEditItem: {
 			item_code: "",
 			qty: 1,
@@ -2309,12 +2312,16 @@ export default {
 	watch: {
 		editDialog(value) {
 			if (!value) {
+				this.detachEditModalClickListener();
 				this.clearScheduledEditPreview();
 				this.clearEditKeyboardBox();
 				this.editKeyboardTargetKey = "";
 				this.editKeyboardEditing = false;
 			} else {
-				this.$nextTick(() => this.setDefaultEditKeyboardTarget());
+				this.$nextTick(() => {
+					this.attachEditModalClickListener();
+					this.setDefaultEditKeyboardTarget();
+				});
 			}
 		},
 		invoiceManagementDialog(value) {
@@ -2380,6 +2387,7 @@ export default {
 		},
 	},
 	beforeUnmount() {
+		this.detachEditModalClickListener();
 		this.clearScheduledEditPreview();
 	},
 	methods: {
@@ -3212,6 +3220,26 @@ export default {
 		editModalFocusRoot() {
 			const modal = this.editModalElement();
 			return modal?.querySelector?.(".invoice-detail-card") || modal;
+		},
+		attachEditModalClickListener() {
+			const root = this.editModalFocusRoot();
+			if (!root || this.editModalClickListenerRoot === root) return;
+			this.detachEditModalClickListener();
+			const listener = (event) => this.handleEditModalClick(event);
+			root.addEventListener("click", listener, true);
+			this.editModalClickListenerRoot = root;
+			this.editModalClickListener = listener;
+		},
+		detachEditModalClickListener() {
+			if (this.editModalClickListenerRoot && this.editModalClickListener) {
+				this.editModalClickListenerRoot.removeEventListener(
+					"click",
+					this.editModalClickListener,
+					true,
+				);
+			}
+			this.editModalClickListenerRoot = null;
+			this.editModalClickListener = null;
 		},
 		isEditElementVisible(element) {
 			if (!element?.isConnected || typeof window === "undefined") return false;

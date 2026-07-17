@@ -19,7 +19,6 @@
 			data-pos-keyboard-root="item-quick-edit"
 			tabindex="0"
 			@keydown.capture="handleQuickEditKeydown"
-			@click.capture="handleQuickEditClick"
 		>
 			<v-card-title class="item-quick-edit__title">
 				<div class="item-quick-edit__identity">
@@ -389,7 +388,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useResponsive } from "../../../composables/core/useResponsive";
 import itemService from "../../../services/itemService";
 import {
@@ -841,6 +840,35 @@ const handleQuickEditClick = (event: MouseEvent) => {
 	}
 };
 
+/*
+ * A Vue click listener on VCard makes Vuetify treat the whole dialog as a
+ * link. Attach this capture listener natively so the keyboard target follows
+ * pointer use without turning the entire modal into a giant ripple surface.
+ */
+let quickEditClickListenerRoot: HTMLElement | null = null;
+
+const attachQuickEditClickListener = () => {
+	const root = getRootElement();
+	if (!root || quickEditClickListenerRoot === root) return;
+	detachQuickEditClickListener();
+	root.addEventListener("click", handleQuickEditClick, true);
+	quickEditClickListenerRoot = root;
+};
+
+const detachQuickEditClickListener = () => {
+	if (!quickEditClickListenerRoot) return;
+	quickEditClickListenerRoot.removeEventListener("click", handleQuickEditClick, true);
+	quickEditClickListenerRoot = null;
+};
+
+onMounted(() => {
+	if (props.modelValue) {
+		void nextTick().then(attachQuickEditClickListener);
+	}
+});
+
+onBeforeUnmount(detachQuickEditClickListener);
+
 const save = async () => {
 	if (!loaded.value || saving.value) {
 		return;
@@ -882,8 +910,10 @@ watch(
 	() => props.modelValue,
 	(open) => {
 		if (!open) {
+			detachQuickEditClickListener();
 			return;
 		}
+		void nextTick().then(attachQuickEditClickListener);
 		resetForm();
 		lookupValue.value = props.itemCode || "";
 		if (lookupValue.value) {
@@ -1054,15 +1084,25 @@ watch(
 
 :deep(.posa-quick-edit-keyboard-box) {
 	position: relative;
-	outline: 3px solid rgb(var(--v-theme-primary));
-	outline-offset: 3px;
-	border-radius: 3px;
-	box-shadow: 0 0 0 5px rgba(var(--v-theme-primary), 0.16);
 	z-index: 1;
 }
 
-:deep(.posa-quick-edit-keyboard-box .v-field) {
-	box-shadow: inset 0 0 0 2px rgb(var(--v-theme-primary));
+:deep(.posa-quick-edit-keyboard-box:not(.v-input)) {
+	outline: 3px solid rgb(var(--v-theme-primary));
+	outline-offset: 3px;
+	border-radius: 3px;
+}
+
+:deep(.posa-quick-edit-keyboard-box.v-input .v-field) {
+	outline: 3px solid rgb(var(--v-theme-primary));
+	outline-offset: 1px;
+	box-shadow: none;
+}
+
+:deep(.posa-quick-edit-keyboard-box.v-checkbox .v-selection-control) {
+	outline: 3px solid rgb(var(--v-theme-primary));
+	outline-offset: 2px;
+	border-radius: 3px;
 }
 
 @media (max-width: 820px) {
