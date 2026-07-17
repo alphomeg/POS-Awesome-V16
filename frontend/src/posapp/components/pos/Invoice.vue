@@ -32,14 +32,50 @@
 					type="info"
 					density="compact"
 					class="invoice-status-alert mb-0"
-					v-if="pos_profile.create_pos_invoice_instead_of_sales_invoice"
+					v-if="
+						pos_profile.create_pos_invoice_instead_of_sales_invoice &&
+						!isCounterGridPresentation
+					"
 				>
 					{{ __("Invoices saved as POS Invoices") }}
 				</v-alert>
 				<div class="invoice-sections">
-					<div class="invoice-context-grid">
+					<CounterGridTransactionHeader
+						v-if="isCounterGridPresentation"
+						ref="counterGridHeader"
+						:pos-profile="pos_profile"
+						:invoice-types="invoiceTypes"
+						:invoice-type="invoiceType"
+						:posting-date-display="posting_date_display"
+						:customer-balance="customer_balance"
+						:customer-balance-currency="customer_balance_currency"
+						:balance-loading="customer_balance_loading"
+						:price-list="selected_price_list"
+						:price-lists="price_lists"
+						:net-total="subtotal"
+						:display-currency="displayCurrency"
+						:format-currency="formatCurrency"
+						:currency-symbol="currencySymbol"
+						@update:invoice-type="invoiceType = $event"
+						@update:posting-date-display="posting_date_display = $event"
+						@update:price-list="selected_price_list = $event"
+					/>
+
+					<div
+						v-if="
+							!isCounterGridPresentation ||
+							pos_profile.posa_use_delivery_charges ||
+							pos_profile.posa_allow_multi_currency
+						"
+						class="invoice-context-grid"
+						:class="{ 'invoice-context-grid--extras': isCounterGridPresentation }"
+					>
 						<div class="invoice-top-grid">
-							<v-card flat class="invoice-section-card pos-themed-card">
+							<v-card
+								v-if="!isCounterGridPresentation"
+								flat
+								class="invoice-section-card pos-themed-card"
+							>
 								<div class="invoice-section-heading">
 									<h3 class="invoice-section-heading__title">
 										{{ __("Customer Details") }}
@@ -85,7 +121,10 @@
 
 						<div class="invoice-meta-grid">
 							<v-card
-								v-if="pos_profile.posa_allow_change_posting_date"
+								v-if="
+									!isCounterGridPresentation &&
+									pos_profile.posa_allow_change_posting_date
+								"
 								flat
 								class="invoice-section-card pos-themed-card"
 							>
@@ -315,6 +354,7 @@
 <script>
 import format from "../../format";
 import InvoiceCustomerSection from "./invoice/InvoiceCustomerSection.vue";
+import CounterGridTransactionHeader from "./invoice/CounterGridTransactionHeader.vue";
 import DeliveryCharges from "./invoice/DeliveryCharges.vue";
 import PostingDateRow from "./invoice/PostingDateRow.vue";
 import MultiCurrencyRow from "./invoice/MultiCurrencyRow.vue";
@@ -493,6 +533,7 @@ export default {
 
 	components: {
 		InvoiceCustomerSection,
+		CounterGridTransactionHeader,
 		DeliveryCharges,
 		PostingDateRow,
 		MultiCurrencyRow,
@@ -617,7 +658,9 @@ export default {
 		...shortcutMethods,
 		...invoiceItemMethods,
 		focusCustomerSearchField() {
-			const customerSection = this.$refs.customerSection;
+			const customerSection = this.isCounterGridPresentation
+				? this.$refs.counterGridHeader
+				: this.$refs.customerSection;
 			if (customerSection && typeof customerSection.focusCustomerSearch === "function") {
 				customerSection.focusCustomerSearch();
 			}
@@ -1466,10 +1509,10 @@ export default {
 
 .invoice-shell--counter-grid {
 	height: 100%;
-	width: min(100%, 1560px);
+	width: min(calc(100% - 32px), 1760px);
 	margin-inline: auto;
 	overflow: hidden;
-	gap: 8px;
+	gap: 0;
 }
 
 .invoice-shell--counter-grid .invoice-main-card--counter-grid {
@@ -1480,19 +1523,19 @@ export default {
 	margin-top: 0 !important;
 	border: 0;
 	border-radius: 0;
-	background: var(--rm-cg-surface-canvas) !important;
+	background: var(--rm-cg-shell-canvas) !important;
 	box-shadow: none;
 	overflow: hidden !important;
 }
 
 .invoice-shell--counter-grid .dynamic-padding {
-	padding: 6px 10px 5px;
-	gap: 6px;
+	padding: 16px 0 5px;
+	gap: 8px;
 	overflow: hidden;
 }
 
 .invoice-shell--counter-grid .invoice-sections {
-	gap: 6px;
+	gap: 8px;
 	overflow: hidden;
 }
 
@@ -1503,6 +1546,14 @@ export default {
 	flex: 0 0 auto;
 }
 
+.invoice-shell--counter-grid .invoice-context-grid--extras {
+	padding: 7px 8px;
+	border: 1px solid var(--rm-cg-shell-card-line);
+	border-radius: 6px;
+	background: var(--rm-cg-surface);
+	box-shadow: var(--rm-cg-shell-card-shadow);
+}
+
 .invoice-shell--counter-grid .invoice-top-grid,
 .invoice-shell--counter-grid .invoice-meta-grid {
 	display: contents;
@@ -1511,6 +1562,11 @@ export default {
 .invoice-shell--counter-grid .invoice-context-grid .invoice-section-card {
 	flex: 1 1 300px;
 	min-width: 0;
+}
+
+.invoice-shell--counter-grid .invoice-context-grid--extras .invoice-section-card {
+	border: 0;
+	box-shadow: none;
 }
 
 .invoice-shell--counter-grid .invoice-top-grid > .invoice-section-card:first-child {
@@ -1536,7 +1592,7 @@ export default {
 	min-height: 38px;
 	padding: 9px 14px;
 	border-bottom: 1px solid var(--counter-rugged-cyan);
-	background: var(--rm-cg-teal-700);
+	background: var(--rm-cg-shell-teal);
 }
 
 .invoice-shell--counter-grid .invoice-section-heading__title {
@@ -1547,7 +1603,8 @@ export default {
 }
 
 .invoice-shell--counter-grid .invoice-items-heading {
-	padding: 4px 8px 4px 14px;
+	min-height: 44px;
+	padding: 5px 10px 5px 16px;
 }
 
 .invoice-shell--counter-grid :deep(.column-selector-container--compact) {
@@ -1559,10 +1616,10 @@ export default {
 }
 
 .invoice-shell--counter-grid :deep(.column-selector-btn--compact) {
-	height: 28px !important;
-	min-height: 28px !important;
-	padding-inline: 10px;
-	font-size: 0.76rem;
+	height: 32px !important;
+	min-height: 32px !important;
+	padding-inline: 12px;
+	font-size: 0.78rem;
 }
 
 .invoice-shell--counter-grid .invoice-top-grid .invoice-section-heading,
@@ -1574,8 +1631,9 @@ export default {
 	flex: 1 1 auto;
 	min-height: 0;
 	padding-bottom: 0;
-	border: 2px solid var(--rm-cg-teal-700);
-	box-shadow: 0 3px 8px rgba(23, 59, 43, 0.18);
+	border: 1px solid var(--rm-cg-shell-teal);
+	border-radius: 7px;
+	box-shadow: none;
 	overflow: hidden;
 }
 
@@ -1620,7 +1678,7 @@ export default {
 }
 
 .invoice-shell--counter-grid :deep(.invoice-context-grid .items) {
-	min-height: 54px;
+	min-height: 44px;
 	margin: 0;
 	padding: 4px 6px !important;
 }
@@ -1630,7 +1688,7 @@ export default {
 }
 
 .invoice-shell--counter-grid :deep(.invoice-context-grid .pos-header-bar) {
-	min-height: 54px;
+	min-height: 44px;
 	margin: 0 !important;
 	padding: 4px 8px !important;
 	border: 0;
@@ -1639,8 +1697,33 @@ export default {
 }
 
 .invoice-shell--counter-grid :deep(.invoice-context-grid .pos-header-bar > .v-row) {
-	min-height: 44px;
+	min-height: 40px;
 	margin: 0;
+}
+
+@media (max-width: 1439px), (max-height: 819px) {
+	.invoice-shell--counter-grid {
+		gap: 6px;
+	}
+
+	.invoice-shell--counter-grid .dynamic-padding {
+		padding-top: 8px;
+		gap: 6px;
+	}
+
+	.invoice-shell--counter-grid .invoice-sections {
+		gap: 6px;
+	}
+}
+
+@media (max-width: 1099px) {
+	.invoice-shell--counter-grid {
+		width: calc(100% - 20px);
+	}
+
+	.invoice-shell--counter-grid .dynamic-padding {
+		padding-top: 2px;
+	}
 }
 
 .invoice-shell--counter-grid :deep(.invoice-context-grid .pos-header-bar .v-col) {

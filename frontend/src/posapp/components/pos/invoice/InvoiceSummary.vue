@@ -9,21 +9,31 @@
 		<div v-if="isCounterGrid" class="counter-grid-summary" data-testid="counter-grid-summary">
 			<div class="counter-grid-summary__metrics">
 				<div class="counter-grid-summary__metric">
-					<span>{{ __("Gross") }}</span>
-					<strong>{{ currencySymbol(displayCurrency) }}{{ formatCurrency(grossTotal) }}</strong>
+					<v-icon icon="mdi-receipt-text-outline" size="28" />
+					<div class="counter-grid-summary__copy">
+						<span>{{ __("Gross") }}</span>
+						<strong>{{ currencySymbol(displayCurrency) }}{{ formatCurrency(grossTotal) }}</strong>
+					</div>
 				</div>
 				<div class="counter-grid-summary__metric">
-					<span>{{ __("Item discount") }}</span>
-					<strong
-						>{{ currencySymbol(displayCurrency)
-						}}{{ formatCurrency(total_items_discount_amount) }}</strong
-					>
+					<v-icon icon="mdi-tag-outline" size="28" />
+					<div class="counter-grid-summary__copy">
+						<span>{{ __("Item Discount") }}</span>
+						<strong
+							>{{ currencySymbol(displayCurrency)
+							}}{{ formatCurrency(total_items_discount_amount) }}</strong
+						>
+					</div>
 				</div>
 				<div class="counter-grid-summary__metric counter-grid-summary__metric--qty">
-					<span>{{ __("Quantity") }}</span>
-					<strong>{{ formatFloat(total_qty, hide_qty_decimals ? 0 : undefined) }}</strong>
+					<v-icon icon="mdi-cube-outline" size="28" />
+					<div class="counter-grid-summary__copy">
+						<span>{{ __("Quantity") }}</span>
+						<strong>{{ formatFloat(total_qty, hide_qty_decimals ? 0 : undefined) }}</strong>
+					</div>
 				</div>
 				<div class="counter-grid-summary__discount">
+					<v-icon icon="mdi-sale-outline" size="28" />
 					<v-text-field
 						v-if="!pos_profile.posa_use_percentage_discount"
 						ref="additionalDiscountField"
@@ -60,10 +70,6 @@
 							!!discount_percentage_offer_name
 						"
 					/>
-				</div>
-				<div class="counter-grid-summary__metric counter-grid-summary__metric--total">
-					<span>{{ __("Net total") }}</span>
-					<strong>{{ currencySymbol(displayCurrency) }}{{ formatCurrency(subtotal) }}</strong>
 				</div>
 			</div>
 
@@ -689,79 +695,139 @@ defineExpose({
 
 .counter-grid-summary-card {
 	position: static;
-	padding: 8px 10px !important;
-	border-top: 2px solid var(--rm-cg-teal-700);
+	padding: 0 !important;
+	margin-bottom: 17px !important;
+	border: 0;
 	border-radius: 0 !important;
 	box-shadow: none;
-	background: #ffffff !important;
+	background: transparent !important;
 }
 
 .counter-grid-summary {
 	display: grid;
-	gap: 8px;
+	gap: 12px;
 }
 
 .counter-grid-summary__metrics {
 	display: grid;
-	grid-template-columns:
-		minmax(112px, 1fr) minmax(118px, 1fr) minmax(76px, 0.65fr)
-		minmax(178px, 1.35fr) minmax(150px, 1.2fr);
-	gap: 6px;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+	min-height: 80px;
+	border: 1px solid var(--rm-cg-shell-card-line);
+	border-radius: 7px;
+	background: var(--rm-cg-surface);
+	box-shadow: var(--rm-cg-shell-card-shadow);
+	overflow: hidden;
 	min-width: 0;
 }
 
 .counter-grid-summary__metric {
 	display: flex;
+	align-items: center;
+	gap: 16px;
 	min-width: 0;
-	height: 48px;
-	padding: 5px 9px;
-	flex-direction: column;
-	justify-content: center;
-	border: 1px solid var(--rm-cg-line);
-	border-left: 4px solid var(--rm-cg-line-strong);
-	border-radius: 3px;
-	background: var(--rm-cg-surface-muted);
+	height: 80px;
+	padding: 10px 28px;
+	border-inline-end: 1px solid var(--rm-cg-line-soft);
+	background: var(--rm-cg-surface);
 }
 
-.counter-grid-summary__metric span {
-	font-size: 0.68rem;
-	font-weight: 600;
+.counter-grid-summary__metric > .v-icon,
+.counter-grid-summary__discount > .v-icon {
+	flex: 0 0 auto;
+	color: var(--rm-cg-shell-icon);
+}
+
+.counter-grid-summary__copy {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	justify-content: center;
+}
+
+.counter-grid-summary__copy span {
+	font-size: 0.78rem;
+	font-weight: 500;
 	color: var(--rm-cg-text-muted);
 }
 
-.counter-grid-summary__metric strong {
+.counter-grid-summary__copy strong {
 	overflow: hidden;
-	font-size: 0.94rem;
+	font-size: 1rem;
 	font-variant-numeric: tabular-nums;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	color: var(--rm-cg-text);
 }
 
-.counter-grid-summary__metric--total {
-	border-color: var(--rm-cg-success);
-	border-left-color: var(--rm-cg-success);
-	background: var(--rm-cg-action-save-bg);
-}
-
-.counter-grid-summary__metric--total strong {
-	font-size: 1.05rem;
-	color: var(--rm-cg-success);
-}
-
 .counter-grid-summary__discount {
+	display: flex;
+	align-items: center;
+	gap: 16px;
 	min-width: 0;
+	height: 80px;
+	padding: 8px 28px;
+	background: var(--rm-cg-surface);
 }
 
 .counter-grid-summary__discount :deep(.v-field) {
-	height: 48px;
-	border-radius: 3px;
-	background: #ffffff;
+	height: 62px;
+	border-radius: 4px;
+	background: transparent;
 }
 
 .counter-grid-summary__discount :deep(.v-field__input) {
-	min-height: 48px;
+	min-height: 62px;
+	padding-top: 20px;
+	font-size: 1rem;
+	font-weight: 650;
 	font-variant-numeric: tabular-nums;
+}
+
+.counter-grid-summary__discount :deep(.v-field__outline) {
+	display: none;
+}
+
+.counter-grid-summary__discount :deep(.v-label) {
+	font-size: 0.78rem;
+	font-weight: 500;
+	color: var(--rm-cg-text-muted) !important;
+}
+
+.counter-grid-summary__discount:focus-within {
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 3px var(--rm-cg-focus);
+}
+
+@media (max-width: 1439px), (max-height: 819px) {
+	.counter-grid-summary-card {
+		margin-bottom: 0 !important;
+	}
+
+	.counter-grid-summary {
+		gap: 8px;
+	}
+
+	.counter-grid-summary__metrics {
+		min-height: 60px;
+	}
+
+	.counter-grid-summary__metric,
+	.counter-grid-summary__discount {
+		height: 60px;
+		gap: 9px;
+		padding: 5px 12px;
+	}
+
+	.counter-grid-summary__metric > .v-icon,
+	.counter-grid-summary__discount > .v-icon {
+		font-size: 22px !important;
+	}
+
+	.counter-grid-summary__discount :deep(.v-field),
+	.counter-grid-summary__discount :deep(.v-field__input) {
+		height: 50px;
+		min-height: 50px;
+	}
 }
 
 .sticky-summary-card {

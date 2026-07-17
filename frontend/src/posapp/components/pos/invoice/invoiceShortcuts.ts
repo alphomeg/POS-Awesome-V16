@@ -159,6 +159,11 @@ interface InvoiceShortcutsVm {
 			openNewCustomer?: () => void;
 			selectFirstCustomer?: () => void;
 		};
+		counterGridHeader?: {
+			openNewCustomer?: () => void;
+			selectFirstCustomer?: () => void;
+			focusPostingDate?: () => void;
+		};
 		deliveryChargesComponent?: { focusDeliveryCharges?: () => void };
 		postingDateComponent?: { focusPostingDate?: () => void };
 		itemSearchField?: {
@@ -292,8 +297,13 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 
 			if (key === "F6") {
 				consumeEvent(event);
-				this.$refs.customerSection?.openNewCustomer?.() ||
+				if (this.$refs.customerSection?.openNewCustomer) {
+					this.$refs.customerSection.openNewCustomer();
+				} else if (this.$refs.counterGridHeader?.openNewCustomer) {
+					this.$refs.counterGridHeader.openNewCustomer();
+				} else {
 					this.$refs.customerComponent?.openNewCustomer?.();
+				}
 				return;
 			}
 
@@ -374,8 +384,13 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 			if (isDigit(event, 6)) {
 				consumeEvent(event);
 				showCompactPanel(this.eventBus, "invoice");
-				this.$refs.customerSection?.selectFirstCustomer?.() ||
+				if (this.$refs.customerSection?.selectFirstCustomer) {
+					this.$refs.customerSection.selectFirstCustomer();
+				} else if (this.$refs.counterGridHeader?.selectFirstCustomer) {
+					this.$refs.counterGridHeader.selectFirstCustomer();
+				} else {
 					this.$refs.customerComponent?.selectFirstCustomer?.();
+				}
 				return;
 			}
 
@@ -407,7 +422,11 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 			if (isBackquote(event)) {
 				consumeEvent(event);
 				showCompactPanel(this.eventBus, "invoice");
-				this.$refs.postingDateComponent?.focusPostingDate?.();
+				if (this.$refs.postingDateComponent?.focusPostingDate) {
+					this.$refs.postingDateComponent.focusPostingDate();
+				} else {
+					this.$refs.counterGridHeader?.focusPostingDate?.();
+				}
 				return;
 			}
 

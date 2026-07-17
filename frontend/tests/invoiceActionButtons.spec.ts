@@ -80,6 +80,9 @@ describe("InvoiceActionButtons", () => {
 		expect(
 			wrapper.get('[data-testid="counter-grid-actions"]').exists(),
 		).toBe(true);
+		expect(wrapper.get('[data-testid="counter-grid-actions"]').classes()).toContain(
+			"counter-grid-actions--with-return",
+		);
 		expect(
 			wrapper.get('[data-testid="invoice-action-offers"]').text(),
 		).toContain("Offers");

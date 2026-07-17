@@ -46,6 +46,17 @@
 	--rm-cg-focus: #2563eb;
 	--rm-cg-focus-on-dark: #7dd3fc;
 	--rm-cg-focus-inner: #ffffff;
+	--rm-cg-shell-navbar: #043228;
+	--rm-cg-shell-teal: #057876;
+	--rm-cg-shell-canvas: #fefefe;
+	--rm-cg-shell-table-header: #ebf6f1;
+	--rm-cg-shell-card-line: #dfe8e3;
+	--rm-cg-shell-card-shadow: 0 2px 8px rgba(23, 59, 43, 0.12);
+	--rm-cg-shell-icon: #07824e;
+	--rm-cg-shell-hero-start: #08715d;
+	--rm-cg-shell-hero-end: #075145;
+	--rm-cg-shell-pay: #036643;
+	--rm-cg-shell-cancel: #d44255;
 
 	--rm-cg-action-save-bg: #dff1e7;
 	--rm-cg-action-save-hover: #cce8da;

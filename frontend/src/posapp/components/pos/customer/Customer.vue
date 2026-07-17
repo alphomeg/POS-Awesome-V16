@@ -1,10 +1,16 @@
 <template>
 	<!-- ? Disable dropdown if either readonly or loadingCustomers is true -->
-	<div class="customer-input-wrapper">
+	<div
+		class="customer-input-wrapper"
+		:class="{ 'customer-input-wrapper--counter-grid-header': isCounterGridHeader }"
+	>
 		<div class="customer-field-shell">
 			<v-autocomplete
 				ref="customerDropdown"
-				class="customer-autocomplete sleek-field pos-themed-input"
+				:class="[
+					'customer-autocomplete sleek-field pos-themed-input',
+					{ 'customer-autocomplete--counter-grid-header': isCounterGridHeader },
+				]"
 				density="compact"
 				clearable
 				variant="solo"
@@ -30,7 +36,13 @@
 			>
 				<!-- Edit icon (left) -->
 				<template #prepend-inner>
-					<v-tooltip :text="__('Edit customer')" content-class="posa-theme-tooltip">
+					<v-icon
+						v-if="isCounterGridHeader"
+						class="counter-grid-customer-icon"
+						icon="mdi-account-outline"
+						size="34"
+					/>
+					<v-tooltip v-else :text="__('Edit customer')" content-class="posa-theme-tooltip">
 						<template #activator="{ props }">
 							<v-icon
 								v-bind="props"
@@ -46,7 +58,7 @@
 							</v-icon>
 						</template>
 					</v-tooltip>
-					<v-tooltip :text="__('Reload customers')" content-class="posa-theme-tooltip">
+					<v-tooltip v-if="!isCounterGridHeader" :text="__('Reload customers')" content-class="posa-theme-tooltip">
 						<template #activator="{ props }">
 							<v-icon
 								v-bind="props"
@@ -68,7 +80,7 @@
 
 				<!-- Add icon (right) -->
 				<template #append-inner>
-					<v-tooltip :text="__('Add new customer')" content-class="posa-theme-tooltip">
+					<v-tooltip v-if="!isCounterGridHeader" :text="__('Add new customer')" content-class="posa-theme-tooltip">
 						<template #activator="{ props }">
 							<v-icon
 								v-bind="props"
@@ -106,6 +118,33 @@
 						</v-list-item-subtitle>
 					</v-list-item>
 				</template>
+
+				<template v-if="isCounterGridHeader" #append-item>
+					<v-divider />
+					<v-list-subheader>{{ __("Customer actions") }}</v-list-subheader>
+					<v-list-item
+						prepend-icon="mdi-account-plus-outline"
+						data-testid="counter-grid-customer-add"
+						@click="runCustomerMenuAction('new')"
+					>
+						<v-list-item-title>{{ __("Add new customer") }}</v-list-item-title>
+					</v-list-item>
+					<v-list-item
+						prepend-icon="mdi-account-edit-outline"
+						data-testid="counter-grid-customer-edit"
+						@click="runCustomerMenuAction('edit')"
+					>
+						<v-list-item-title>{{ __("Edit selected customer") }}</v-list-item-title>
+					</v-list-item>
+					<v-list-item
+						prepend-icon="mdi-reload"
+						data-testid="counter-grid-customer-reload"
+						:disabled="!networkOnline"
+						@click="runCustomerMenuAction('reload')"
+					>
+						<v-list-item-title>{{ __("Reload customers") }}</v-list-item-title>
+					</v-list-item>
+				</template>
 			</v-autocomplete>
 			<v-progress-linear
 				v-if="showCustomerLoadProgress"
@@ -129,7 +168,7 @@
 			</div>
 		</div>
 		<!-- Update customer modal -->
-		<div class="mt-4">
+		<div :class="{ 'mt-4': !isCounterGridHeader }">
 			<UpdateCustomer />
 		</div>
 	</div>
@@ -201,6 +240,61 @@
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
+.customer-input-wrapper--counter-grid-header {
+	height: 100%;
+	padding-right: 0;
+}
+
+.customer-input-wrapper--counter-grid-header .customer-field-shell,
+.customer-autocomplete--counter-grid-header {
+	height: 100%;
+}
+
+.customer-autocomplete--counter-grid-header {
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.customer-autocomplete--counter-grid-header:hover {
+	box-shadow: none;
+}
+
+.customer-autocomplete--counter-grid-header :deep(.v-field) {
+	height: 100%;
+	border-radius: 0;
+	background: transparent !important;
+	box-shadow: none !important;
+}
+
+.customer-autocomplete--counter-grid-header :deep(.v-field__overlay) {
+	background: transparent !important;
+}
+
+.customer-autocomplete--counter-grid-header :deep(.v-field__input) {
+	min-height: 70px;
+	padding-top: 20px;
+	padding-bottom: 8px;
+	font-size: 1rem;
+	font-weight: 500;
+}
+
+.customer-autocomplete--counter-grid-header :deep(.v-label) {
+	font-size: 0.78rem;
+	font-weight: 500;
+	color: var(--rm-cg-text-muted) !important;
+}
+
+.customer-autocomplete--counter-grid-header :deep(.v-field__prepend-inner) {
+	padding-top: 0;
+	align-items: center;
+}
+
+.counter-grid-customer-icon {
+	margin-inline-end: 12px;
+	color: var(--rm-cg-shell-icon) !important;
+}
+
 /* Theme-aware internal field colors */
 .customer-autocomplete :deep(.v-field__input),
 .customer-autocomplete :deep(input),
@@ -210,6 +304,10 @@
 
 .customer-autocomplete :deep(.v-field__overlay) {
 	background-color: var(--pos-input-bg) !important;
+}
+
+.customer-autocomplete.customer-autocomplete--counter-grid-header :deep(.v-field__overlay) {
+	background: transparent !important;
 }
 
 .icon-button {
@@ -256,6 +354,10 @@ import { ensureCustomersReady } from "../../../modules/customers/customerLoading
 export default {
 	props: {
 		pos_profile: Object,
+		presentation: {
+			type: String,
+			default: "default",
+		},
 	},
 	components: {
 		UpdateCustomer,
@@ -283,6 +385,7 @@ export default {
 		const isMenuOpen = ref(false);
 		const customerDropdown = ref(null);
 		const readonlyState = ref(false);
+		const isCounterGridHeader = computed(() => props.presentation === "counter-grid-header");
 
 		let scrollContainer = null;
 
@@ -504,6 +607,21 @@ export default {
 			await customersStore.reloadCustomers();
 		};
 
+		const runCustomerMenuAction = async (action) => {
+			closeCustomerMenu();
+			if (action === "new") {
+				new_customer();
+				return;
+			}
+			if (action === "edit") {
+				edit_customer();
+				return;
+			}
+			if (action === "reload") {
+				await reload_customers();
+			}
+		};
+
 		const selectFirstCustomer = () => {
 			const list =
 				filteredCustomers.value && filteredCustomers.value.length
@@ -603,6 +721,7 @@ export default {
 
 		return {
 			customerDropdown,
+			isCounterGridHeader,
 			filteredCustomers,
 			loadingCustomers,
 			isCustomerBackgroundLoading,
@@ -625,6 +744,7 @@ export default {
 			openNewCustomer,
 			focusCustomerSearch,
 			reload_customers,
+			runCustomerMenuAction,
 			networkOnline,
 			customerInfo,
 			formatCustomerMetric,

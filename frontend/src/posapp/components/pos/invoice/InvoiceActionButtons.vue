@@ -1,5 +1,13 @@
 <template>
-	<div v-if="isCounterGrid" class="counter-grid-actions" data-testid="counter-grid-actions">
+	<div
+		v-if="isCounterGrid"
+		class="counter-grid-actions"
+		:class="{
+			'counter-grid-actions--with-return': pos_profile.posa_allow_return == 1,
+			'counter-grid-actions--without-return': pos_profile.posa_allow_return != 1,
+		}"
+		data-testid="counter-grid-actions"
+	>
 		<v-btn
 			variant="tonal"
 			prepend-icon="mdi-content-save-outline"
@@ -327,21 +335,29 @@ const showMoreActions = computed(
 <style scoped>
 .counter-grid-actions {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
-	gap: 6px;
+	gap: 9px;
 	min-width: 0;
+	padding-inline: 1px 15px;
+}
+
+.counter-grid-actions--with-return {
+	grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 0.94fr) minmax(0, 1.755fr);
+}
+
+.counter-grid-actions--without-return {
+	grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 0.94fr) minmax(0, 1.755fr);
 }
 
 .counter-grid-action {
-	height: 38px !important;
+	height: 54px !important;
 	min-width: 0 !important;
-	padding-inline: 10px !important;
+	padding-inline: 12px !important;
 	border: 1px solid var(--rm-cg-line) !important;
-	border-radius: 3px !important;
+	border-radius: 5px !important;
 	background: var(--rm-cg-action-more-bg) !important;
 	color: var(--rm-cg-action-more-text) !important;
-	font-size: 0.76rem !important;
-	font-weight: 650 !important;
+	font-size: 0.88rem !important;
+	font-weight: 700 !important;
 	letter-spacing: 0 !important;
 	text-transform: none !important;
 }
@@ -354,7 +370,7 @@ const showMoreActions = computed(
 .counter-grid-action--save {
 	border-color: var(--rm-cg-action-save-text) !important;
 	background: var(--rm-cg-action-save-bg) !important;
-	box-shadow: inset 4px 0 0 var(--rm-cg-action-save-text) !important;
+	box-shadow: none !important;
 	color: var(--rm-cg-action-save-text) !important;
 }
 
@@ -401,7 +417,7 @@ const showMoreActions = computed(
 .counter-grid-action.text-error,
 .counter-grid-action--cancel {
 	border-color: #b7202a !important;
-	background: var(--counter-rugged-red) !important;
+	background: var(--rm-cg-shell-cancel) !important;
 	color: #ffffff !important;
 }
 
@@ -412,11 +428,10 @@ const showMoreActions = computed(
 }
 
 .counter-grid-action--pay {
-	grid-column: span 2;
 	border-color: #066b3b !important;
-	background: var(--counter-rugged-green) !important;
+	background: var(--rm-cg-shell-pay) !important;
 	color: #ffffff !important;
-	font-size: 0.86rem !important;
+	font-size: 0.96rem !important;
 }
 
 .counter-grid-action--pay:hover {
@@ -426,11 +441,23 @@ const showMoreActions = computed(
 @media (max-width: 1199px) {
 	.counter-grid-action {
 		padding-inline: 6px !important;
-		font-size: 0.75rem !important;
+		font-size: 0.74rem !important;
 	}
 
 	.counter-grid-action :deep(.v-icon) {
 		font-size: 16px !important;
+	}
+}
+
+@media (max-width: 1439px), (max-height: 819px) {
+	.counter-grid-actions {
+		gap: 6px;
+		padding-inline: 0;
+	}
+
+	.counter-grid-action {
+		height: 48px !important;
+		font-size: 0.8rem !important;
 	}
 }
 

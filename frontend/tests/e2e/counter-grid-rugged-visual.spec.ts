@@ -113,40 +113,33 @@ test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 			{ width: 1024, height: 768 },
 			{ width: 1280, height: 720 },
 			{ width: 1366, height: 768 },
+			{ width: 1672, height: 941 },
 			{ width: 1920, height: 1080 },
 		]) {
 			await page.setViewportSize(viewport);
 			await expect(page.getByTestId("counter-grid-pos")).toBeVisible();
 			await expectBackground(
 				page.locator(".pos-navbar-enhanced--counter-grid"),
-				"rgb(23, 59, 43)",
+				"rgb(4, 50, 40)",
 			);
-			const navbarBounds = await page
-				.locator(".pos-navbar-enhanced--counter-grid")
-				.boundingBox();
-			const invoiceModeAlertBounds = await page
-				.locator(".invoice-status-alert")
-				.boundingBox();
-			expect(navbarBounds).not.toBeNull();
-			expect(invoiceModeAlertBounds).not.toBeNull();
-			expect(invoiceModeAlertBounds!.y).toBeGreaterThanOrEqual(
-				navbarBounds!.y + navbarBounds!.height + 2,
-			);
+			await expect(page.locator(".invoice-status-alert")).toHaveCount(0);
+			await expect(page.getByTestId("counter-grid-transaction-header")).toBeVisible();
+			await expect(page.getByTestId("counter-grid-net-total")).toBeVisible();
 			await expectBackground(
 				page.locator(".invoice-items-card > .invoice-section-heading"),
-				"rgb(8, 127, 122)",
+				"rgb(5, 120, 118)",
 			);
 			await expectBackground(
 				page.locator(".posa-cart-table thead th").first(),
-				"rgb(233, 246, 239)",
+				"rgb(235, 246, 241)",
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-pay"),
-				"rgb(8, 116, 67)",
+				"rgb(3, 102, 67)",
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-cancel-sale"),
-				"rgb(196, 61, 77)",
+				"rgb(212, 66, 85)",
 			);
 			await expectBackground(
 				page.getByTestId("invoice-action-save-clear"),
@@ -193,7 +186,30 @@ test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 			const tableBounds = await page
 				.locator(".posa-items-table-container--counter-grid")
 				.boundingBox();
-			expect(tableBounds?.height || 0).toBeGreaterThanOrEqual(300);
+			const minimumTableHeight = viewport.height <= 720 ? 240 : viewport.height <= 768 ? 290 : 300;
+			expect(tableBounds?.height || 0).toBeGreaterThanOrEqual(minimumTableHeight);
+			if (viewport.width === 1672) {
+				const invoiceBounds = await page.getByTestId("counter-grid-invoice").boundingBox();
+				const customerBounds = await page
+					.locator(".counter-grid-context-card--customer")
+					.boundingBox();
+				const totalBounds = await page.getByTestId("counter-grid-net-total").boundingBox();
+				const summaryBounds = await page
+					.locator(".counter-grid-summary__metrics")
+					.boundingBox();
+				const actionBounds = await page.getByTestId("counter-grid-actions").boundingBox();
+				const footerBounds = await page.locator(".counter-grid-status").boundingBox();
+				expect(invoiceBounds?.x || 0).toBeGreaterThanOrEqual(15);
+				expect(invoiceBounds?.x || 0).toBeLessThanOrEqual(18);
+				expect(customerBounds?.height || 0).toBeGreaterThanOrEqual(98);
+				expect(customerBounds?.height || 0).toBeLessThanOrEqual(102);
+				expect(totalBounds?.height || 0).toBeGreaterThanOrEqual(146);
+				expect(totalBounds?.height || 0).toBeLessThanOrEqual(150);
+				expect(summaryBounds?.height || 0).toBeGreaterThanOrEqual(78);
+				expect(actionBounds?.height || 0).toBeGreaterThanOrEqual(52);
+				expect(footerBounds?.height || 0).toBeGreaterThanOrEqual(42);
+				expect(page.locator(".counter-grid-summary__metrics > *")).toHaveCount(4);
+			}
 			await expectNoViewportOverflow(page);
 			await page.screenshot({
 				path: `test-results/counter-grid-retailmind-${viewport.width}x${viewport.height}.png`,

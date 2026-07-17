@@ -178,17 +178,17 @@
 			<Invoice ref="invoicePanel" presentation="counter-grid" />
 			<footer class="counter-grid-status" aria-label="Counter status">
 				<span>
-					<v-icon icon="mdi-warehouse" size="16" />
+					<v-icon icon="mdi-warehouse" size="18" />
 					{{ posProfile?.warehouse || __("Warehouse not selected") }}
 				</span>
 				<span>
-					<v-icon icon="mdi-tag-outline" size="16" />
+					<v-icon icon="mdi-tag-outline" size="18" />
 					{{ posProfile?.selling_price_list || __("Price list not selected") }}
 				</span>
 				<span>
 					<v-icon
 						:icon="itemsLoaded ? 'mdi-database-check-outline' : 'mdi-database-clock-outline'"
-						size="16"
+						size="18"
 					/>
 					{{ catalogStatusLabel }}
 				</span>
@@ -1007,8 +1007,8 @@ export default {
 
 .pos-main-container--counter-grid {
 	padding: 0;
-	height: calc(100vh - 64px);
-	height: calc(100dvh - 64px);
+	height: calc(100vh - 82px);
+	height: calc(100dvh - 82px);
 	min-height: 0;
 	overflow: hidden;
 	transition: none;
@@ -1016,22 +1016,22 @@ export default {
 
 .counter-grid-pos {
 	display: grid;
-	grid-template-rows: minmax(0, 1fr) 30px;
+	grid-template-rows: minmax(0, 1fr) 43px;
 	height: 100%;
 	min-height: 0;
-	background: var(--rm-cg-surface-canvas);
+	background: var(--rm-cg-shell-canvas);
 }
 
 .counter-grid-status {
 	display: flex;
 	align-items: center;
-	gap: 22px;
+	gap: 24px;
 	min-width: 0;
-	padding: 0 14px;
-	border-top: 2px solid var(--counter-rugged-cyan);
-	background: var(--rm-cg-surface);
+	padding: 0 22px;
+	border-top: 1px solid var(--rm-cg-line-soft);
+	background: #f7f8fa;
 	color: var(--rm-cg-text-muted);
-	font-size: 0.78rem;
+	font-size: 0.82rem;
 }
 
 .counter-grid-status span {
@@ -1141,7 +1141,7 @@ export default {
 
 @media (max-width: 1199px) {
 	.counter-grid-pos {
-		grid-template-rows: minmax(0, 1fr) 28px;
+		grid-template-rows: minmax(0, 1fr) 40px;
 	}
 
 	.counter-grid-status {

@@ -67,6 +67,14 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			"invoice",
 			"items-table-styles.css",
 		);
+		const header = source(
+			"components",
+			"pos",
+			"invoice",
+			"CounterGridTransactionHeader.vue",
+		);
+		const customer = source("components", "pos", "customer", "Customer.vue");
+		const summary = source("components", "pos", "invoice", "InvoiceSummary.vue");
 
 		expect(tokens).toContain("--rm-cg-forest-950: #173b2b");
 		expect(tokens).toContain("--rm-cg-teal-700: #087f7a");
@@ -75,6 +83,11 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(tokens).toContain("--rm-cg-action-save-bg: #dff1e7");
 		expect(tokens).toContain("--rm-cg-action-drafts-bg: #eef2ff");
 		expect(tokens).toContain("--rm-cg-action-return-bg: #fff1d6");
+		expect(tokens).toContain("--rm-cg-shell-navbar: #043228");
+		expect(tokens).toContain("--rm-cg-shell-teal: #057876");
+		expect(tokens).toContain("--rm-cg-shell-table-header: #ebf6f1");
+		expect(tokens).toContain("--rm-cg-shell-pay: #036643");
+		expect(tokens).toContain("--rm-cg-shell-cancel: #d44255");
 		expect(tokens).toContain(
 			".pos-main-container--counter-grid > .v-row.justify-center",
 		);
@@ -82,35 +95,44 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			"--counter-rugged-green: var(--rm-cg-success)",
 		);
 		expect(navbar).toContain("pos-navbar-enhanced--counter-grid");
-		expect(navbar).toContain("background: var(--rm-cg-forest-950) !important");
+		expect(navbar).toContain("background: var(--rm-cg-shell-navbar) !important");
+		expect(navbar).toContain('isCounterGrid ? 74 : 56');
 		expect(navbar).toContain(
 			"border-bottom: 2px solid var(--rm-cg-teal-300)",
 		);
 		expect(shell).toContain("border: 3px solid var(--counter-rugged-navy)");
 		expect(table).toContain(
-			"background: var(--rm-cg-surface-header) !important",
+			"background: var(--rm-cg-shell-table-header) !important",
 		);
 		expect(table).toContain("color: var(--rm-cg-text) !important");
 		expect(actions).toContain(
-			"background: var(--counter-rugged-green) !important",
+			"background: var(--rm-cg-shell-pay) !important",
 		);
 		expect(actions).toContain(
-			"background: var(--counter-rugged-red) !important",
+			"background: var(--rm-cg-shell-cancel) !important",
 		);
 		expect(actions).toContain("counter-grid-action--save");
 		expect(actions).toContain("counter-grid-action--drafts");
 		expect(actions).toContain("counter-grid-action--invoices");
 		expect(actions).toContain("counter-grid-action--return");
-		expect(shell).toContain("background: var(--rm-cg-surface-canvas)");
-		expect(shell).toContain("grid-template-rows: minmax(0, 1fr) 28px");
-		expect(source("components", "pos", "Invoice.vue")).toContain(
-			"flex: 1.35 1 560px",
-		);
-		expect(source("components", "pos", "Invoice.vue")).toContain(
-			"display: contents",
-		);
+		expect(shell).toContain("background: var(--rm-cg-shell-canvas)");
+		expect(shell).toContain("grid-template-rows: minmax(0, 1fr) 43px");
+		expect(header).toContain("1.562fr 1.05fr 0.988fr 0.6fr 1.95fr");
+		expect(header).toContain("padding-inline: 12px 10px");
+		expect(header).toContain("height: 146px");
+		expect(header).toContain("counter-grid-total-hero");
+		expect(header).toContain("counter-grid-transaction-header--no-balance");
+		expect(customer).toContain('presentation === "counter-grid-header"');
+		expect(customer).toContain('data-testid="counter-grid-customer-add"');
+		expect(customer).toContain('data-testid="counter-grid-customer-edit"');
+		expect(customer).toContain('data-testid="counter-grid-customer-reload"');
+		expect(summary).toContain("minmax(0, 2fr)");
+		expect(summary).not.toContain("counter-grid-summary__metric--total");
 		expect(source("components", "pos", "Invoice.vue")).toContain(
 			':show-search="false"',
+		);
+		expect(source("components", "pos", "Invoice.vue")).toContain(
+			"!isCounterGridPresentation",
 		);
 		expect(source("components", "pos", "Invoice.vue")).toContain(
 			"invoice-items-heading",

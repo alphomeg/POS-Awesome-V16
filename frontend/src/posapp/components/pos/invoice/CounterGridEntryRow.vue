@@ -80,8 +80,8 @@ defineExpose({ focus, select });
 
 <style scoped>
 .counter-grid-entry-row {
-	height: 52px;
-	background: #e2edf5;
+	height: 60px;
+	background: #f8fbf9;
 	border-top: 2px solid var(--rm-cg-line-strong);
 }
 
@@ -90,7 +90,7 @@ defineExpose({ focus, select });
 	text-align: center;
 	border-right: 1px solid #c9d5df;
 	border-bottom: 1px solid var(--rm-cg-line);
-	background: #eaf2f7;
+	background: #fbfdfc;
 	color: #52687a;
 }
 

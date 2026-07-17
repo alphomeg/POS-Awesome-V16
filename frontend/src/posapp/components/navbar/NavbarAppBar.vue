@@ -1,7 +1,7 @@
 <template>
 	<v-app-bar
 		flat
-		:height="isMobile ? 64 : 56"
+		:height="isMobile ? 64 : isCounterGrid ? 74 : 56"
 		:class="[
 			'pos-navbar-enhanced elevation-2 pos-themed-card pos-theme-immediate',
 			{ 'pos-navbar-enhanced--counter-grid': isCounterGrid },
@@ -415,11 +415,11 @@ export default {
 }
 
 .pos-navbar-enhanced--counter-grid {
-	background: var(--rm-cg-forest-950) !important;
-	background-image: none !important;
+	background: var(--rm-cg-shell-navbar) !important;
+	background-image: linear-gradient(105deg, #06483b, var(--rm-cg-shell-navbar)) !important;
 	backdrop-filter: none !important;
 	border-bottom: 2px solid var(--rm-cg-teal-300) !important;
-	box-shadow: 0 3px 0 rgba(10, 44, 30, 0.32) !important;
+	box-shadow: 0 3px 0 rgba(4, 50, 40, 0.28) !important;
 	color: #ffffff !important;
 	transition: none !important;
 }
@@ -471,6 +471,38 @@ export default {
 .pos-navbar-enhanced--counter-grid :deep(.notification-bell-trigger .v-icon),
 .pos-navbar-enhanced--counter-grid :deep(.menu-btn-compact .v-icon) {
 	color: #ffffff !important;
+}
+
+@media (min-width: 1440px) and (min-height: 820px) {
+	.pos-navbar-enhanced--counter-grid.desktop-navbar {
+		padding: 0 14px 4px !important;
+	}
+
+	.pos-navbar-enhanced--counter-grid .nav-icon {
+		min-width: 62px;
+		min-height: 62px;
+	}
+
+	.pos-navbar-enhanced--counter-grid .pos-navbar-logo {
+		max-width: 38px !important;
+	}
+
+	.pos-navbar-enhanced--counter-grid .pos-navbar-title {
+		font-size: 1.45rem !important;
+	}
+
+	.pos-navbar-enhanced--counter-grid .offline-invoices-btn,
+	.pos-navbar-enhanced--counter-grid :deep(.status-btn-enhanced),
+	.pos-navbar-enhanced--counter-grid :deep(.info-gadgets-btn),
+	.pos-navbar-enhanced--counter-grid :deep(.notification-bell-trigger) {
+		min-width: 52px !important;
+		min-height: 52px !important;
+	}
+
+	.pos-navbar-enhanced--counter-grid .profile-chip,
+	.pos-navbar-enhanced--counter-grid :deep(.menu-btn-compact) {
+		min-height: 50px !important;
+	}
 }
 
 /* RTL/LTR App Bar Layout */
