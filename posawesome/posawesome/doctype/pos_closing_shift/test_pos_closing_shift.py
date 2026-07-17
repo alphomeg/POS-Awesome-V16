@@ -56,6 +56,98 @@ class TestPOSClosingShift(unittest.TestCase):
         doc.check_permission = Mock()
         return doc
 
+    @patch("posawesome.posawesome.doctype.pos_closing_shift.closing_processing.creation.frappe")
+    def test_submit_closing_shift_rebuilds_canonical_document_for_assigned_cashier(
+        self, mock_frappe
+    ):
+        opening = SimpleNamespace(
+            name="POS-OPEN-1",
+            user="cashier@example.com",
+            pos_profile="POS-PROFILE-1",
+            company="My Co",
+            docstatus=1,
+            status="Open",
+            as_dict=lambda: {"name": "POS-OPEN-1"},
+        )
+        payments = [
+            AttrDict(mode_of_payment="Cash", expected_amount=25, closing_amount=0),
+            AttrDict(mode_of_payment="Card", expected_amount=10, closing_amount=0),
+        ]
+        canonical = Mock(name="canonical-closing")
+        canonical.name = "POS-CLOSE-1"
+        canonical.flags = AttrDict()
+        canonical.get.side_effect = lambda key, default=None: (
+            payments if key == "payment_reconciliation" else default
+        )
+        mock_frappe.get_doc.return_value = opening
+        mock_frappe.as_json.return_value = '{"name":"POS-OPEN-1"}'
+
+        with (
+            patch.object(
+                creation,
+                "get_authenticated_pos_user",
+                return_value="cashier@example.com",
+            ),
+            patch.object(creation, "user_can_manage_pos", return_value=False),
+            patch.object(creation, "get_authorized_pos_profile") as authorize_profile,
+            patch.object(
+                creation,
+                "make_closing_shift_from_opening",
+                return_value={"closing_shift": canonical},
+            ) as make_closing,
+            patch.object(creation, "normalize_pos_payment_references") as normalize,
+        ):
+            result = creation.submit_closing_shift(
+                """{
+                    "pos_opening_shift": "POS-OPEN-1",
+                    "grand_total": 999999,
+                    "payment_reconciliation": [
+                        {"mode_of_payment": "Cash", "closing_amount": 25},
+                        {"mode_of_payment": "Card", "closing_amount": 10}
+                    ]
+                }"""
+            )
+
+        self.assertEqual(result, "POS-CLOSE-1")
+        self.assertEqual([row.closing_amount for row in payments], [25, 10])
+        self.assertTrue(canonical.flags.ignore_permissions)
+        authorize_profile.assert_called_once_with("POS-PROFILE-1", "My Co")
+        make_closing.assert_called_once_with('{"name":"POS-OPEN-1"}')
+        normalize.assert_called_once_with(canonical)
+        canonical.save.assert_called_once_with()
+        canonical.submit.assert_called_once_with()
+
+    @patch("posawesome.posawesome.doctype.pos_closing_shift.closing_processing.creation.frappe")
+    def test_submit_closing_shift_rejects_another_cashiers_opening(self, mock_frappe):
+        mock_frappe.PermissionError = PermissionError
+        mock_frappe.throw.side_effect = lambda message, *args: (_ for _ in ()).throw(
+            PermissionError(message)
+        )
+        mock_frappe.get_doc.return_value = SimpleNamespace(
+            name="POS-OPEN-1",
+            user="cashier@example.com",
+            pos_profile="POS-PROFILE-1",
+            company="My Co",
+            docstatus=1,
+            status="Open",
+        )
+
+        with (
+            patch.object(
+                creation,
+                "get_authenticated_pos_user",
+                return_value="other@example.com",
+            ),
+            patch.object(creation, "user_can_manage_pos", return_value=False),
+            patch.object(creation, "make_closing_shift_from_opening") as make_closing,
+        ):
+            with self.assertRaisesRegex(PermissionError, "assigned cashier"):
+                creation.submit_closing_shift(
+                    '{"pos_opening_shift":"POS-OPEN-1","payment_reconciliation":[]}'
+                )
+
+        make_closing.assert_not_called()
+
     @patch("posawesome.posawesome.doctype.pos_closing_shift.closing_processing.overview.frappe")
     def test_reconciliation_checks_invoice_read_permission(self, mock_frappe):
         invoice_doc = self._make_doc(

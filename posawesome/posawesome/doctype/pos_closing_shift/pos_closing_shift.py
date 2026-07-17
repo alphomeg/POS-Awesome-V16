@@ -69,7 +69,7 @@ class POSClosingShift(Document):
         opening_entry.pos_closing_shift = self.name
         opening_entry.set_status()
         self.delete_draft_invoices()
-        opening_entry.save()
+        opening_entry.save(ignore_permissions=True)
         # link invoices with this closing shift so ERPNext can block edits
         _set_closing_entry_invoices(self)
         consolidate_closing_shift_invoices(self)

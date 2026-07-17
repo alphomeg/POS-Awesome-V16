@@ -1,6 +1,11 @@
 import frappe
 from frappe import _
 from frappe.utils import flt, json
+from posawesome.posawesome.api.pos_access import (
+    get_authenticated_pos_user,
+    get_authorized_pos_profile,
+    user_can_manage_pos,
+)
 from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.utils import get_base_value
 from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.data import (
     get_pos_invoices,
@@ -245,8 +250,39 @@ def make_closing_shift_from_opening(opening_shift):
 
 @frappe.whitelist()
 def submit_closing_shift(closing_shift):
-    closing_shift = json.loads(closing_shift)
-    closing_shift_doc = frappe.get_doc(closing_shift)
+    requested_closing = json.loads(closing_shift)
+    opening_name = requested_closing.get("pos_opening_shift")
+    if not opening_name:
+        frappe.throw(_("POS Opening Shift is required."))
+
+    opening_shift = frappe.get_doc("POS Opening Shift", opening_name)
+    session_user = get_authenticated_pos_user()
+    if session_user != opening_shift.user and not user_can_manage_pos(session_user):
+        frappe.throw(
+            _("Only the assigned cashier or a POS supervisor can close this shift."),
+            frappe.PermissionError,
+        )
+
+    get_authorized_pos_profile(opening_shift.pos_profile, opening_shift.company)
+    if opening_shift.docstatus != 1 or opening_shift.status != "Open":
+        frappe.throw(_("Selected POS Opening Shift should be open."))
+
+    canonical = make_closing_shift_from_opening(frappe.as_json(opening_shift.as_dict()))[
+        "closing_shift"
+    ]
+    closing_amounts = {
+        row.get("mode_of_payment"): row.get("closing_amount")
+        for row in requested_closing.get("payment_reconciliation", [])
+        if row.get("mode_of_payment")
+    }
+    for row in canonical.get("payment_reconciliation", []):
+        if row.mode_of_payment not in closing_amounts:
+            frappe.throw(
+                _("Closing amount is required for {0}.").format(row.mode_of_payment)
+            )
+        row.closing_amount = closing_amounts[row.mode_of_payment]
+
+    closing_shift_doc = canonical
     closing_shift_doc.flags.ignore_permissions = True
     normalize_pos_payment_references(closing_shift_doc)
     closing_shift_doc.save()

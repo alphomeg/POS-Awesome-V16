@@ -64,7 +64,11 @@ async function addKnownItem(page: Page) {
 		const search = page.getByTestId("pos-item-search").locator("input");
 		await expect(search).toBeVisible({ timeout: 30_000 });
 		const result = page.getByTestId(`pos-item-row-${itemCode}`);
-		if (await result.isVisible({ timeout: 8_000 }).catch(() => false)) {
+		const resultReady = await result
+			.waitFor({ state: "visible", timeout: 30_000 })
+			.then(() => true)
+			.catch(() => false);
+		if (resultReady) {
 			await expect(result).toHaveAttribute("aria-selected", "true");
 			await search.press("Enter");
 			await expect(
