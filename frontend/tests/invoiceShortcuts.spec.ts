@@ -344,6 +344,31 @@ describe("invoiceShortcuts", () => {
 		shell.remove();
 	});
 
+	it("leaves arrows to a component that owns its local navigation root", async () => {
+		const vm = createVm();
+		const actionRoot = document.createElement("div");
+		actionRoot.setAttribute("data-pos-arrow-navigation-root", "counter-grid-actions");
+		const action = document.createElement("button");
+		actionRoot.appendChild(action);
+		document.body.appendChild(actionRoot);
+		const event = new KeyboardEvent("keydown", {
+			key: "ArrowRight",
+			code: "ArrowRight",
+			bubbles: true,
+			cancelable: true,
+		});
+		Object.defineProperty(event, "target", {
+			value: action,
+			configurable: true,
+		});
+
+		await (invoiceShortcuts as any).handleInvoiceShortcut.call(vm, event);
+
+		expect(vm.enterInvoiceItemsGrid).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
+		actionRoot.remove();
+	});
+
 	it("uses plain arrow keys from marked search fields to enter invoice table grid mode", async () => {
 		const vm = createVm();
 		const shell = document.createElement("div");

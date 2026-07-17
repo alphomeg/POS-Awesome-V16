@@ -219,6 +219,55 @@ test.describe("Counter Grid shell", () => {
 		).toBeFocused();
 	});
 
+	test("moves from the final cart editor through item entry and every bottom action with arrows", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 720 });
+		await waitForPos(page);
+		const entry = page.getByTestId("counter-grid-item-entry");
+		const actionIds = [
+			"invoice-action-save-clear",
+			"invoice-action-drafts",
+			"invoice-action-management",
+			"invoice-action-returns",
+			"invoice-action-more",
+			"invoice-action-cancel-sale",
+			"invoice-action-pay",
+		];
+
+		await expect(entry).toBeFocused({ timeout: 15_000 });
+		await page.keyboard.press("ArrowDown");
+		await expect(page.getByTestId("invoice-action-save-clear")).toBeFocused({
+			timeout: 15_000,
+		});
+		await page.keyboard.press("ArrowUp");
+		await expect(entry).toBeFocused({ timeout: 15_000 });
+
+		const { cartRow } = await addKnownItemFromCounterSearch(page);
+		const quantity = cartRow.locator('[data-column-key="qty"] input').first();
+		await expect(quantity).toBeFocused({ timeout: 15_000 });
+		await page.keyboard.press("Shift+ArrowDown");
+		await expect(quantity).toBeFocused({ timeout: 15_000 });
+		await page.keyboard.press("ArrowDown");
+		await expect(entry).toBeFocused({ timeout: 15_000 });
+
+		await page.keyboard.press("ArrowDown");
+		for (const [index, testId] of actionIds.entries()) {
+			await expect(page.getByTestId(testId)).toBeFocused({ timeout: 15_000 });
+			if (index < actionIds.length - 1) {
+				await page.keyboard.press("ArrowRight");
+			}
+		}
+
+		for (let index = actionIds.length - 1; index > 0; index -= 1) {
+			await page.keyboard.press("ArrowLeft");
+			await expect(page.getByTestId(actionIds[index - 1])).toBeFocused({ timeout: 15_000 });
+		}
+
+		await page.keyboard.press("ArrowUp");
+		await expect(entry).toBeFocused({ timeout: 15_000 });
+	});
+
 	test("appends each distinct item below the prior row", async ({ page }) => {
 		await page.setViewportSize({ width: 1366, height: 768 });
 		await waitForPos(page);

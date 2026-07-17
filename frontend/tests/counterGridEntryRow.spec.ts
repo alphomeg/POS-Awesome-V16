@@ -15,7 +15,8 @@ describe("CounterGridEntryRow", () => {
 				data: () => ({
 					query: "",
 					submitted: "",
-					navigationMethod: "",
+						navigationMethod: "",
+						forwardNavigationCount: 0,
 				}),
 				template: `
 				<table><tbody>
@@ -24,6 +25,7 @@ describe("CounterGridEntryRow", () => {
 						:columns="[{ key: 'data-table-expand' }, { key: 'item_name' }, { key: 'qty' }]"
 						@submit="submitted = $event"
 						@navigate-back="navigationMethod = $event"
+						@navigate-forward="forwardNavigationCount += 1"
 					/>
 				</tbody></table>
 			`,
@@ -50,6 +52,28 @@ describe("CounterGridEntryRow", () => {
 
 		await input.trigger("keydown", { key: "ArrowUp" });
 		expect((wrapper.vm as any).navigationMethod).toBe("arrow-up");
+
+		const forwardEvent = new KeyboardEvent("keydown", {
+			key: "ArrowDown",
+			bubbles: true,
+			cancelable: true,
+		});
+		input.element.dispatchEvent(forwardEvent);
+		await wrapper.vm.$nextTick();
+		expect((wrapper.vm as any).forwardNavigationCount).toBe(1);
+		expect((wrapper.vm as any).query).toBe("panadol");
+		expect(forwardEvent.defaultPrevented).toBe(true);
+
+		const modifiedForwardEvent = new KeyboardEvent("keydown", {
+			key: "ArrowDown",
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+		input.element.dispatchEvent(modifiedForwardEvent);
+		await wrapper.vm.$nextTick();
+		expect((wrapper.vm as any).forwardNavigationCount).toBe(1);
+		expect(modifiedForwardEvent.defaultPrevented).toBe(false);
 	});
 
 	it("does not open an unscoped search for an empty value", async () => {

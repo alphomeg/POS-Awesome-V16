@@ -1,12 +1,15 @@
 <template>
 	<div
 		v-if="isCounterGrid"
+		ref="actionsRoot"
 		class="counter-grid-actions"
 		:class="{
 			'counter-grid-actions--with-return': pos_profile.posa_allow_return == 1,
 			'counter-grid-actions--without-return': pos_profile.posa_allow_return != 1,
 		}"
 		data-testid="counter-grid-actions"
+		data-pos-arrow-navigation-root="counter-grid-actions"
+		@keydown.capture="handleCounterGridActionsKeydown"
 	>
 		<v-btn
 			variant="tonal"
@@ -280,8 +283,13 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { parseBooleanSetting } from "../../../utils/stock";
+import {
+	collectKeyboardTargets,
+	focusFirstKeyboardTarget,
+	moveFocusByArrow,
+} from "../../../utils/keyboardNavigation";
 
 const props = defineProps({
 	presentation: {
@@ -304,7 +312,7 @@ const props = defineProps({
 	customerDisplayLoading: Boolean,
 });
 
-defineEmits([
+const emit = defineEmits([
 	"save-and-clear",
 	"load-drafts",
 	"select-order",
@@ -316,9 +324,11 @@ defineEmits([
 	"open-customer-display",
 	"open-offers",
 	"open-coupons",
+	"navigate-back",
 ]);
 
 const __ = window.__;
+const actionsRoot = ref(null);
 const isCounterGrid = computed(() => props.presentation === "counter-grid");
 const showCustomerDisplayButton = computed(() =>
 	parseBooleanSetting(props.pos_profile?.posa_enable_customer_display),
@@ -330,6 +340,43 @@ const showMoreActions = computed(
 		Boolean(props.pos_profile?.posa_allow_print_draft_invoices) ||
 		showCustomerDisplayButton.value,
 );
+
+const focusFirstAction = () =>
+	focusFirstKeyboardTarget(actionsRoot.value, '[data-testid="invoice-action-save-clear"]');
+
+const isFirstActionFocused = () => {
+	const firstAction = collectKeyboardTargets(actionsRoot.value)[0];
+	const activeElement = document.activeElement;
+	return Boolean(
+		firstAction &&
+		activeElement instanceof HTMLElement &&
+		(firstAction === activeElement || firstAction.contains(activeElement)),
+	);
+};
+
+const handleCounterGridActionsKeydown = (event) => {
+	if (
+		event.defaultPrevented ||
+		event.altKey ||
+		event.ctrlKey ||
+		event.metaKey ||
+		event.shiftKey ||
+		!isCounterGrid.value
+	) {
+		return;
+	}
+
+	if (event.key === "ArrowUp" && isFirstActionFocused()) {
+		event.preventDefault();
+		event.stopPropagation();
+		emit("navigate-back");
+		return;
+	}
+
+	moveFocusByArrow(event, { root: actionsRoot.value });
+};
+
+defineExpose({ focusFirstAction });
 </script>
 
 <style scoped>

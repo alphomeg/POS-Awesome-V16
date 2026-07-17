@@ -62,6 +62,7 @@
 					:columns="finalVisibleColumns"
 					@submit="openCounterGridItemSearch"
 					@navigate-back="focusPreviousCounterGridEntry"
+					@navigate-forward="focusCounterGridActions"
 				/>
 				<CartItemRow
 					v-else
@@ -242,6 +243,7 @@ const emit = defineEmits<{
 	"show-drop-feedback": [val: boolean];
 	"item-dropped": [val: boolean];
 	"edit-item": [item: any];
+	"focus-actions": [];
 }>();
 
 const { proxy } = getCurrentInstance() as any;
@@ -488,6 +490,16 @@ const enterGridCellMode = (preferredCellKey?: CartGridColumnKey | null) => {
 };
 
 const moveGridRow = (delta: number) => {
+	if (
+		props.counterGrid &&
+		delta > 0 &&
+		items.value.length > 0 &&
+		activeRowIndex.value === items.value.length - 1
+	) {
+		deactivateKeyboardGrid();
+		void focusCounterGridEntry();
+		return true;
+	}
 	const currentCell = activeCellKey.value;
 	const moved = setActiveGridRow(activeRowIndex.value + delta);
 	if (moved && gridMode.value === "cell" && currentCell) {
@@ -781,6 +793,12 @@ const focusCounterGridEntry = async () => {
 	}, 50);
 };
 
+const focusCounterGridActions = () => {
+	deactivateKeyboardGrid();
+	emit("focus-actions");
+	return true;
+};
+
 const clearCounterGridEntry = () => {
 	counterGridEntryQuery.value = "";
 };
@@ -1006,6 +1024,25 @@ const handleGridKeydown = (event: KeyboardEvent) => {
 		})
 	)
 		return;
+	if (
+		props.counterGrid &&
+		gridMode.value === "inactive" &&
+		(event.key === "ArrowDown" || event.key === "ArrowUp") &&
+		!event.defaultPrevented &&
+		!event.altKey &&
+		!event.ctrlKey &&
+		!event.metaKey &&
+		!event.shiftKey &&
+		isEditableElement(event.target as HTMLElement) &&
+		activateGridFromEventTarget(event)
+	) {
+		event.preventDefault();
+		event.stopPropagation();
+		void commitActiveGridEditor().then(() => {
+			moveGridRow(event.key === "ArrowDown" ? 1 : -1);
+		});
+		return;
+	}
 	if (
 		props.counterGrid &&
 		gridMode.value === "inactive" &&

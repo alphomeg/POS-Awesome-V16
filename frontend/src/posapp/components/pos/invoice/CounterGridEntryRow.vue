@@ -48,6 +48,7 @@ const emit = defineEmits<{
 	"update:modelValue": [value: string];
 	submit: [query: string];
 	navigateBack: [method: "arrow-up" | "shift-tab"];
+	navigateForward: [];
 }>();
 const entryRow = ref<HTMLTableRowElement | null>(null);
 const __ = window.__ || ((value: string) => value);
@@ -59,6 +60,18 @@ const updateValue = (event: Event) => {
 };
 
 const handleKeydown = (event: KeyboardEvent) => {
+	if (
+		event.key === "ArrowDown" &&
+		!event.altKey &&
+		!event.ctrlKey &&
+		!event.metaKey &&
+		!event.shiftKey
+	) {
+		event.preventDefault();
+		event.stopPropagation();
+		emit("navigateForward");
+		return;
+	}
 	if ((event.key === "Tab" && event.shiftKey) || event.key === "ArrowUp") {
 		event.preventDefault();
 		event.stopPropagation();

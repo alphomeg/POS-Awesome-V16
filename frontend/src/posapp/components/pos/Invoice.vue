@@ -269,6 +269,7 @@
 								@item-dropped="showDropFeedback(false, itemsTableRef)"
 								@view-packed="openPackedItems"
 								@edit-item="openItemQuickEditForItem"
+								@focus-actions="focusCounterGridActions"
 							/>
 
 							<PackedItemsDialog
@@ -346,6 +347,7 @@
 			@open-customer-display="handleOpenCustomerDisplayRequest"
 			@open-offers="handleOpenCounterAuxiliary('offers')"
 			@open-coupons="handleOpenCounterAuxiliary('coupons')"
+			@focus-counter-grid-entry="focusCounterGridEntry"
 			@resume-parked-order="resume_parked_order"
 		/>
 	</div>
@@ -676,6 +678,13 @@ export default {
 
 		focusCounterGridEntry() {
 			return this.$refs.itemsTableRef?.focusCounterGridEntry?.();
+		},
+
+		focusCounterGridActions() {
+			if (!this.isCounterGridPresentation) {
+				return false;
+			}
+			return this.$refs.invoiceSummary?.focusCounterGridActions?.() || false;
 		},
 
 		clearCounterGridEntry() {

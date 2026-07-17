@@ -74,6 +74,7 @@
 			</div>
 
 			<InvoiceActionButtons
+				ref="counterGridActionButtons"
 				presentation="counter-grid"
 				:pos_profile="pos_profile"
 				:saveLoading="saveLoading"
@@ -96,6 +97,7 @@
 				@open-customer-display="handleOpenCustomerDisplay"
 				@open-offers="$emit('open-offers')"
 				@open-coupons="$emit('open-coupons')"
+				@navigate-back="$emit('focus-counter-grid-entry')"
 			/>
 		</div>
 
@@ -341,6 +343,7 @@ const emit = defineEmits([
 	"open-customer-display",
 	"open-offers",
 	"open-coupons",
+	"focus-counter-grid-entry",
 	"resume-parked-order",
 ]);
 
@@ -356,6 +359,7 @@ const customerDisplayLoading = ref(false);
 const isEditingAdditionalDiscount = ref(false);
 const isEditingAdditionalDiscountPercentage = ref(false);
 const additionalDiscountField = ref(null);
+const counterGridActionButtons = ref(null);
 const desktopDraftsDrawer = ref(false);
 const mobileDraftsDialog = ref(false);
 const desktopDraftsList = ref(null);
@@ -500,6 +504,10 @@ function focusAdditionalDiscountField() {
 	const field = additionalDiscountField.value;
 	field?.focus?.();
 	field?.$el?.querySelector?.("input")?.focus?.();
+}
+
+function focusCounterGridActions() {
+	return counterGridActionButtons.value?.focusFirstAction?.() || false;
 }
 
 function formatRatio(value) {
@@ -656,6 +664,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
 	focusAdditionalDiscountField,
+	focusCounterGridActions,
 	focusDraftsSurface,
 	handleManageAllDrafts,
 	openDraftsSurface,

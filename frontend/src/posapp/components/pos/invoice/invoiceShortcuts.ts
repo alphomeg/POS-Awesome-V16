@@ -103,7 +103,11 @@ const shouldEnterInvoiceGridFromArrow = (event: KeyboardEvent) => {
 		return false;
 	}
 	const target = event.target as HTMLElement | null;
-	if (target?.closest?.(".posa-items-table-container, .v-overlay__content")) {
+	if (
+		target?.closest?.(
+			".posa-items-table-container, .v-overlay__content, [data-pos-arrow-navigation-root]",
+		)
+	) {
 		return false;
 	}
 	if (isItemSearchTarget(target)) {

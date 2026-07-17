@@ -1,7 +1,26 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
+
+const setRect = (element: HTMLElement, left: number, top: number) => {
+	vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+		x: left,
+		y: top,
+		left,
+		top,
+		right: left + 100,
+		bottom: top + 40,
+		width: 100,
+		height: 40,
+		toJSON: () => ({}),
+	} as DOMRect);
+};
+
+afterEach(() => {
+	document.body.replaceChildren();
+	vi.restoreAllMocks();
+});
 
 describe("InvoiceActionButtons", () => {
 	it("does not render share last invoice in the invoice summary actions", async () => {
@@ -92,6 +111,139 @@ describe("InvoiceActionButtons", () => {
 
 		expect((InvoiceActionButtons as any).emits).toEqual(
 			expect.arrayContaining(["open-offers", "open-coupons"]),
+		);
+	});
+
+	it("supports arrow traversal across Counter Grid actions and returns upward from the first action", async () => {
+		vi.stubGlobal("__", (value: string) => value);
+		const { default: InvoiceActionButtons } = await import(
+			"../src/posapp/components/pos/invoice/InvoiceActionButtons.vue"
+		);
+		const onNavigateBack = vi.fn();
+		const wrapper = mount(InvoiceActionButtons, {
+			attachTo: document.body,
+			props: {
+				presentation: "counter-grid",
+				pos_profile: {
+					posa_allow_return: 1,
+				},
+				onNavigateBack,
+			},
+			global: {
+				components: {
+					VBtn: {
+						inheritAttrs: false,
+						template: '<button v-bind="$attrs" :disabled="$attrs.loading"><slot /></button>',
+					},
+					VMenu: {
+						template: '<div><slot name="activator" :props="{}" /></div>',
+					},
+				},
+			},
+		});
+
+		const actionIds = [
+			"invoice-action-save-clear",
+			"invoice-action-drafts",
+			"invoice-action-management",
+			"invoice-action-returns",
+			"invoice-action-more",
+			"invoice-action-cancel-sale",
+			"invoice-action-pay",
+		];
+		for (const [index, testId] of actionIds.entries()) {
+			setRect(wrapper.get(`[data-testid="${testId}"]`).element as HTMLElement, index * 110, 0);
+		}
+		const actions = wrapper.get('[data-testid="counter-grid-actions"]');
+
+		await (wrapper.vm as any).focusFirstAction();
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-save-clear"]').element,
+		);
+
+		await actions.trigger("keydown", {
+			key: "ArrowRight",
+		});
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-drafts"]').element,
+		);
+		await actions.trigger("keydown", {
+			key: "ArrowUp",
+		});
+		expect(onNavigateBack).not.toHaveBeenCalled();
+
+		await actions.trigger("keydown", {
+			key: "ArrowLeft",
+		});
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-save-clear"]').element,
+		);
+
+		await actions.trigger("keydown", {
+			key: "ArrowUp",
+		});
+		expect(onNavigateBack).toHaveBeenCalledTimes(1);
+
+		await (wrapper.vm as any).focusFirstAction();
+		await actions.trigger("keydown", {
+			key: "ArrowRight",
+			shiftKey: true,
+		});
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-save-clear"]').element,
+		);
+	});
+
+	it("starts at the first enabled visible action and skips unavailable variants", async () => {
+		vi.stubGlobal("__", (value: string) => value);
+		const { default: InvoiceActionButtons } = await import(
+			"../src/posapp/components/pos/invoice/InvoiceActionButtons.vue"
+		);
+		const onNavigateBack = vi.fn();
+		const wrapper = mount(InvoiceActionButtons, {
+			attachTo: document.body,
+			props: {
+				presentation: "counter-grid",
+				pos_profile: { posa_allow_return: 0 },
+				saveLoading: true,
+				onNavigateBack,
+			},
+			global: {
+				components: {
+					VBtn: {
+						inheritAttrs: false,
+						template: '<button v-bind="$attrs" :disabled="$attrs.loading"><slot /></button>',
+					},
+					VMenu: {
+						template: '<div><slot name="activator" :props="{}" /></div>',
+					},
+				},
+			},
+		});
+
+		const ids = [
+			"invoice-action-drafts",
+			"invoice-action-management",
+			"invoice-action-more",
+			"invoice-action-cancel-sale",
+			"invoice-action-pay",
+		];
+		for (const [index, testId] of ids.entries()) {
+			setRect(wrapper.get(`[data-testid="${testId}"]`).element as HTMLElement, index * 110, 0);
+		}
+		expect(wrapper.find('[data-testid="invoice-action-returns"]').exists()).toBe(false);
+
+		await (wrapper.vm as any).focusFirstAction();
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-drafts"]').element,
+		);
+
+		const actions = wrapper.get('[data-testid="counter-grid-actions"]');
+		await actions.trigger("keydown", { key: "ArrowUp" });
+		expect(onNavigateBack).toHaveBeenCalledTimes(1);
+		await actions.trigger("keydown", { key: "ArrowLeft" });
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-drafts"]').element,
 		);
 	});
 });
