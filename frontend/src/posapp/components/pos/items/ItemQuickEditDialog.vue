@@ -1,6 +1,7 @@
 <template>
 	<v-dialog
 		:model-value="modelValue"
+		class="counter-grid-legacy-safe-overlay"
 		:max-width="1120"
 		:fullscreen="useFullscreenDialog"
 		scrollable

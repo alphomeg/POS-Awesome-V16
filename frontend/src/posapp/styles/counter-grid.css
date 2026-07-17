@@ -130,6 +130,19 @@
 	will-change: auto !important;
 }
 
+/* Keep the fixed scrim behind nonanimated content on legacy compositors. */
+.v-overlay.counter-grid-legacy-safe-overlay > .v-overlay__scrim {
+	z-index: 0;
+	background: #09253d !important;
+	opacity: 0.32 !important;
+	transition: none !important;
+}
+
+.v-overlay.counter-grid-legacy-safe-overlay > .counter-grid-legacy-safe-dialog {
+	z-index: 1;
+	isolation: isolate;
+}
+
 .counter-grid-legacy-safe-dialog *,
 .counter-grid-legacy-safe-dialog *::before,
 .counter-grid-legacy-safe-dialog *::after {

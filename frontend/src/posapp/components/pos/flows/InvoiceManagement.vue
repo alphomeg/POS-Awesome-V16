@@ -2,6 +2,7 @@
 	<v-row justify="center">
 		<v-dialog
 			v-model="invoiceManagementDialog"
+			class="counter-grid-legacy-safe-overlay"
 			:max-width="invoiceManagementDialogMaxWidth"
 			:fullscreen="isCompactInvoiceManagement"
 			:width="invoiceManagementDialogWidth"
@@ -1363,6 +1364,7 @@
 
 	<v-dialog
 		v-model="detailDialog"
+		class="counter-grid-legacy-safe-overlay"
 		max-width="1040px"
 		scrollable
 		:transition="false"

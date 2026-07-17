@@ -190,8 +190,20 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(tokens).toContain("backdrop-filter: none !important");
 		for (const modal of [history, quickEdit, invoiceManagement]) {
 			expect(modal).toContain(':transition="false"');
+			expect(modal).toContain('class="counter-grid-legacy-safe-overlay"');
 			expect(modal).toContain("counter-grid-legacy-safe-dialog");
 		}
+		expect(history.match(/class="counter-grid-legacy-safe-overlay"/g)).toHaveLength(2);
+		expect(invoiceManagement.match(/class="counter-grid-legacy-safe-overlay"/g)).toHaveLength(2);
+		expect(quickEdit.match(/class="counter-grid-legacy-safe-overlay"/g)).toHaveLength(1);
+		expect(tokens).toContain(
+			".v-overlay.counter-grid-legacy-safe-overlay > .v-overlay__scrim",
+		);
+		expect(tokens).toContain(
+			".v-overlay.counter-grid-legacy-safe-overlay > .counter-grid-legacy-safe-dialog",
+		);
+		expect(tokens).toContain("z-index: 0");
+		expect(tokens).toContain("z-index: 1");
 		expect(itemsTable).toContain("flushPendingHistoryEdit");
 		expect(itemsTable).toContain(
 			"window.setTimeout(flushPendingHistoryEdit, 0)",

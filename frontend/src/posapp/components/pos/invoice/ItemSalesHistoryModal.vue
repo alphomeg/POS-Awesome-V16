@@ -1,6 +1,7 @@
 <template>
 	<v-dialog
 		:model-value="modelValue"
+		class="counter-grid-legacy-safe-overlay"
 		max-width="1240px"
 		:fullscreen="useFullscreenDialog"
 		scrollable
@@ -312,6 +313,7 @@
 
 	<v-dialog
 		v-model="invoiceDetailDialog"
+		class="counter-grid-legacy-safe-overlay"
 		max-width="1040px"
 		scrollable
 		:transition="false"
