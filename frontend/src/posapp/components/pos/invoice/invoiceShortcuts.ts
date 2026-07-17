@@ -38,7 +38,7 @@ const isKnownAltCommand = (event: KeyboardEvent) =>
 	isArrowRight(event) ||
 	event.key === "PageUp" ||
 	event.key === "Home" ||
-	["g", "q", "a", "u", "r", "e", "f", "l", "m", "s", "d", "x", "p"].some(
+	["g", "i", "q", "a", "u", "r", "e", "f", "l", "m", "s", "d", "x", "p"].some(
 		(letter) => isLetter(event, letter),
 	);
 const isKnownFunctionCommand = (key: string) =>
@@ -447,6 +447,13 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 			if (this.isCounterGridPresentation && isLetter(event, "g")) {
 				consumeEvent(event);
 				this.eventBus.emit("open_cart_alternates");
+				return;
+			}
+
+			if (isLetter(event, "i")) {
+				consumeEvent(event);
+				showCompactPanel(this.eventBus, "invoice");
+				this.openItemQuickEdit?.();
 				return;
 			}
 

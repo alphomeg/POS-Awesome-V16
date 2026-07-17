@@ -418,10 +418,13 @@ Notes:
 
 #### Global (Invoice Screen)
 
-- `F4` profile switch (currently shows “not available” message).
+- `F2` focus item entry.
+- `F4` open employee switch.
 - `F6` open new customer form.
 - `F7` open shift details.
-- `F8` POS lock (currently shows “not available” message).
+- `F8` lock the POS.
+- `F9` open payment.
+- `F12` open the selected item workspace.
 
 #### Alt + Number
 
@@ -441,6 +444,7 @@ Notes:
 - `Alt + PageUp` open payments panel.
 - `Alt + Home` go to home and reload.
 - `Alt + A` focus additional discount field.
+- `Alt + I` open Update Item directly for the active or most recently selected cart item when permitted.
 - `Alt + Q` focus quantity field for first item and then the next item (cycles).
 - `Alt + U` focus UOM field for first item and then the next item (cycles).
 - `Alt + R` focus rate field for first item and then the next item (cycles).

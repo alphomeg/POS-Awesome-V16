@@ -200,6 +200,21 @@ describe("invoiceShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
+	it("uses Alt+I to open Update Item directly", async () => {
+		const vm = createVm();
+		const event = createAltEvent("i", "KeyI");
+
+		await (invoiceShortcuts as any).handleInvoiceShortcut.call(vm, event);
+
+		expect(vm.eventBus.emit).toHaveBeenCalledWith(
+			"set_compact_panel",
+			"invoice",
+		);
+		expect(vm.openItemQuickEdit).toHaveBeenCalledTimes(1);
+		expect(vm.openItemWorkspace).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+	});
+
 	it("uses Option+7 on macOS to open the selected item workspace", async () => {
 		const originalPlatform = navigator.platform;
 		const originalUserAgent = navigator.userAgent;

@@ -6,8 +6,9 @@
 			:fullscreen="isCompactInvoiceManagement"
 			:width="invoiceManagementDialogWidth"
 			scrollable
+			:transition="false"
 			:theme="isDarkTheme ? 'dark' : 'light'"
-			content-class="invoice-management-dialog-content"
+			content-class="invoice-management-dialog-content counter-grid-legacy-safe-dialog"
 		>
 			<v-card
 				:class="[
@@ -1360,7 +1361,14 @@
 		</v-dialog>
 	</v-row>
 
-	<v-dialog v-model="detailDialog" max-width="1040px" scrollable :theme="isDarkTheme ? 'dark' : 'light'">
+	<v-dialog
+		v-model="detailDialog"
+		max-width="1040px"
+		scrollable
+		:transition="false"
+		content-class="invoice-management-detail-content counter-grid-legacy-safe-dialog"
+		:theme="isDarkTheme ? 'dark' : 'light'"
+	>
 		<v-card
 			:class="[
 				'invoice-detail-card',
@@ -3988,8 +3996,6 @@ export default {
 	justify-content: flex-end;
 	padding: 14px 20px calc(14px + env(safe-area-inset-bottom, 0px));
 	background: var(--pos-surface-raised);
-	background: color-mix(in srgb, var(--pos-surface-raised) 92%, transparent);
-	backdrop-filter: blur(10px);
 	border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 

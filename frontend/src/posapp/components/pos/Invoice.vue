@@ -379,6 +379,7 @@ import { useToastStore } from "../../stores/toastStore.js";
 import { useUIStore } from "../../stores/uiStore.js";
 import { storeToRefs } from "pinia";
 import stockCoordinator from "../../utils/stockCoordinator";
+import { canShowItemQuickEdit } from "../../utils/itemQuickEditPermission";
 import { getCurrentInstance, ref } from "vue";
 import { save_and_clear_invoice as saveAndClearInvoiceAction } from "./invoice_utils/actions";
 import { fetchDraftInvoices } from "../../utils/draftInvoices";
@@ -727,8 +728,7 @@ export default {
 		},
 
 		openItemQuickEdit() {
-			this.item_quick_edit_item_code = this.resolveItemQuickEditCode();
-			this.item_quick_edit_open = true;
+			return this.openItemQuickEditForItem();
 		},
 
 		openItemWorkspace() {
@@ -744,8 +744,16 @@ export default {
 		},
 
 		openItemQuickEditForItem(item = {}) {
+			if (!canShowItemQuickEdit(this.pos_profile)) {
+				this.toastStore.show({
+					title: __("Item update is not permitted for this user"),
+					color: "warning",
+				});
+				return false;
+			}
 			this.item_quick_edit_item_code = item?.item_code || this.resolveItemQuickEditCode();
 			this.item_quick_edit_open = true;
+			return true;
 		},
 
 		handleItemQuickEditSaved(payload = {}) {

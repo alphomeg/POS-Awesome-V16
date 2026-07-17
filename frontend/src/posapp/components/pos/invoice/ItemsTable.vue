@@ -259,6 +259,7 @@ const selectedRowId = ref<string | null>(null);
 const itemHistoryDialog = ref(false);
 const itemHistoryTarget = ref<any | null>(null);
 const pendingHistoryEditItem = ref<any | null>(null);
+let pendingHistoryEditTimer: number | null = null;
 const counterGridEntryQuery = ref("");
 const COUNTER_GRID_ENTRY_ID = "__counter_grid_entry__";
 const counterGridEntryItem = Object.freeze({
@@ -738,16 +739,26 @@ const openSelectedItemWorkspace = () => {
 	return openItemHistory(item);
 };
 
-const handleItemEditRequest = (item: any) => {
-	pendingHistoryEditItem.value = item || null;
-	itemHistoryDialog.value = false;
-};
-
-const handleItemHistoryAfterLeave = () => {
+const flushPendingHistoryEdit = () => {
+	if (pendingHistoryEditTimer !== null) {
+		window.clearTimeout(pendingHistoryEditTimer);
+		pendingHistoryEditTimer = null;
+	}
 	const item = pendingHistoryEditItem.value;
 	pendingHistoryEditItem.value = null;
 	if (item) emit("edit-item", item);
 };
+
+const handleItemEditRequest = (item: any) => {
+	pendingHistoryEditItem.value = item || null;
+	itemHistoryDialog.value = false;
+	void nextTick(() => {
+		if (!pendingHistoryEditItem.value) return;
+		pendingHistoryEditTimer = window.setTimeout(flushPendingHistoryEdit, 0);
+	});
+};
+
+const handleItemHistoryAfterLeave = flushPendingHistoryEdit;
 
 const isCounterGridEntry = (item: any) =>
 	Boolean(item?.__counterGridEntry || item?.posa_row_id === COUNTER_GRID_ENTRY_ID);
@@ -1142,6 +1153,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+	if (pendingHistoryEditTimer !== null) {
+		window.clearTimeout(pendingHistoryEditTimer);
+	}
 	merge.clearMergeCache();
 });
 

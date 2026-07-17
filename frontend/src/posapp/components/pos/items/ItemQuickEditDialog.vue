@@ -4,7 +4,8 @@
 		:max-width="1120"
 		:fullscreen="useFullscreenDialog"
 		scrollable
-		content-class="item-quick-edit-dialog"
+		:transition="false"
+		content-class="item-quick-edit-dialog counter-grid-legacy-safe-dialog"
 		persistent
 		@update:model-value="emit('update:modelValue', $event)"
 		@after-leave="emit('after-leave')"

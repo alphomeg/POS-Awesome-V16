@@ -4,7 +4,8 @@
 		max-width="1240px"
 		:fullscreen="useFullscreenDialog"
 		scrollable
-		content-class="posa-item-history-dialog"
+		:transition="false"
+		content-class="posa-item-history-dialog counter-grid-legacy-safe-dialog"
 		:theme="isDarkTheme ? 'dark' : 'light'"
 		@update:model-value="emit('update:modelValue', $event)"
 		@after-leave="emit('after-leave')"
@@ -313,6 +314,8 @@
 		v-model="invoiceDetailDialog"
 		max-width="1040px"
 		scrollable
+		:transition="false"
+		content-class="item-history-invoice-detail-content counter-grid-legacy-safe-dialog"
 		:theme="isDarkTheme ? 'dark' : 'light'"
 	>
 		<v-card
@@ -1098,7 +1101,6 @@ watch(historyRows, () => {
 .posa-item-history-row--active td {
 	background: var(--rm-cg-surface-selected) !important;
 	box-shadow: none;
-
 }
 
 .posa-item-history-row--active td:first-child {

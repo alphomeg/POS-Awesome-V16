@@ -145,6 +145,30 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 	it("gives centered overlays and payment the same RetailMind presentation", () => {
 		const shell = source("components", "pos", "shell", "Pos.vue");
 		const tokens = source("styles", "counter-grid.css");
+		const history = source(
+			"components",
+			"pos",
+			"invoice",
+			"ItemSalesHistoryModal.vue",
+		);
+		const quickEdit = source(
+			"components",
+			"pos",
+			"items",
+			"ItemQuickEditDialog.vue",
+		);
+		const invoiceManagement = source(
+			"components",
+			"pos",
+			"flows",
+			"InvoiceManagement.vue",
+		);
+		const itemsTable = source(
+			"components",
+			"pos",
+			"invoice",
+			"ItemsTable.vue",
+		);
 
 		expect(shell).toContain(
 			"counter-grid-overlay-content counter-grid-search-content",
@@ -162,6 +186,16 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 			".payment-shell--counter-grid .payment-section",
 		);
 		expect(tokens).toContain("border: 3px solid var(--rm-cg-forest-950)");
+		expect(tokens).toContain(".counter-grid-legacy-safe-dialog");
+		expect(tokens).toContain("backdrop-filter: none !important");
+		for (const modal of [history, quickEdit, invoiceManagement]) {
+			expect(modal).toContain(':transition="false"');
+			expect(modal).toContain("counter-grid-legacy-safe-dialog");
+		}
+		expect(itemsTable).toContain("flushPendingHistoryEdit");
+		expect(itemsTable).toContain(
+			"window.setTimeout(flushPendingHistoryEdit, 0)",
+		);
 	});
 
 	it("gives the invoice and pharmacy tables crisp cells and a saturated active row", () => {

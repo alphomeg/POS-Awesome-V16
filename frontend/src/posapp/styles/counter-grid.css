@@ -11,6 +11,7 @@
 .counter-grid-overlay-content,
 .counter-item-search-surface,
 .counter-auxiliary-surface,
+.counter-grid-legacy-safe-dialog,
 .items-selector-shell--counter-dialog,
 .pharmacy-search-results,
 .posa-item-history-card,
@@ -110,6 +111,38 @@
 	border-radius: var(--rm-cg-radius-surface) !important;
 	box-shadow: var(--rm-cg-shadow-overlay) !important;
 	overflow: hidden;
+}
+
+/*
+ * Chrome 109 on older Windows display drivers can retain a black GPU layer for
+ * large animated or backdrop-filtered overlays. Critical cashier dialogs stay
+ * fully opaque and use ordinary paint surfaces.
+ */
+.counter-grid-legacy-safe-dialog {
+	max-height: calc(100vh - 24px);
+	max-height: calc(100dvh - 24px);
+	overflow: hidden;
+	background: #ffffff;
+	background: var(--pos-dialog-bg, #ffffff);
+	opacity: 1 !important;
+	-webkit-backdrop-filter: none !important;
+	backdrop-filter: none !important;
+	will-change: auto !important;
+}
+
+.counter-grid-legacy-safe-dialog *,
+.counter-grid-legacy-safe-dialog *::before,
+.counter-grid-legacy-safe-dialog *::after {
+	-webkit-backdrop-filter: none !important;
+	backdrop-filter: none !important;
+}
+
+.counter-grid-legacy-safe-dialog > .v-card {
+	background-color: #ffffff !important;
+	background-color: var(--pos-surface-raised, #ffffff) !important;
+	background-image: none !important;
+	opacity: 1 !important;
+	will-change: auto !important;
 }
 
 .pos-main-container--counter-grid :where(button, [href], [tabindex]:not([tabindex="-1"])):focus-visible,

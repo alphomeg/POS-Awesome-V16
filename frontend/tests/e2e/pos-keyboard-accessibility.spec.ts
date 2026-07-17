@@ -382,7 +382,11 @@ test.describe.serial("Counter Grid keyboard and accessibility", () => {
 			!(await updateItem.isVisible()),
 			"Current cashier/profile does not permit Item quick edit.",
 		);
-		await updateItem.click();
+		await page.keyboard.press("Escape");
+		await expect(page.getByTestId("item-history-modal")).toBeHidden({
+			timeout: 30_000,
+		});
+		await page.keyboard.press("Alt+i");
 		await expect(page.getByTestId("item-quick-edit-modal")).toBeVisible({
 			timeout: 30_000,
 		});
