@@ -180,6 +180,13 @@ test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 				.filter({ hasText: /Discount Amount/i });
 			if (viewport.width === 1024) {
 				await expect(discountAmountHeader).toHaveCount(0);
+				const postingDateInput = page.locator(".counter-grid-date-picker input");
+				await expect(postingDateInput).toBeVisible();
+				expect(
+					await postingDateInput.evaluate(
+						(input) => input.scrollWidth <= input.clientWidth,
+					),
+				).toBe(true);
 			} else {
 				await expect(discountAmountHeader).toBeVisible();
 			}

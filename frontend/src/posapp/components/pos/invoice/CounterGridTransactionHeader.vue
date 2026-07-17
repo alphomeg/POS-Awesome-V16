@@ -528,6 +528,10 @@ defineExpose({
 }
 
 @media (max-width: 1099px) {
+	.counter-grid-context-card--date > .counter-grid-context-card__icon {
+		display: none;
+	}
+
 	.counter-grid-context-card__copy span,
 	.counter-grid-context-card__label,
 	.counter-grid-context-card__control :deep(.v-label) {
