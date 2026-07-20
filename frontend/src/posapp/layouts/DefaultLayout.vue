@@ -114,10 +114,13 @@ import {
 	initPromise,
 	memoryInitPromise,
 	ensureOfflineQueueReady,
+	getOfflineInvoices,
+	getPendingInvoiceRecoveryCount,
+	migrateInvoiceOutboxModeToCoordinator,
 	toggleManualOffline,
 	isManualOffline as getIsManualOffline,
-	syncOfflineInvoices,
 	getPendingOfflineInvoiceCount,
+	syncLegacyOfflineInvoices,
 	getPendingOfflineCashMovementCount,
 	syncOfflineCashMovements,
 	isOffline,
@@ -130,6 +133,7 @@ import {
 	getOfflineStorageInitializationError,
 } from "../../offline/index";
 import { SyncCoordinator } from "../../offline/sync/SyncCoordinator";
+import { setSyncCoordinator } from "../../offline/sync/useSyncCoordinator";
 import { createOfflineSyncRuntime } from "../../offline/sync/runtime";
 import {
 	buildOfflineSyncProfile,
@@ -235,14 +239,25 @@ const {
 	loadProgress: itemsLoadProgress,
 } = storeToRefs(itemsStore);
 const supportedOfflineSyncResources = filterSupportedOfflineSyncResources(getSyncResourceDefinitions());
-const syncCoordinator = new SyncCoordinator({
-	concurrency: 1,
-	resources: supportedOfflineSyncResources,
-	runResource: async (resource, trigger) => runOfflineSyncResource(resource, trigger),
-	onStateChange: (states) => {
-		offlineSyncStore.setResourceStates(filterSupportedOfflineSyncStates(states));
-	},
-});
+const syncCoordinator = setSyncCoordinator(
+	new SyncCoordinator({
+		concurrency: 1,
+		resources: supportedOfflineSyncResources,
+		runResource: async (resource, trigger) => runOfflineSyncResource(resource, trigger),
+		onPriorityComplete: async (priority) => {
+			if (priority === "transactional") {
+				try {
+					await syncLegacyOfflineInvoices();
+				} catch (error) {
+					console.error("Legacy invoice compatibility recovery failed", error);
+				}
+			}
+		},
+		onStateChange: (states) => {
+			offlineSyncStore.setResourceStates(filterSupportedOfflineSyncStates(states));
+		},
+	}),
+);
 const offlineSyncRuntime = createOfflineSyncRuntime({
 	canSync: canRunOfflineSync,
 	canRunTimerSync: canRunTimerOfflineSync,
@@ -264,9 +279,8 @@ const manualOffline = ref(false);
 
 const queueMetrics = useQueueMetrics({
 	getCacheUsageEstimate,
-	getPendingOfflineInvoiceCount,
+	getPendingInvoiceCount: getPendingInvoiceRecoveryCount,
 	getPendingOfflineCashMovementCount,
-	syncOfflineInvoices,
 	syncOfflineCashMovements,
 	isOffline,
 	syncStore,
@@ -1001,7 +1015,10 @@ const notifyCacheCapacityIfActionable = (usage = {}) => {
 };
 
 const initializeOfflineQueueReadiness = async () => {
-	const result = await resolveOfflineQueueReadiness(() => ensureOfflineQueueReady());
+	const result = await resolveOfflineQueueReadiness(async () => {
+		await ensureOfflineQueueReady();
+		await migrateInvoiceOutboxModeToCoordinator(getOfflineInvoices());
+	});
 	offlineQueueInitializationError.value = result.error;
 	if (!result.ready) {
 		console.error(

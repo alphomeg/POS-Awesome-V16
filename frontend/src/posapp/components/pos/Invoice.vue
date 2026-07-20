@@ -33,8 +33,7 @@
 					density="compact"
 					class="invoice-status-alert mb-0"
 					v-if="
-						pos_profile.create_pos_invoice_instead_of_sales_invoice &&
-						!isCounterGridPresentation
+						pos_profile.create_pos_invoice_instead_of_sales_invoice && !isCounterGridPresentation
 					"
 				>
 					{{ __("Invoices saved as POS Invoices") }}
@@ -122,8 +121,7 @@
 						<div class="invoice-meta-grid">
 							<v-card
 								v-if="
-									!isCounterGridPresentation &&
-									pos_profile.posa_allow_change_posting_date
+									!isCounterGridPresentation && pos_profile.posa_allow_change_posting_date
 								"
 								flat
 								class="invoice-section-card pos-themed-card"
@@ -726,6 +724,7 @@ export default {
 		},
 
 		handleOpenCounterAuxiliary(view) {
+			if (this.uiStore.checkoutMutationLocked) return;
 			if (!this.isCounterGridPresentation || !["offers", "coupons"].includes(view)) {
 				return;
 			}
@@ -1107,16 +1106,20 @@ export default {
 			}
 		},
 		handleClearInvoice() {
+			if (this.uiStore.checkoutMutationLocked) return;
 			this.clear_invoice();
 			this.uiStore.triggerItemSearchFocus();
 		},
 		handleLoadInvoice(data) {
+			if (this.uiStore.checkoutMutationLocked) return;
 			this.load_invoice(data, { preserveStickies: true });
 		},
 		handleLoadOrder(data) {
+			if (this.uiStore.checkoutMutationLocked) return;
 			this.new_order(data);
 		},
 		handleLoadFlow(flow) {
+			if (this.uiStore.checkoutMutationLocked) return;
 			if (!flow?.prepared_doc) {
 				return;
 			}
@@ -1179,6 +1182,7 @@ export default {
 			this.primeInvoiceStockState();
 		},
 		handleLoadReturnInvoice(data) {
+			if (this.uiStore.checkoutMutationLocked) return;
 			this.load_invoice(data.invoice_doc);
 			this.invoiceType = "Return";
 			this.invoiceTypes = ["Return"];
@@ -1266,6 +1270,7 @@ export default {
 			this.show_payment();
 		},
 		async resume_parked_order(draft) {
+			if (this.uiStore.checkoutMutationLocked) return;
 			try {
 				const message = await this.load_draft_source_record(draft);
 				if (message) {
@@ -1456,7 +1461,9 @@ export default {
 		}
 	},
 	created() {
-		this.invoiceStore.clear();
+		if (!this.uiStore.checkoutMutationLocked) {
+			this.invoiceStore.clear();
+		}
 		this.$watch(
 			() => this.selectedCustomer,
 			(newCustomer) => {

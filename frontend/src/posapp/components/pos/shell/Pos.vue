@@ -17,12 +17,27 @@
 			@close="closeOpeningDialog"
 			@register="handleRegisterPosData"
 		></OpeningDialog>
-		<div v-if="paymentShortcutHostOpen" class="payment-shortcut-host" aria-hidden="true">
-			<Payments />
+		<div
+			v-if="paymentShortcutHostOpen"
+			class="payment-shortcut-host"
+			:class="{
+				'payment-shortcut-host--locked':
+					checkoutMutationLocked && checkoutPaymentHostOwner === 'shortcut',
+			}"
+			:aria-hidden="
+				checkoutMutationLocked && checkoutPaymentHostOwner === 'shortcut' ? 'false' : 'true'
+			"
+		>
+			<Payments
+				host-owner="shortcut"
+				:dialog-mode="checkoutMutationLocked"
+				@submission-recovery-lock-change="handlePaymentSubmissionRecoveryLockChange"
+			/>
 		</div>
 		<v-dialog
 			v-if="usePaymentDialog"
-			v-model="paymentDialogOpen"
+			:model-value="paymentDialogOpen"
+			:persistent="checkoutMutationLocked"
 			:retain-focus="false"
 			width="96vw"
 			max-width="1480"
@@ -39,7 +54,9 @@
 				v-if="paymentDialogOpen"
 				ref="paymentPanel"
 				dialog-mode
+				host-owner="dialog"
 				:class="{ 'payment-shell--counter-grid': counterGridActive }"
+				@submission-recovery-lock-change="handlePaymentSubmissionRecoveryLockChange"
 			/>
 		</v-dialog>
 		<v-dialog
@@ -115,6 +132,7 @@
 		>
 			<v-col
 				v-show="(!useCompactPosSwitcher || compactPanel === 'selector') && activeView === 'items'"
+				:inert="checkoutMutationLocked || undefined"
 				:xl="useCompactPosSwitcher ? 12 : 5"
 				:lg="useCompactPosSwitcher ? 12 : 5"
 				:md="useCompactPosSwitcher ? 12 : 5"
@@ -126,6 +144,7 @@
 			</v-col>
 			<v-col
 				v-show="(!useCompactPosSwitcher || compactPanel === 'selector') && activeView === 'offers'"
+				:inert="checkoutMutationLocked || undefined"
 				:xl="useCompactPosSwitcher ? 12 : 5"
 				:lg="useCompactPosSwitcher ? 12 : 5"
 				:md="useCompactPosSwitcher ? 12 : 5"
@@ -137,6 +156,7 @@
 			</v-col>
 			<v-col
 				v-show="(!useCompactPosSwitcher || compactPanel === 'selector') && activeView === 'coupons'"
+				:inert="checkoutMutationLocked || undefined"
 				:xl="useCompactPosSwitcher ? 12 : 5"
 				:lg="useCompactPosSwitcher ? 12 : 5"
 				:md="useCompactPosSwitcher ? 12 : 5"
@@ -159,11 +179,15 @@
 				cols="12"
 				class="pos dynamic-col dynamic-col--selector"
 			>
-				<Payments></Payments>
+				<Payments
+					host-owner="inline"
+					@submission-recovery-lock-change="handlePaymentSubmissionRecoveryLockChange"
+				></Payments>
 			</v-col>
 
 			<v-col
 				v-show="!useCompactPosSwitcher || compactPanel === 'invoice'"
+				:inert="checkoutMutationLocked || undefined"
 				:xl="useCompactPosSwitcher ? 12 : 7"
 				:lg="useCompactPosSwitcher ? 12 : 7"
 				:md="useCompactPosSwitcher ? 12 : 7"
@@ -174,7 +198,13 @@
 				<Invoice ref="invoicePanel"></Invoice>
 			</v-col>
 		</v-row>
-		<section v-else v-show="!dialog" class="counter-grid-pos" data-testid="counter-grid-pos">
+		<section
+			v-else
+			v-show="!dialog"
+			:inert="checkoutMutationLocked || undefined"
+			class="counter-grid-pos"
+			data-testid="counter-grid-pos"
+		>
 			<Invoice ref="invoicePanel" presentation="counter-grid" />
 			<footer class="counter-grid-status" aria-label="Counter status">
 				<span>
@@ -195,7 +225,12 @@
 				<span class="counter-grid-status__template">{{ __("Counter Grid") }}</span>
 			</footer>
 		</section>
-		<div v-if="showBottomDock" ref="mobileDock" class="mobile-pos-stack">
+		<div
+			v-if="showBottomDock"
+			ref="mobileDock"
+			:inert="checkoutMutationLocked || undefined"
+			class="mobile-pos-stack"
+		>
 			<div class="mobile-sale-dock">
 				<div class="mobile-sale-dock__copy">
 					<span class="mobile-sale-dock__eyebrow">{{ __("Active sale") }}</span>
@@ -220,6 +255,7 @@
 						color="warning"
 						:prefix="getCurrencySymbol(posProfile?.currency)"
 						:disabled="
+							checkoutMutationLocked ||
 							!posProfile?.posa_allow_user_to_edit_additional_discount ||
 							!!discountPercentageOfferName
 						"
@@ -240,6 +276,7 @@
 						density="compact"
 						color="warning"
 						:disabled="
+							checkoutMutationLocked ||
 							!posProfile?.posa_allow_user_to_edit_additional_discount ||
 							!!discountPercentageOfferName
 						"
@@ -251,6 +288,7 @@
 				<button
 					type="button"
 					class="mobile-pos-dock__item"
+					:disabled="checkoutMutationLocked"
 					:class="{ 'mobile-pos-dock__item--active': isSelectorViewActive('items') }"
 					@click="setSelectorView('items')"
 				>
@@ -260,6 +298,7 @@
 				<button
 					type="button"
 					class="mobile-pos-dock__item"
+					:disabled="checkoutMutationLocked"
 					:class="{ 'mobile-pos-dock__item--active': activeView === 'offers' }"
 					@click="setSelectorView('offers')"
 				>
@@ -269,6 +308,7 @@
 				<button
 					type="button"
 					class="mobile-pos-dock__item mobile-pos-dock__item--cart"
+					:disabled="checkoutMutationLocked"
 					:class="{ 'mobile-pos-dock__item--active': compactPanel === 'invoice' }"
 					@click="showInvoicePanel"
 				>
@@ -279,6 +319,7 @@
 				<button
 					type="button"
 					class="mobile-pos-dock__item"
+					:disabled="checkoutMutationLocked"
 					:class="{ 'mobile-pos-dock__item--active': activeView === 'coupons' }"
 					@click="setSelectorView('coupons')"
 				>
@@ -288,6 +329,7 @@
 				<button
 					type="button"
 					class="mobile-pos-dock__item mobile-pos-dock__item--pay"
+					:disabled="checkoutMutationLocked"
 					:class="{ 'mobile-pos-dock__item--active': activeView === 'payment' }"
 					@click="triggerInvoicePay"
 				>
@@ -328,6 +370,8 @@ import { storeToRefs } from "pinia";
 import { useCustomerDisplayPublisher } from "../../../composables/pos/shared/useCustomerDisplayPublisher";
 import { isCounterGridTemplate } from "../../../utils/posUiTemplate";
 import { collectUnavailableCartItems } from "../../../utils/alternateCart";
+import { getActiveInvoiceSubmissionRecovery } from "../../../composables/pos/payments/recoveryState";
+import { shouldUsePaymentDialog } from "../../../utils/paymentHostOwnership";
 
 export default {
 	setup() {
@@ -335,6 +379,7 @@ export default {
 		const dialog = ref(false);
 		const invoicePanel = ref(null);
 		const paymentPanel = ref(null);
+		const durableCheckoutRecoveryLocked = Boolean(getActiveInvoiceSubmissionRecovery());
 		const additionalDiscountField = ref(null);
 		const mobileDock = ref(null);
 		const responsive = useResponsive();
@@ -348,7 +393,18 @@ export default {
 		const itemsStore = useItemsStore();
 		const toastStore = useToastStore();
 		const __ = window.__;
-		const { activeView, posProfile, paymentDialogOpen, paymentShortcutHostOpen } =
+		if (durableCheckoutRecoveryLocked) {
+			uiStore.setCheckoutPaymentHostOwner("dialog");
+		}
+		uiStore.setCheckoutRecoveryLocked(durableCheckoutRecoveryLocked);
+		const {
+			activeView,
+			posProfile,
+			paymentDialogOpen,
+			paymentShortcutHostOpen,
+			checkoutMutationLocked,
+			checkoutPaymentHostOwner,
+		} =
 			storeToRefs(uiStore);
 		const { totalItemCount, itemsLoaded } = storeToRefs(itemsStore);
 		const {
@@ -361,7 +417,18 @@ export default {
 			additionalDiscount,
 			additionalDiscountPercentage,
 		} = storeToRefs(invoiceStore);
-		const usePaymentDialog = computed(() => responsive.windowWidth.value >= 992);
+		const usePaymentDialog = computed(
+			() =>
+				shouldUsePaymentDialog({
+					checkoutLocked: checkoutMutationLocked.value,
+					owner: checkoutPaymentHostOwner.value,
+					windowWidth: responsive.windowWidth.value,
+				}),
+		);
+		if (checkoutMutationLocked.value) {
+			uiStore.openPaymentDialog();
+			uiStore.setActiveView("items");
+		}
 		const counterGridActive = computed(() =>
 			isCounterGridTemplate(posProfile.value, responsive.windowWidth.value),
 		);
@@ -528,10 +595,51 @@ export default {
 		};
 
 		const handlePaymentDialogUpdate = (value) => {
-			if (value || !usePaymentDialog.value) {
+			if (value) {
+				uiStore.openPaymentDialog();
+				return;
+			}
+			if (checkoutMutationLocked.value) {
+				// The checkout owner must remain mounted until the server outcome is
+				// settled. Vuetify's Escape/scrim update is deliberately rejected.
+				uiStore.openPaymentDialog();
+				return;
+			}
+			if (!usePaymentDialog.value) {
 				return;
 			}
 			uiStore.closePaymentDialog();
+		};
+		const ensureLockedPaymentHostVisible = () => {
+			if (!checkoutMutationLocked.value) return;
+			const owner = checkoutPaymentHostOwner.value || "dialog";
+			if (!checkoutPaymentHostOwner.value) {
+				uiStore.setCheckoutPaymentHostOwner(owner);
+			}
+			if (owner === "shortcut") {
+				if (!paymentShortcutHostOpen.value) {
+					uiStore.openPaymentShortcutHost();
+				}
+				return;
+			}
+			if (owner === "inline") {
+				if (activeView.value !== "payment") {
+					uiStore.setActiveView("payment");
+				}
+				return;
+			}
+			if (!paymentDialogOpen.value) {
+				uiStore.openPaymentDialog();
+			}
+			if (activeView.value !== "items") {
+				uiStore.setActiveView("items");
+			}
+		};
+
+		const handlePaymentSubmissionRecoveryLockChange = (locked) => {
+			if (Boolean(locked) || checkoutMutationLocked.value) {
+				ensureLockedPaymentHostVisible();
+			}
 		};
 
 		const handlePaymentDialogAfterEnter = () => {
@@ -539,19 +647,21 @@ export default {
 		};
 
 		const handlePaymentDialogAfterLeave = () => {
-			if (!usePaymentDialog.value) {
+			if (!usePaymentDialog.value || checkoutMutationLocked.value) {
 				return;
 			}
 			focusInvoiceItemEntry();
 		};
 
 		const setCompactPanel = (panel) => {
+			if (checkoutMutationLocked.value) return;
 			compactPanel.value = panel;
 			if (panel === "selector" && activeView.value === "items") {
 				focusItemSearchField();
 			}
 		};
 		const setSelectorView = (view) => {
+			if (checkoutMutationLocked.value) return;
 			compactPanel.value = "selector";
 			uiStore.setActiveView(view);
 			if (view === "items") {
@@ -559,12 +669,14 @@ export default {
 			}
 		};
 		const showInvoicePanel = () => {
+			if (checkoutMutationLocked.value) return;
 			compactPanel.value = "invoice";
 			if (activeView.value === "payment" && !usePaymentDialog.value) {
 				uiStore.setActiveView("items");
 			}
 		};
 		const showPaymentPanel = () => {
+			if (checkoutMutationLocked.value) return;
 			compactPanel.value = "selector";
 			if (usePaymentDialog.value) {
 				uiStore.openPaymentDialog();
@@ -574,6 +686,7 @@ export default {
 			uiStore.setActiveView("payment");
 		};
 		const triggerInvoicePay = () => {
+			if (checkoutMutationLocked.value) return;
 			if (typeof invoicePanel.value?.handleShowPaymentRequest === "function") {
 				invoicePanel.value.handleShowPaymentRequest();
 				return;
@@ -592,7 +705,7 @@ export default {
 			counterItemSearchOpen.value = false;
 		};
 		const openCounterItemSearch = (payload = {}) => {
-			if (!counterGridActive.value) return;
+			if (checkoutMutationLocked.value || !counterGridActive.value) return;
 			const query = typeof payload === "string" ? payload : payload?.query;
 			const normalizedQuery = String(query || "").trim();
 			if (!normalizedQuery) return;
@@ -602,7 +715,7 @@ export default {
 			counterItemSearchOpen.value = true;
 		};
 		const openCartAlternates = () => {
-			if (!counterGridActive.value) return;
+			if (checkoutMutationLocked.value || !counterGridActive.value) return;
 			const sources = collectUnavailableCartItems(invoiceItems.value, {
 				isReturn: Boolean(invoiceDoc.value?.is_return),
 				translate: __,
@@ -623,6 +736,7 @@ export default {
 			counterItemSearchOpen.value = true;
 		};
 		const handleCounterItemAdded = (line, alternateSelection = null) => {
+			if (checkoutMutationLocked.value) return;
 			if (alternateSelection?.origin === "cart" && alternateSelection?.rowId) {
 				invoiceStore.removeItemByRowId(alternateSelection.rowId);
 				eventBus?.emit?.("apply_pricing_rules");
@@ -632,6 +746,7 @@ export default {
 			counterItemSearchOpen.value = false;
 		};
 		const handleCounterAlternatesCancelled = () => {
+			if (checkoutMutationLocked.value) return;
 			pendingCounterAddedLine.value = null;
 			counterItemSearchOpen.value = false;
 		};
@@ -657,6 +772,7 @@ export default {
 			invoicePanel.value?.focusCounterGridEntry?.();
 		};
 		const handleCounterAuxiliaryUpdate = (open) => {
+			if (checkoutMutationLocked.value) return;
 			if (!open) uiStore.setActiveView("items");
 		};
 		const handleCounterAuxiliaryAfterLeave = () => {
@@ -686,6 +802,7 @@ export default {
 			};
 		});
 		const handleAdditionalDiscountUpdate = (value) => {
+			if (checkoutMutationLocked.value) return;
 			invoiceStore.setAdditionalDiscount(normalizeAdditionalDiscountInput(value));
 		};
 		const handleAdditionalDiscountFocus = () => {
@@ -695,12 +812,14 @@ export default {
 			isEditingAdditionalDiscount.value = false;
 		};
 		const handleAdditionalDiscountPercentageUpdate = (value) => {
+			if (checkoutMutationLocked.value) return;
 			invoiceStore.setAdditionalDiscountPercentage(value);
 		};
 		const handleAdditionalDiscountPercentageFocus = () => {
 			isEditingAdditionalDiscountPercentage.value = true;
 		};
 		const commitAdditionalDiscountPercentage = () => {
+			if (checkoutMutationLocked.value) return;
 			invoicePanel.value?.update_discount_umount?.();
 		};
 		const handleAdditionalDiscountPercentageBlur = () => {
@@ -708,11 +827,13 @@ export default {
 			commitAdditionalDiscountPercentage();
 		};
 		const focusAdditionalDiscountField = () => {
+			if (checkoutMutationLocked.value) return;
 			const field = additionalDiscountField.value;
 			field?.focus?.();
 			field?.$el?.querySelector?.("input")?.focus?.();
 		};
 		const handlePosTabFocus = (event) => {
+			if (checkoutMutationLocked.value) return;
 			if (counterGridActive.value) {
 				return;
 			}
@@ -738,6 +859,7 @@ export default {
 			}
 			if (eventBus) {
 				eventBus.on("submit_closing_pos", (data) => {
+					if (checkoutMutationLocked.value) return;
 					shift.submit_closing_pos(data);
 				});
 				eventBus.on("focus_additional_discount", focusAdditionalDiscountField);
@@ -773,7 +895,22 @@ export default {
 			}
 		});
 
+		watch(
+			checkoutMutationLocked,
+			(locked) => {
+				if (!locked) return;
+				counterItemSearchOpen.value = false;
+				pendingCounterAddedLine.value = null;
+				ensureLockedPaymentHostVisible();
+			},
+			{ immediate: true, flush: "sync" },
+		);
+
 		watch(usePaymentDialog, (enabled) => {
+			if (checkoutMutationLocked.value) {
+				ensureLockedPaymentHostVisible();
+				return;
+			}
 			if (enabled && activeView.value === "payment") {
 				uiStore.openPaymentDialog();
 				uiStore.setActiveView("items");
@@ -793,6 +930,10 @@ export default {
 		});
 
 		watch(activeView, (view) => {
+			if (checkoutMutationLocked.value) {
+				ensureLockedPaymentHostVisible();
+				return;
+			}
 			if (!useCompactPosSwitcher.value) {
 				return;
 			}
@@ -862,6 +1003,8 @@ export default {
 			activeView,
 			paymentDialogOpen,
 			paymentShortcutHostOpen,
+			checkoutMutationLocked,
+			checkoutPaymentHostOwner,
 			isPhone,
 			usePaymentDialog,
 			counterGridActive,
@@ -893,6 +1036,7 @@ export default {
 			handleAdditionalDiscountPercentageBlur,
 			commitAdditionalDiscountPercentage,
 			handlePaymentDialogUpdate,
+			handlePaymentSubmissionRecoveryLockChange,
 			handlePaymentDialogAfterEnter,
 			handlePaymentDialogAfterLeave,
 			handleCounterItemAdded,
@@ -997,6 +1141,17 @@ export default {
 
 .payment-shortcut-host {
 	display: none;
+}
+
+.payment-shortcut-host--locked {
+	display: block;
+	position: fixed;
+	inset: 12px;
+	z-index: 1900;
+	overflow: auto;
+	padding: 12px;
+	border-radius: 18px;
+	background: rgba(15, 23, 42, 0.82);
 }
 
 .dynamic-container {

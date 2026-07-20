@@ -169,6 +169,35 @@ describe("runtime composable lifecycle ownership", () => {
 		});
 	});
 
+	it("routes manual invoice recovery through the shared sync store executor", async () => {
+		const syncPendingInvoices = vi.fn(async () => ({
+			pending: 0,
+			synced: 1,
+			drafted: 0,
+		}));
+		const updatePendingCount = vi.fn(async () => 0);
+		const metrics = useQueueMetrics({
+			getCacheUsageEstimate: vi.fn(async () => ({})),
+			getPendingInvoiceCount: vi.fn(async () => 1),
+			isOffline: () => false,
+			syncStore: {
+				syncPendingInvoices,
+				updatePendingCount,
+			},
+		});
+
+		await metrics.syncQueues();
+
+		expect(syncPendingInvoices).toHaveBeenCalledTimes(1);
+		expect(syncPendingInvoices).toHaveBeenCalledWith({ showToasts: false });
+		expect(updatePendingCount).toHaveBeenCalledTimes(1);
+		expect(metrics.syncTotals.value).toEqual({
+			pending: 0,
+			synced: 1,
+			drafted: 0,
+		});
+	});
+
 	it("starts and stops boot sync timer ownership once", () => {
 		const runtime = {
 			startTimerSync: vi.fn(),

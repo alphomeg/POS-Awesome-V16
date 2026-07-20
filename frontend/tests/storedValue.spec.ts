@@ -44,7 +44,10 @@ const VSwitchStub = defineComponent({
 					type: "checkbox",
 					checked: props.modelValue,
 					onChange: (event: Event) =>
-						emit("update:modelValue", (event.target as HTMLInputElement).checked),
+						emit(
+							"update:modelValue",
+							(event.target as HTMLInputElement).checked,
+						),
 				}),
 				props.label,
 			]);
@@ -106,8 +109,12 @@ describe("stored value UX", () => {
 		});
 
 		expect(wrapper.text()).toContain("Use Customer Balance");
-		expect(wrapper.text()).toContain("Available Customer Redeemable Balance");
-		expect(wrapper.text()).toContain("Available customer redeemable balance");
+		expect(wrapper.text()).toContain(
+			"Available Customer Redeemable Balance",
+		);
+		expect(wrapper.text()).toContain(
+			"Available customer redeemable balance",
+		);
 		expect(wrapper.text()).toContain("Applied now");
 		expect(wrapper.text()).toContain("2 source(s)");
 	});
@@ -153,6 +160,7 @@ describe("stored value UX", () => {
 	it("adds replay-safe customer balance metadata to offline invoices", async () => {
 		await saveOfflineInvoice({
 			invoice: {
+				doctype: "Sales Invoice",
 				name: "OFFLINE-SINV-1",
 				customer: "CUST-003",
 				items: [{ item_code: "ITEM-1", item_name: "Item 1", qty: 1 }],

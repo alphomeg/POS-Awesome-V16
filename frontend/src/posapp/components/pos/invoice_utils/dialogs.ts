@@ -283,7 +283,10 @@ export async function load_draft_source_record(context: any, draft: any) {
 }
 
 export function close_payments(context: any) {
-	if (context._suppressClosePayments) {
+	if (
+		context._suppressClosePayments ||
+		context.uiStore?.checkoutMutationLocked
+	) {
 		return;
 	}
 

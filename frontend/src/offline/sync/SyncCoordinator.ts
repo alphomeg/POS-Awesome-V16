@@ -29,12 +29,17 @@ type SyncCoordinatorOptions = {
 	onStateChange?: (states: SyncResourceState[]) => void;
 	initialBackoffMs?: number;
 	maxBackoffMs?: number;
+	onPriorityComplete?: (
+		priority: SyncResourceDefinition["priority"],
+		trigger: SyncTrigger,
+	) => void | Promise<void>;
 };
 
 const PRIORITY_WEIGHT: Record<SyncResourceDefinition["priority"], number> = {
-	boot_critical: 0,
-	warm: 1,
-	lazy: 2,
+	transactional: 0,
+	boot_critical: 1,
+	warm: 2,
+	lazy: 3,
 };
 
 function createInitialState(resourceId: SyncResourceId): SyncResourceState {
@@ -56,6 +61,7 @@ function createInitialState(resourceId: SyncResourceId): SyncResourceState {
 }
 
 const PRIORITY_ORDER: SyncResourceDefinition["priority"][] = [
+	"transactional",
 	"boot_critical",
 	"warm",
 	"lazy",
@@ -73,7 +79,9 @@ function toErrorMessage(error: unknown) {
 }
 
 function hasUsableSnapshot(state: SyncResourceState) {
-	return Boolean(state.lastSyncedAt || state.watermark || state.schemaVersion);
+	return Boolean(
+		state.lastSyncedAt || state.watermark || state.schemaVersion,
+	);
 }
 
 function resolveCooldownStatus(state: SyncResourceState): SyncLifecycleState {
@@ -94,9 +102,10 @@ type ResourceExecutionSummary = {
 /**
  * Orchestrates offline background synchronisation for all registered resources.
  *
- * Resources are processed in priority order (`boot_critical` → `warm` → `lazy`) with
- * configurable concurrency. Each trigger run is deduplicated — a second call for the
- * same trigger while one is already in flight returns the existing Promise.
+ * Resources are processed in priority order (`transactional` → `boot_critical` →
+ * `warm` → `lazy`) with configurable concurrency. Overlapping trigger requests share
+ * one promise: the active trigger is deduplicated and distinct triggers are queued
+ * once, then drained serially.
  *
  * @example
  * ```ts
@@ -113,15 +122,37 @@ export class SyncCoordinator {
 
 	private readonly runResource: RunResource;
 
-	private readonly onStateChange: ((states: SyncResourceState[]) => void) | null;
+	private readonly onStateChange:
+		| ((states: SyncResourceState[]) => void)
+		| null;
 
 	private readonly initialBackoffMs: number;
 
 	private readonly maxBackoffMs: number;
 
-	private readonly inFlightTriggers = new Map<SyncTrigger, Promise<void>>();
+	private readonly onPriorityComplete:
+		| ((
+				priority: SyncResourceDefinition["priority"],
+				trigger: SyncTrigger,
+		  ) => void | Promise<void>)
+		| null;
 
-	private readonly resourceStates = new Map<SyncResourceId, SyncResourceState>();
+	private inFlightRun: Promise<void> | null = null;
+
+	private activeTrigger: SyncTrigger | null = null;
+
+	private readonly pendingTriggers = new Set<SyncTrigger>();
+
+	private transactionalRun: Promise<void> | null = null;
+
+	private readonly pendingTransactionalTriggers = new Set<SyncTrigger>();
+
+	private transactionalLockTail: Promise<void> = Promise.resolve();
+
+	private readonly resourceStates = new Map<
+		SyncResourceId,
+		SyncResourceState
+	>();
 
 	private lastRunSummary: SyncTriggerRunSummary | null = null;
 
@@ -134,14 +165,21 @@ export class SyncCoordinator {
 			})) || getSyncResourceDefinitions();
 		this.runResource = options.runResource || (async () => undefined);
 		this.onStateChange = options.onStateChange || null;
-		this.initialBackoffMs = Math.max(1_000, options.initialBackoffMs || 5_000);
+		this.initialBackoffMs = Math.max(
+			1_000,
+			options.initialBackoffMs || 5_000,
+		);
 		this.maxBackoffMs = Math.max(
 			this.initialBackoffMs,
 			options.maxBackoffMs || 5 * 60 * 1_000,
 		);
+		this.onPriorityComplete = options.onPriorityComplete || null;
 
 		for (const resource of this.resources) {
-			this.resourceStates.set(resource.id, createInitialState(resource.id));
+			this.resourceStates.set(
+				resource.id,
+				createInitialState(resource.id),
+			);
 		}
 	}
 
@@ -175,7 +213,10 @@ export class SyncCoordinator {
 	 */
 	hydrateResourceStates(states: SyncResourceState[]) {
 		for (const state of states || []) {
-			if (!state?.resourceId || !this.resourceStates.has(state.resourceId)) {
+			if (
+				!state?.resourceId ||
+				!this.resourceStates.has(state.resourceId)
+			) {
 				continue;
 			}
 			this.resourceStates.set(state.resourceId, {
@@ -187,25 +228,127 @@ export class SyncCoordinator {
 	}
 
 	/**
-	 * Runs all resources that subscribe to `trigger`, in priority order.
-	 * If a run for the same trigger is already in flight, returns the existing Promise
-	 * instead of starting a second one.
+	 * Runs all resources that subscribe to `trigger`, in priority order. Overlapping
+	 * requests return the shared in-flight Promise; a distinct trigger is queued once
+	 * and an active trigger is deduplicated.
 	 *
 	 * @param trigger - The event that initiated this sync pass.
 	 */
-	async runTrigger(trigger: SyncTrigger) {
-		const inFlight = this.inFlightTriggers.get(trigger);
-		if (inFlight) {
-			return inFlight;
+	runTrigger(trigger: SyncTrigger) {
+		if (this.inFlightRun) {
+			// A transaction can be created after the active trigger has already
+			// moved on to a slow catalog resource. Give transactional work its own
+			// serialized lane so invoice recovery never waits for that catalog pass.
+			void this.runTransactionalTrigger(trigger).catch((error) => {
+				console.error("Transactional offline sync failed", error);
+			});
+			if (trigger !== this.activeTrigger) {
+				this.pendingTriggers.add(trigger);
+			}
+			return this.inFlightRun;
 		}
 
-		const runPromise = this.executeTrigger(trigger)
-			.then(() => undefined)
-			.finally(() => {
-			this.inFlightTriggers.delete(trigger);
-			});
-		this.inFlightTriggers.set(trigger, runPromise);
+		this.pendingTriggers.add(trigger);
+		const runPromise = this.drainTriggerQueue().finally(() => {
+			if (this.inFlightRun === runPromise) {
+				this.inFlightRun = null;
+			}
+		});
+		this.inFlightRun = runPromise;
 		return runPromise;
+	}
+
+	/**
+	 * Runs only the transactional resources for a trigger. This lane is
+	 * serialized independently from the catalog lane, so an urgent sale can be
+	 * reconciled while a previously-started warm resource is still downloading.
+	 * Repeated signals while the lane is active request one additional pass.
+	 */
+	runTransactionalTrigger(trigger: SyncTrigger) {
+		this.pendingTransactionalTriggers.add(trigger);
+		if (this.transactionalRun) {
+			return this.transactionalRun;
+		}
+
+		const runPromise = this.drainTransactionalTriggerQueue().finally(() => {
+			if (this.transactionalRun === runPromise) {
+				this.transactionalRun = null;
+			}
+		});
+		this.transactionalRun = runPromise;
+		return runPromise;
+	}
+
+	private async drainTransactionalTriggerQueue() {
+		let firstError: unknown = null;
+
+		while (this.pendingTransactionalTriggers.size) {
+			const trigger = this.pendingTransactionalTriggers.values().next()
+				.value as SyncTrigger | undefined;
+			if (!trigger) {
+				break;
+			}
+			this.pendingTransactionalTriggers.delete(trigger);
+			const resources = this.getResourcesForTrigger(trigger).filter(
+				(resource) => resource.priority === "transactional",
+			);
+			if (!resources.length) {
+				continue;
+			}
+
+			try {
+				await this.withTransactionalLock(async () => {
+					await this.executeResourceBatch(resources, trigger);
+					await this.onPriorityComplete?.("transactional", trigger);
+				});
+			} catch (error) {
+				firstError ||= error;
+			}
+		}
+
+		if (firstError) {
+			throw firstError;
+		}
+	}
+
+	private async withTransactionalLock<T>(task: () => Promise<T>) {
+		const previous = this.transactionalLockTail;
+		let release!: () => void;
+		this.transactionalLockTail = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await previous;
+		try {
+			return await task();
+		} finally {
+			release();
+		}
+	}
+
+	private async drainTriggerQueue() {
+		let firstError: unknown = null;
+
+		while (this.pendingTriggers.size) {
+			const trigger = this.pendingTriggers.values().next().value as
+				| SyncTrigger
+				| undefined;
+			if (!trigger) {
+				break;
+			}
+			this.pendingTriggers.delete(trigger);
+			this.activeTrigger = trigger;
+			try {
+				await this.executeTrigger(trigger);
+			} catch (error) {
+				firstError ||= error;
+			} finally {
+				this.activeTrigger = null;
+			}
+		}
+
+		if (firstError) {
+			throw firstError;
+		}
 	}
 
 	private async executeTrigger(trigger: SyncTrigger) {
@@ -236,10 +379,18 @@ export class SyncCoordinator {
 				continue;
 			}
 
-			const prioritySummaries = await this.executeResourceBatch(
-				priorityResources,
-				trigger,
-			);
+			const runPriority = async () => {
+				const prioritySummaries = await this.executeResourceBatch(
+					priorityResources,
+					trigger,
+				);
+				await this.onPriorityComplete?.(priority, trigger);
+				return prioritySummaries;
+			};
+			const prioritySummaries =
+				priority === "transactional"
+					? await this.withTransactionalLock(runPriority)
+					: await runPriority();
 			summaries.push(...prioritySummaries);
 
 			if (
@@ -279,7 +430,10 @@ export class SyncCoordinator {
 			const bootFailure = new Error(
 				`Boot-critical offline sync failed for ${this.lastRunSummary.bootCriticalFailures} resource(s): ${errors
 					.filter((summary) => summary.priority === "boot_critical")
-					.map((summary) => `${summary.resourceId}: ${summary.message}`)
+					.map(
+						(summary) =>
+							`${summary.resourceId}: ${summary.message}`,
+					)
 					.join("; ")}`,
 			) as Error & { summary?: SyncTriggerRunSummary };
 			bootFailure.summary = this.getLastRunSummary() || undefined;
@@ -302,7 +456,9 @@ export class SyncCoordinator {
 					return;
 				}
 				try {
-					summaries.push(await this.executeResource(resource, trigger));
+					summaries.push(
+						await this.executeResource(resource, trigger),
+					);
 				} catch (error) {
 					summaries.push({
 						resourceId: resource.id,
@@ -337,7 +493,9 @@ export class SyncCoordinator {
 				const priorityDelta =
 					PRIORITY_WEIGHT[left.resource.priority] -
 					PRIORITY_WEIGHT[right.resource.priority];
-				return priorityDelta !== 0 ? priorityDelta : left.index - right.index;
+				return priorityDelta !== 0
+					? priorityDelta
+					: left.index - right.index;
 			})
 			.map(({ resource }) => resource);
 	}
@@ -347,7 +505,8 @@ export class SyncCoordinator {
 		trigger: SyncTrigger,
 	) {
 		const previousState =
-			this.resourceStates.get(resource.id) || createInitialState(resource.id);
+			this.resourceStates.get(resource.id) ||
+			createInitialState(resource.id);
 		if (this.shouldDeferForCooldown(previousState, trigger)) {
 			const deferredState = await this.updateResourceState(resource.id, {
 				status: resolveCooldownStatus(previousState),
@@ -372,12 +531,24 @@ export class SyncCoordinator {
 		try {
 			const runResult = await this.runResource(resource, trigger);
 			const resolvedStatus = runResult?.status || "fresh";
+			const adapterNextRetryAt = runResult?.nextRetryAt || null;
+			const adapterRetryTimestamp = adapterNextRetryAt
+				? Date.parse(adapterNextRetryAt)
+				: Number.NaN;
+			const adapterCooldownMs =
+				typeof runResult?.cooldownMs === "number"
+					? runResult.cooldownMs
+					: Number.isFinite(adapterRetryTimestamp)
+						? Math.max(0, adapterRetryTimestamp - Date.now())
+						: null;
 			const nextState = await this.updateResourceState(resource.id, {
 				...runResult,
 				status: resolvedStatus,
 				lastSyncedAt:
 					runResult?.lastSyncedAt ||
-					(resolvedStatus === "idle" ? previousState.lastSyncedAt : new Date().toISOString()),
+					(resolvedStatus === "idle"
+						? previousState.lastSyncedAt
+						: new Date().toISOString()),
 				lastError: runResult?.lastError || null,
 				consecutiveFailures:
 					typeof runResult?.consecutiveFailures === "number"
@@ -386,8 +557,8 @@ export class SyncCoordinator {
 							? previousState.consecutiveFailures + 1
 							: 0,
 				lastAttemptAt: nowIso(),
-				nextRetryAt: null,
-				cooldownMs: null,
+				nextRetryAt: adapterNextRetryAt,
+				cooldownMs: adapterCooldownMs,
 				lastTrigger: trigger,
 			});
 			return {
@@ -395,7 +566,8 @@ export class SyncCoordinator {
 				priority: resource.priority,
 				status: nextState.status,
 				skipped: false,
-				error: nextState.status === "error" ? nextState.lastError : null,
+				error:
+					nextState.status === "error" ? nextState.lastError : null,
 			};
 		} catch (error) {
 			const failureCount = (previousState.consecutiveFailures || 0) + 1;
@@ -441,7 +613,8 @@ export class SyncCoordinator {
 		patch: Partial<SyncResourceState> & { status?: SyncLifecycleState },
 	) {
 		const previousState =
-			this.resourceStates.get(resourceId) || createInitialState(resourceId);
+			this.resourceStates.get(resourceId) ||
+			createInitialState(resourceId);
 		const nextState = {
 			...previousState,
 			...patch,

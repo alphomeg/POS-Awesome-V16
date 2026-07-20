@@ -103,6 +103,29 @@ describe("invoice payment dialogs", () => {
 		expect(context.eventBus.emit).toHaveBeenCalledWith("show_payment", "false");
 	});
 
+	it("keeps the payment surface open while checkout is locked", () => {
+		const context = {
+			_suppressClosePayments: false,
+			paymentVisible: true,
+			uiStore: {
+				checkoutMutationLocked: true,
+				paymentDialogOpen: true,
+				paymentShortcutHostOpen: true,
+				closePaymentDialog: vi.fn(),
+				closePaymentShortcutHost: vi.fn(),
+				setActiveView: vi.fn(),
+			},
+			eventBus: { emit: vi.fn() },
+		};
+
+		close_payments(context);
+
+		expect(context.uiStore.closePaymentDialog).not.toHaveBeenCalled();
+		expect(context.uiStore.closePaymentShortcutHost).not.toHaveBeenCalled();
+		expect(context.uiStore.setActiveView).not.toHaveBeenCalled();
+		expect(context.eventBus.emit).not.toHaveBeenCalled();
+	});
+
 	it("routes shortcut payment preparation to the signing host", async () => {
 		Object.defineProperty(window, "innerWidth", {
 			value: 1366,

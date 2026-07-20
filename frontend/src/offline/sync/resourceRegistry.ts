@@ -8,6 +8,9 @@
  * ## Priorities
  * Resources are processed in priority order within each trigger run:
  *
+ * - **`"transactional"`** — pending sales and other business writes that must be
+ *   recovered before catalog refreshes can consume the connection.
+ *
  * - **`"boot_critical"`** — must succeed before the POS is usable offline. These run
  *   first and block the boot sequence. Failures here put the POS into `"limited"` mode.
  *   All boot-critical resources include `"boot"` as a trigger.
@@ -55,6 +58,16 @@ import type {
 } from "./types";
 
 const SYNC_RESOURCES: ReadonlyArray<SyncResourceDefinition> = Object.freeze([
+	{
+		id: "invoice_outbox",
+		scope: "profile",
+		mode: "scoped",
+		priority: "transactional",
+		triggers: ["online_resume", "timer", "user_action"],
+		storageKey: "invoice_outbox",
+		watermarkType: "none",
+		fullResyncSupported: false,
+	},
 	{
 		id: "bootstrap_config",
 		scope: "profile",
@@ -166,16 +179,6 @@ const SYNC_RESOURCES: ReadonlyArray<SyncResourceDefinition> = Object.freeze([
 		fullResyncSupported: true,
 	},
 	{
-		id: "invoice_outbox",
-		scope: "profile",
-		mode: "scoped",
-		priority: "warm",
-		triggers: ["online_resume", "timer", "user_action"],
-		storageKey: "invoice_outbox",
-		watermarkType: "none",
-		fullResyncSupported: false,
-	},
-	{
 		id: "customer_addresses",
 		scope: "customer",
 		mode: "on_demand",
@@ -211,7 +214,7 @@ export function getSyncResourceDefinitions(): SyncResourceDefinition[] {
 /**
  * Returns all resource definitions with the given `priority`.
  * Used by `SyncCoordinator` to process resources in priority order
- * (`"boot_critical"` → `"warm"` → `"lazy"`).
+ * (`"transactional"` → `"boot_critical"` → `"warm"` → `"lazy"`).
  */
 export function getSyncResourcesByPriority(
 	priority: SyncResourcePriority,

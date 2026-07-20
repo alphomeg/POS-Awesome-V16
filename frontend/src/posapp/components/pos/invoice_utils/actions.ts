@@ -52,7 +52,12 @@ function getItemAdditionApi() {
 	return itemAdditionApi;
 }
 
+function checkoutMutationIsLocked(context: any) {
+	return Boolean(context?.uiStore?.checkoutMutationLocked);
+}
+
 export function remove_item(context: any, item: any) {
+	if (checkoutMutationIsLocked(context)) return;
 	const { removeItem } = getItemAdditionApi();
 	const result = removeItem(item, context);
 	if (context.schedulePricingRuleApplication) {
@@ -63,6 +68,7 @@ export function remove_item(context: any, item: any) {
 }
 
 export async function add_item(context: any, item: any, options: any = {}) {
+	if (checkoutMutationIsLocked(context)) return;
 	const { addItem } = getItemAdditionApi();
 	// Build price context for debug
 	const priceContext = {
@@ -85,7 +91,11 @@ export async function add_item(context: any, item: any, options: any = {}) {
 	}
 	applyReturnDiscountProration(context);
 
-	if (res && context.eventBus && typeof context.eventBus.emit === "function") {
+	if (
+		res &&
+		context.eventBus &&
+		typeof context.eventBus.emit === "function"
+	) {
 		const focusedLine: any = res;
 		window.setTimeout(() => {
 			context.eventBus.emit("focus_cart_item_qty", {
@@ -143,11 +153,13 @@ export function get_new_item(context: any, item: any) {
 }
 
 export function clear_invoice(context: any, options: any = {}) {
+	if (checkoutMutationIsLocked(context)) return;
 	const { clearInvoice } = getItemAdditionApi();
 	return clearInvoice(context, options);
 }
 
 export async function cancel_invoice(context: any) {
+	if (checkoutMutationIsLocked(context)) return;
 	const { clearInvoice } = getItemAdditionApi();
 	// We can directly call get_invoice_doc from document.js if we pass context
 	// Or assume context has the method proxied.
@@ -186,6 +198,7 @@ export async function cancel_invoice(context: any) {
 }
 
 export async function save_and_clear_invoice(context: any) {
+	if (checkoutMutationIsLocked(context)) return;
 	const { clearInvoice } = getItemAdditionApi();
 	let old_invoice = null;
 	const doc = get_invoice_doc(context);
@@ -220,6 +233,7 @@ export async function save_and_clear_invoice(context: any) {
 }
 
 export async function new_order(context: any, data: any = {}) {
+	if (checkoutMutationIsLocked(context)) return;
 	if (context.eventBus) context.eventBus.emit("set_customer_readonly", false);
 	context.expanded = [];
 	context.posa_offers = [];
@@ -281,19 +295,20 @@ export async function new_order(context: any, data: any = {}) {
 			context.additional_discount_percentage = -Math.abs(
 				context.flt
 					? context.flt(
-							Number.parseFloat(data.additional_discount_percentage),
+							Number.parseFloat(
+								data.additional_discount_percentage,
+							),
 							context.float_precision,
 						)
 					: Number.parseFloat(data.additional_discount_percentage),
 			);
 		} else {
-			context.additional_discount_percentage =
-				context.flt
-					? context.flt(
-							data.additional_discount_percentage,
-							context.float_precision,
-						)
-					: data.additional_discount_percentage;
+			context.additional_discount_percentage = context.flt
+				? context.flt(
+						data.additional_discount_percentage,
+						context.float_precision,
+					)
+				: data.additional_discount_percentage;
 		}
 
 		context.items.forEach((item) => {
@@ -326,7 +341,8 @@ export async function get_invoice_from_order_doc(context: any) {
 					context.invoice_doc?.docstatus ??
 					1,
 			},
-			currentInvoiceDoctype: context.pos_profile?.create_pos_invoice_instead_of_sales_invoice
+			currentInvoiceDoctype: context.pos_profile
+				?.create_pos_invoice_instead_of_sales_invoice
 				? "POS Invoice"
 				: "Sales Invoice",
 		});
@@ -343,9 +359,7 @@ export async function get_invoice_from_order_doc(context: any) {
 		Array.isArray(context.invoice_doc.items)
 			? context.invoice_doc.items
 			: [];
-	doc.items = Array.isArray(doc.items)
-		? doc.items
-		: sourceItems;
+	doc.items = Array.isArray(doc.items) ? doc.items : sourceItems;
 	const items: any[] = [];
 	const updatedItemsData: any[] = get_invoice_items(context);
 	doc.items.forEach((item) => {

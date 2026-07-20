@@ -20,6 +20,9 @@ vi.mock("../src/offline/db", () => ({
 		customers_last_sync: null,
 	},
 	initPromise: Promise.resolve(),
+	startupInitPromise: Promise.resolve(),
+	registerPostHydrationTask: vi.fn(),
+	safeBulkPut: vi.fn().mockResolvedValue(undefined),
 	persist,
 	checkDbHealth: vi.fn().mockResolvedValue(true),
 	db: {

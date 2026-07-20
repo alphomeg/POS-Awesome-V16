@@ -60,6 +60,65 @@ describe("api envelope handling", () => {
 		});
 	});
 
+	it.each([
+		[400, "Bad Request"],
+		[409, "Conflict"],
+	])(
+		"keeps an unstructured HTTP %s failure classified as HTTP_ERROR",
+		async (status, statusText) => {
+			(frappe.call as any).mockImplementation(({ error }: any) => {
+				error({ status, statusText });
+			});
+
+			const result = await api.callEnvelope("pos.test.http_error");
+
+			expect(result).toMatchObject({
+				ok: false,
+				error: {
+					code: "HTTP_ERROR",
+					message: statusText,
+					retryable: false,
+				},
+			});
+		},
+	);
+
+	it("preserves an explicit authoritative validation envelope from an HTTP error callback", async () => {
+		(frappe.call as any).mockImplementation(({ error }: any) => {
+			error({
+				status: 400,
+				statusText: "Bad Request",
+				responseJSON: {
+					message: {
+						ok: false,
+						data: null,
+						error: {
+							code: "VALIDATION_ERROR",
+							message: "Customer is required",
+							retryable: false,
+						},
+						requestId: "server-validation-001",
+						serverTime: "2026-07-20T12:00:00Z",
+					},
+				},
+			});
+		});
+
+		const result = await api.callEnvelope("pos.test.validation_http_error");
+
+		expect(result).toEqual({
+			ok: false,
+			data: null,
+			error: {
+				code: "VALIDATION_ERROR",
+				message: "Customer is required",
+				retryable: false,
+			},
+			requestId: "server-validation-001",
+			serverTime: "2026-07-20T12:00:00Z",
+		});
+	});
+
 	it("normalizes business-rule responses into non-retryable envelopes", async () => {
 		(frappe.call as any).mockImplementation(({ callback }: any) => {
 			callback({

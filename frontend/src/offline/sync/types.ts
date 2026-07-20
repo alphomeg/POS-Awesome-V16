@@ -28,11 +28,16 @@ export type SyncResourceMode = "delta" | "scoped" | "on_demand";
 
 /**
  * Controls the order in which resources are processed within a single trigger run:
+ * - `"transactional"` — pending business transactions that must be recovered first.
  * - `"boot_critical"` — must succeed before the POS is usable offline.
  * - `"warm"` — important but not blocking; synced after boot-critical resources.
  * - `"lazy"` — can be deferred until the app is idle.
  */
-export type SyncResourcePriority = "boot_critical" | "warm" | "lazy";
+export type SyncResourcePriority =
+	| "transactional"
+	| "boot_critical"
+	| "warm"
+	| "lazy";
 
 /**
  * Events that can kick off a sync run:

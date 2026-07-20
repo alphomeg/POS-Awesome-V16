@@ -13,7 +13,7 @@
 					data-testid="payment-submit"
 					@click="$emit('submit')"
 					:loading="loading"
-					:disabled="loading || validatePayment"
+					:disabled="loading || validatePayment || locked"
 					:class="{ 'submit-highlight': highlightSubmit }"
 				>
 					{{ __("Submit") }}
@@ -30,7 +30,7 @@
 					data-testid="payment-submit-print"
 					@click="$emit('submit-and-print')"
 					:loading="loading"
-					:disabled="loading || validatePayment"
+					:disabled="loading || validatePayment || locked"
 				>
 					{{ __("Submit & Print") }}
 				</v-btn>
@@ -45,6 +45,7 @@
 					data-pos-keyboard-target="payment-cancel"
 					data-testid="payment-cancel"
 					@click="$emit('cancel')"
+					:disabled="locked"
 				>
 					{{ __("Cancel Payment") }}
 				</v-btn>
@@ -59,6 +60,7 @@ defineProps({
 	validatePayment: Boolean,
 	highlightSubmit: Boolean,
 	compact: Boolean,
+	locked: Boolean,
 });
 
 defineEmits(["submit", "submit-and-print", "cancel"]);

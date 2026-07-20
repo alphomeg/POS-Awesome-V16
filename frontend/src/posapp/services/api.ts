@@ -267,10 +267,47 @@ function normalizeBusinessFailure<T>(
 	});
 }
 
+function normalizeAuthoritativeTransportBusinessFailure<T>(
+	error: any,
+	requestId: string,
+): ApiEnvelope<T> | null {
+	const response =
+		error?.responseJSON ??
+		error?.xhr?.responseJSON ??
+		error?.response?.data ??
+		null;
+	if (!response || typeof response !== "object") {
+		return null;
+	}
+
+	for (const candidate of [response?.message, response]) {
+		const envelope = normalizeExistingEnvelope<T>(
+			candidate,
+			requestId,
+			response,
+		);
+		if (
+			envelope &&
+			!envelope.ok &&
+			!envelope.error.retryable &&
+			["VALIDATION_ERROR", "BUSINESS_RULE"].includes(envelope.error.code)
+		) {
+			return envelope;
+		}
+	}
+
+	return null;
+}
+
 function normalizeTransportFailure<T>(
 	error: any,
 	requestId: string,
 ): ApiEnvelope<T> {
+	const authoritativeBusinessFailure =
+		normalizeAuthoritativeTransportBusinessFailure<T>(error, requestId);
+	if (authoritativeBusinessFailure) {
+		return authoritativeBusinessFailure;
+	}
 	const status =
 		Number(error?.status || error?.httpStatus || error?.xhr?.status || 0) ||
 		null;

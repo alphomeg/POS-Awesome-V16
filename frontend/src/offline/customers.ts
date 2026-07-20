@@ -1,5 +1,6 @@
 import { checkDbHealth, db, isOffline, memory, persist } from "./db";
 import { buildCustomerSearchText } from "../posapp/stores/customers/customerSearch";
+import { updateInvoiceOutboxCustomer } from "./invoiceOutbox";
 import {
 	claimRetryableQueueEntries,
 	clearWriteQueueEntries,
@@ -37,16 +38,19 @@ export async function updateOfflineInvoicesCustomer(
 ) {
 	let updated = false;
 
-	await updateQueuedPayloads("invoice", (payload) => {
-		if (payload?.invoice?.customer === oldName) {
-			payload.invoice.customer = newName;
-			if (payload.invoice.customer_name) {
-				payload.invoice.customer_name = newName;
+	await Promise.all([
+		updateQueuedPayloads("invoice", (payload) => {
+			if (payload?.invoice?.customer === oldName) {
+				payload.invoice.customer = newName;
+				if (payload.invoice.customer_name) {
+					payload.invoice.customer_name = newName;
+				}
+				updated = true;
 			}
-			updated = true;
-		}
-		return payload;
-	});
+			return payload;
+		}),
+		updateInvoiceOutboxCustomer(oldName, newName),
+	]);
 
 	if (updated) {
 		await refreshQueueMemory("invoice");
@@ -92,12 +96,6 @@ export async function syncOfflineCustomers() {
 				method: "posawesome.posawesome.api.customers.create_customer",
 				args: queuedCustomer.args,
 			});
-			synced += 1;
-			await markWriteQueueEntrySynced(
-				CUSTOMER_ENTITY,
-				Number(entry.queue_id),
-				entry.last_attempt_at,
-			);
 
 			if (
 				result &&
@@ -110,6 +108,13 @@ export async function syncOfflineCustomers() {
 					result.message.name,
 				);
 			}
+
+			await markWriteQueueEntrySynced(
+				CUSTOMER_ENTITY,
+				Number(entry.queue_id),
+				entry.last_attempt_at,
+			);
+			synced += 1;
 		} catch (error) {
 			console.error("Failed to create customer", error);
 			await markWriteQueueEntryFailed(

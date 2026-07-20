@@ -137,6 +137,60 @@ describe("invoiceShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
+	it("consumes document shortcuts without side effects while checkout is locked", async () => {
+		const closePayments = vi.fn();
+		const removeItem = vi.fn();
+		const saveAndClear = vi.fn();
+		const showPayment = vi.fn();
+		const selectFirstCustomer = vi.fn();
+		const vm = {
+			...createVm(),
+			uiStore: {
+				...createVm().uiStore,
+				checkoutMutationLocked: true,
+			},
+			$refs: {
+				customerSection: { selectFirstCustomer },
+			},
+			close_payments: closePayments,
+			remove_item: removeItem,
+			save_and_clear_invoice: saveAndClear,
+			show_payment: showPayment,
+			cancel_dialog: false,
+		};
+		const events = [
+			createAltEvent("1", "Digit1"),
+			createAltEvent("2", "Digit2"),
+			createAltEvent("6", "Digit6"),
+			createAltEvent("e", "KeyE"),
+			createAltEvent("s", "KeyS"),
+			createAltEvent("Home", "Home"),
+			new KeyboardEvent("keydown", {
+				key: "F9",
+				bubbles: true,
+				cancelable: true,
+			}),
+		];
+
+		for (const event of events) {
+			await (invoiceShortcuts as any).handleInvoiceShortcut.call(
+				vm,
+				event,
+			);
+			expect(event.defaultPrevented).toBe(true);
+		}
+
+		expect(closePayments).not.toHaveBeenCalled();
+		expect(removeItem).not.toHaveBeenCalled();
+		expect(saveAndClear).not.toHaveBeenCalled();
+		expect(showPayment).not.toHaveBeenCalled();
+		expect(selectFirstCustomer).not.toHaveBeenCalled();
+		expect(vm.cancel_dialog).toBe(false);
+		expect(vm.uiStore.setActiveView).not.toHaveBeenCalled();
+		expect(vm.eventBus.emit).not.toHaveBeenCalled();
+		expect((globalThis as any).frappe.set_route).not.toHaveBeenCalled();
+	});
+
 	it("routes Alt+3 through the Counter Grid item modal", async () => {
 		const vm = { ...createVm(), isCounterGridPresentation: true };
 		const event = createAltEvent("3", "Digit3");

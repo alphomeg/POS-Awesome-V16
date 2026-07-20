@@ -64,6 +64,7 @@ def _install_stubs():
         "name": "ACC-SINV-OUTBOX-0001",
         "doctype": kwargs.get("document_type"),
         "docstatus": 1,
+        "client_request_id": kwargs.get("client_request_id"),
         "ledger_state": "POST_SUBMIT_DONE",
         "repaired": True,
     }
@@ -105,6 +106,7 @@ class TestOfflineSyncInvoices(unittest.TestCase):
             client_request_id="outbox-fixed-001",
             invoice={
                 "name": "OFFLINE-SINV-0001",
+                "doctype": "Sales Invoice",
                 "company": "Test Company",
                 "pos_profile": "Main POS",
             },
@@ -128,13 +130,17 @@ class TestOfflineSyncInvoices(unittest.TestCase):
                 "doctype": "Sales Invoice",
                 "docstatus": 1,
                 "status": 1,
+                "client_request_id": json.loads(invoice).get("posa_client_request_id"),
             }
 
         self.module.submit_invoice = capture_submit
         try:
             self.module.submit_invoice_outbox_entry(
                 client_request_id="outbox-authoritative-002",
-                invoice={"posa_client_request_id": "stale-invoice-id"},
+                invoice={
+                    "doctype": "Sales Invoice",
+                    "posa_client_request_id": "stale-invoice-id",
+                },
                 data={
                     "idempotency_key": "stale-idempotency-key",
                     "client_request_id": "stale-client-id",
@@ -166,6 +172,7 @@ class TestOfflineSyncInvoices(unittest.TestCase):
                 "doctype": "Sales Invoice",
                 "docstatus": 1,
                 "status": 1,
+                "client_request_id": json.loads(invoice).get("posa_client_request_id"),
             }
 
         self.module.submit_invoice = capture_submit
@@ -173,6 +180,7 @@ class TestOfflineSyncInvoices(unittest.TestCase):
             self.module.submit_invoice_outbox_entry(
                 client_request_id="offline-late-001",
                 invoice={
+                    "doctype": "Sales Invoice",
                     "company": "Test Company",
                     "pos_profile": "Main POS",
                     "posa_pos_opening_shift": "POS-OPEN-CLOSED",
@@ -196,6 +204,171 @@ class TestOfflineSyncInvoices(unittest.TestCase):
             },
         )
 
+    def test_submit_invoice_outbox_entry_rejects_non_invoice_document_types(self):
+        calls = []
+        original_submit_invoice = self.module.submit_invoice
+
+        def capture_submit(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {}
+
+        self.module.submit_invoice = capture_submit
+        try:
+            for doctype in ("Sales Order", "Quotation"):
+                with self.subTest(doctype=doctype):
+                    with self.assertRaisesRegex(
+                        Exception,
+                        "Unsupported invoice document type",
+                    ):
+                        self.module.submit_invoice_outbox_entry(
+                            client_request_id=f"unsupported-{doctype}",
+                            invoice={"doctype": doctype},
+                            data={},
+                        )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+
+        self.assertEqual(calls, [])
+
+    def test_submit_invoice_outbox_entry_rejects_any_unsupported_doctype_signal(self):
+        original_submit_invoice = self.module.submit_invoice
+        calls = []
+        self.module.submit_invoice = lambda *args, **kwargs: calls.append((args, kwargs))
+        try:
+            with self.assertRaisesRegex(Exception, "Unsupported invoice document type"):
+                self.module.submit_invoice_outbox_entry(
+                    client_request_id="mixed-doctype-001",
+                    invoice={"doctype": "Sales Invoice"},
+                    data={"_force_invoice_doctype": "Quotation"},
+                )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+
+        self.assertEqual(calls, [])
+
+    def test_submit_invoice_outbox_entry_rejects_conflicting_allowed_doctype_signals(self):
+        original_submit_invoice = self.module.submit_invoice
+        calls = []
+        self.module.submit_invoice = lambda *args, **kwargs: calls.append((args, kwargs))
+        try:
+            with self.assertRaisesRegex(Exception, "conflicting document types"):
+                self.module.submit_invoice_outbox_entry(
+                    client_request_id="mixed-invoice-doctype-001",
+                    invoice={"doctype": "Sales Invoice"},
+                    data={"_force_invoice_doctype": "POS Invoice"},
+                )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+
+        self.assertEqual(calls, [])
+
+    def test_submit_invoice_outbox_entry_rejects_missing_document_type(self):
+        original_submit_invoice = self.module.submit_invoice
+        calls = []
+        self.module.submit_invoice = lambda *args, **kwargs: calls.append((args, kwargs))
+        try:
+            with self.assertRaisesRegex(Exception, "Invoice document type is required"):
+                self.module.submit_invoice_outbox_entry(
+                    client_request_id="missing-doctype-001",
+                    invoice={},
+                    data={},
+                )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+
+        self.assertEqual(calls, [])
+
+    def test_submit_invoice_outbox_entry_rejects_draft_response(self):
+        self._assert_invalid_submit_response(
+            {
+                "name": "ACC-SINV-DRAFT-0001",
+                "doctype": "Sales Invoice",
+                "docstatus": 0,
+                "status": 0,
+                "client_request_id": "invalid-response-001",
+            },
+            "did not confirm a submitted invoice",
+        )
+
+    def test_submit_invoice_outbox_entry_rejects_empty_response_identity(self):
+        self._assert_invalid_submit_response(
+            {},
+            "client_request_id does not match",
+        )
+
+    def test_submit_invoice_outbox_entry_rejects_empty_invoice_name(self):
+        self._assert_invalid_submit_response(
+            {
+                "name": "   ",
+                "doctype": "Sales Invoice",
+                "docstatus": 1,
+                "status": 1,
+                "client_request_id": "invalid-response-001",
+            },
+            "missing the submitted invoice name",
+        )
+
+    def test_submit_invoice_outbox_entry_rejects_mismatched_response_identity(self):
+        self._assert_invalid_submit_response(
+            {
+                "name": "ACC-SINV-MISMATCH-0001",
+                "doctype": "Sales Invoice",
+                "docstatus": 1,
+                "status": 1,
+                "client_request_id": "different-request-id",
+            },
+            "client_request_id does not match",
+        )
+
+    def test_submit_invoice_outbox_entry_rejects_contradictory_status_signals(self):
+        self._assert_invalid_submit_response(
+            {
+                "name": "ACC-SINV-CONTRADICTORY-0001",
+                "doctype": "Sales Invoice",
+                "docstatus": 1,
+                "status": 0,
+                "client_request_id": "invalid-response-001",
+            },
+            "did not confirm a submitted invoice",
+        )
+
+    def test_submit_invoice_outbox_entry_rejects_unsupported_response_doctype(self):
+        self._assert_invalid_submit_response(
+            {
+                "name": "SO-0001",
+                "doctype": "Sales Order",
+                "docstatus": 1,
+                "status": 1,
+                "client_request_id": "invalid-response-001",
+            },
+            "unsupported invoice document type",
+        )
+
+    def test_submit_invoice_outbox_entry_rejects_cross_type_acknowledgement(self):
+        self._assert_invalid_submit_response(
+            {
+                "name": "POSINV-CROSS-TYPE-0001",
+                "doctype": "POS Invoice",
+                "docstatus": 1,
+                "status": 1,
+                "client_request_id": "invalid-response-001",
+            },
+            "document type does not match the request",
+        )
+
+    def _assert_invalid_submit_response(self, response, message):
+        original_submit_invoice = self.module.submit_invoice
+        self.module.submit_invoice = lambda *args, **kwargs: response
+        try:
+            with self.assertRaisesRegex(Exception, message):
+                self.module.submit_invoice_outbox_entry(
+                    client_request_id="invalid-response-001",
+                    invoice={"doctype": "Sales Invoice"},
+                    data={},
+                )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+
     def test_repair_invoice_outbox_entry_delegates_to_submission_repair(self):
         response = self.module.repair_invoice_outbox_entry(
             client_request_id="outbox-fixed-001",
@@ -206,6 +379,29 @@ class TestOfflineSyncInvoices(unittest.TestCase):
 
         self.assertTrue(response["repaired"])
         self.assertEqual(response["ledger_state"], "POST_SUBMIT_DONE")
+
+    def test_reconcile_invoice_outbox_entry_rejects_cross_type_acknowledgement(self):
+        original_repair = self.module.repair_invoice_submission
+        self.module.repair_invoice_submission = lambda **kwargs: {
+            "name": "POSINV-CROSS-TYPE-REPAIR-0001",
+            "doctype": "POS Invoice",
+            "docstatus": 1,
+            "status": 1,
+            "client_request_id": kwargs.get("client_request_id"),
+        }
+        try:
+            with self.assertRaisesRegex(
+                Exception,
+                "document type does not match the request",
+            ):
+                self.module.reconcile_invoice_outbox_entry(
+                    client_request_id="repair-cross-type-001",
+                    company="Test Company",
+                    pos_profile="Main POS",
+                    document_type="Sales Invoice",
+                )
+        finally:
+            self.module.repair_invoice_submission = original_repair
 
 
 if __name__ == "__main__":

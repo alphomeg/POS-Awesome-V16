@@ -12,14 +12,17 @@ type ToastStoreLike = {
 };
 
 type SyncStoreLike = {
-	updatePendingCount?: () => void | Promise<void>;
+	updatePendingCount?: () => unknown | Promise<unknown>;
+	syncPendingInvoices?: (_options?: {
+		showToasts?: boolean;
+		transactionalOnly?: boolean;
+	}) => Promise<any>;
 };
 
 type UseQueueMetricsOptions = {
 	getCacheUsageEstimate: () => Promise<CacheUsage>;
-	getPendingOfflineInvoiceCount?: () => number;
+	getPendingInvoiceCount?: () => number | Promise<number>;
 	getPendingOfflineCashMovementCount?: () => number;
-	syncOfflineInvoices?: () => Promise<any>;
 	syncOfflineCashMovements?: () => Promise<any>;
 	isOffline?: () => boolean;
 	syncStore?: SyncStoreLike;
@@ -52,7 +55,7 @@ export function useQueueMetrics(options: UseQueueMetricsOptions) {
 	}
 
 	async function syncQueues() {
-		const pending = options.getPendingOfflineInvoiceCount?.() || 0;
+		const pending = Number((await options.getPendingInvoiceCount?.()) || 0);
 		const pendingCashMovements =
 			options.getPendingOfflineCashMovementCount?.() || 0;
 		if (pending) {
@@ -71,7 +74,9 @@ export function useQueueMetrics(options: UseQueueMetricsOptions) {
 			return;
 		}
 
-		const result = await options.syncOfflineInvoices?.();
+		const result = await options.syncStore?.syncPendingInvoices?.({
+			showToasts: false,
+		});
 		const cashMovementResult = await options.syncOfflineCashMovements?.();
 		if (result && (result.synced || result.drafted)) {
 			if (result.synced) {

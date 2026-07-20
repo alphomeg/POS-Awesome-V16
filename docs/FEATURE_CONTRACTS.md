@@ -235,3 +235,91 @@ Rules:
 - Print and receipt logic must respect POS Profile print settings where applicable.
 - Offline cache must load and store POS Profile-dependent data safely.
 - Custom POS Profile fields must be considered when present.
+
+---
+
+## 9. Sale Submission Recovery Contract
+
+Sale submission recovery is linked with:
+
+- Payment submission and cashier signing
+- Immutable client request identity
+- Synchronous intent journal
+- IndexedDB invoice outbox
+- Legacy write-queue compatibility
+- Reconnect, timer, and manual sync triggers
+- Local stock projection
+- Last-invoice state and printing
+
+Rules:
+
+- Persist the immutable invoice sale intent and client request ID before
+  dispatching an automatically recoverable request. Persist a manual-review
+  lock before dispatching any other supported POS document.
+- Automatic replay is limited to explicit `Sales Invoice` and `POS Invoice`
+  payloads. Sales Orders, Quotations, missing document types, and contradictory
+  identities must fail closed for supervisor review and must never be coerced
+  through an invoice endpoint.
+- A timeout, abort, transport failure, server failure, retryable or unstructured
+  HTTP failure, or missing response after dispatch is an ambiguous outcome, not
+  proof that the sale failed. Only an explicit, structured, non-retryable Frappe
+  4xx rejection may use the legacy draft-compatibility path.
+- Treat a response as final only when it explicitly proves submission, or as
+  queued only when it explicitly carries the queued flag and draft status. A
+  browser event, invoice name, or otherwise truthy response is not an
+  acknowledgement.
+- Keep an ambiguous sale visibly locked in confirmation state. Do not restore
+  its payment attempt or allow a fresh submission with a different identity.
+- Enter one shared checkout mutation lock before dispatch and keep it through
+  direct completion or recovery. Submit, cancel, dialog close, keyboard,
+  navigation, cart editing, cart clearing, and mobile remount paths must all
+  honor that same lock.
+- Freeze the active Payments host (dialog, inline/mobile, or shortcut) before
+  locking so cashier signing, submission, and recovery keep one live owner.
+  Responsive changes must not replace that owner; ownerless startup recovery
+  must fall back to a visible persistent dialog.
+- Bind the durable recovery pointer to the authenticated user, POS Profile,
+  company, and document type. A missing or mismatched scope must fail closed
+  before local lookup, replay, settlement, or client-side effects.
+- Before any recovered acknowledgement changes UI state, require a non-empty
+  current cart to carry the same immutable request ID. A different cart must
+  remain untouched and the recovery must stay locked for manual review.
+- Process transactional invoice recovery before boot-critical, warm catalog, or
+  lazy sync resources, and keep all production triggers on one configured,
+  single-flight coordinator.
+- The invoice outbox is authoritative for every request ID it contains. A
+  matching legacy write-queue row is compatibility data and must never become a
+  second claim path; legacy-only rows must still drain during upgrades.
+- Outbox state changes are monotonic and compare-and-set against the exact
+  payload and sync claim. A direct acknowledgement may finalize an in-flight
+  row, but stale coordinator completion may never overwrite or delete that
+  terminal evidence. Definite-failure cleanup may delete only an exact pending,
+  unsent row.
+- On acknowledgement, retain the terminal outbox record for audit/pruning,
+  strictly verify removal of the synchronous intent journal, and update
+  last-invoice, stock, print, and navigation state exactly once. Journal cleanup
+  failure must remain visible and retry cleanup without resubmitting the sale.
+- Direct submission and recovery responses must repeat the exact request ID,
+  invoice name, supported invoice doctype, and an explicit submitted or queued
+  state. Browser events and callback failures cannot downgrade a proven
+  acknowledgement into a retryable checkout failure.
+- A post-dispatch `HTTP_ERROR`, including an unstructured HTTP 400 or 409, is
+  ambiguous regardless of its retryable flag. Only an explicit structured
+  validation or business-rule envelope is a definite direct rejection.
+- Legacy compatibility responses obey the same exact request/type/status rule.
+  A returned but invalid acknowledgement remains unresolved and must not be
+  converted into a successful draft fallback.
+- A dead-letter sale stays locked for supervisor status reconciliation. It must
+  not silently become a new sale.
+- Manual resolution requires an authenticated supervisor for the pointer's POS
+  scope, an exact typed request ID, a non-empty note, and one explicit outcome.
+  `submitted` must be verified against a submitted same-company document;
+  `not_submitted` must reject every supplied document that still exists. Keep
+  the resulting audit evidence immutable and make repeated identical decisions
+  idempotent.
+- Deleting an unresolved offline sale must remove its journal, outbox command,
+  and compatibility row as one guarded operation. A syncing or acknowledged
+  command cannot be deleted as if it were unsent.
+- This release supports one active POS tab per browser/terminal. Concurrent-tab
+  ownership, lease expiry, and browser-signal propagation require a future
+  cross-tab coordination contract before multi-tab checkout is supported.

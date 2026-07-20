@@ -10,6 +10,8 @@ import {
 	syncStockResource,
 } from "./adapters";
 import { syncInvoiceOutboxResource } from "../invoiceOutbox";
+import { syncOfflineCustomers } from "../customers";
+import { recordCoordinatorInvoiceOutboxResult } from "../invoices";
 import type { SyncScopedProfile } from "./adapters/common";
 import type {
 	SyncResourceDefinition,
@@ -63,9 +65,7 @@ function normalizeBooleanSetting(value: unknown, fallback = false) {
 		return fallback;
 	}
 	if (typeof value === "string") {
-		return ["1", "true", "yes", "on"].includes(
-			value.trim().toLowerCase(),
-		);
+		return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 	}
 	if (typeof value === "number") {
 		return value === 1;
@@ -235,12 +235,7 @@ export async function runSupportedOfflineSyncResource({
 		case "item_prices":
 			return syncItemPricesResource({
 				...sharedArgs,
-				fetcher: ({
-					posProfile,
-					watermark,
-					offset,
-					schemaVersion,
-				}) =>
+				fetcher: ({ posProfile, watermark, offset, schemaVersion }) =>
 					callOfflineSyncMethod(
 						"posawesome.posawesome.api.offline_sync.item_prices.sync_item_prices",
 						{
@@ -254,12 +249,7 @@ export async function runSupportedOfflineSyncResource({
 		case "pricing_rules":
 			return syncPricingRulesResource({
 				...sharedArgs,
-				fetcher: ({
-					posProfile,
-					watermark,
-					offset,
-					schemaVersion,
-				}) =>
+				fetcher: ({ posProfile, watermark, offset, schemaVersion }) =>
 					callOfflineSyncMethod(
 						"posawesome.posawesome.api.offline_sync.pricing_rules.sync_pricing_rules",
 						{
@@ -286,7 +276,13 @@ export async function runSupportedOfflineSyncResource({
 		case "customers":
 			return syncCustomersResource({
 				...sharedArgs,
-				fetcher: ({ posProfile, watermark, startAfter, limit, schemaVersion }) =>
+				fetcher: ({
+					posProfile,
+					watermark,
+					startAfter,
+					limit,
+					schemaVersion,
+				}) =>
 					callOfflineSyncMethod(
 						"posawesome.posawesome.api.offline_sync.customers.sync_customers",
 						{
@@ -298,8 +294,14 @@ export async function runSupportedOfflineSyncResource({
 						},
 					),
 			});
-		case "invoice_outbox":
-			return syncInvoiceOutboxResource(callOfflineSyncMethod);
+		case "invoice_outbox": {
+			await syncOfflineCustomers();
+			const result = await syncInvoiceOutboxResource(
+				callOfflineSyncMethod,
+			);
+			recordCoordinatorInvoiceOutboxResult(result);
+			return result;
+		}
 		default:
 			return {
 				status: "idle",

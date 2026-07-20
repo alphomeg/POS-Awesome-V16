@@ -58,6 +58,58 @@ Check:
 - IndexedDB compatibility
 - POS Profile configuration changes
 - POS Profile-dependent cache scope
+- Invoice outbox runs before a deliberately slow catalog resource
+- Overlapping reconnect, timer, server-online, and manual triggers remain
+  single-flight without dropping a later trigger
+- Legacy-only invoices migrate or drain, while a row also owned by the outbox is
+  never submitted through the legacy endpoint
+- Ambiguous legacy exceptions never enter draft fallback; only a structured,
+  non-retryable Frappe 4xx rejection may use that compatibility path
+- Outbox retry, backoff, acknowledgement, and dead-letter transitions preserve
+  one client request ID
+- Missing, draft, contradictory, mismatched-request, and unsupported-document
+  responses remain unresolved; only a named submitted Sales/POS Invoice with a
+  matching request ID is acknowledged
+- Sales Orders and Quotations never enter invoice journal, outbox, migration,
+  replay, or legacy invoice endpoints after an ambiguous response
+- Reload recovers a synchronous intent journal and keeps the sale locked until
+  authoritative acknowledgement or supervisor review
+- Recovery remains locked when the authenticated user, POS Profile, company, or
+  document type is missing or differs from the durable pointer
+- Ambiguous accepted responses do not restore payment or enable Submit again
+- Payment dialog close, route/remount, keyboard, mobile layout, print, and cart
+  clearing paths cannot bypass an active recovery lock
+- Mobile inline and Alt+X/Alt+P shortcut submission retain the exact Payments
+  owner through cashier signing, resize, dispatch, and recovery; ownerless
+  startup recovery opens a visible persistent dialog
+- A deferred live request locks Cancel, Escape/scrim, shortcuts, navigation,
+  payment inputs, and cart edits before its response arrives
+- A matching or empty restored cart may settle; a non-empty cart with another
+  request ID remains byte-for-byte unchanged and manually locked
+- Acknowledgement updates last-invoice and local stock once and retains the
+  terminal outbox audit row
+- Failed acknowledgement-journal cleanup remains visible, retains the terminal
+  row, and retries cleanup without resubmitting the sale
+- Direct and reconciled acknowledgements require exact request ID, invoice name,
+  supported invoice doctype, and explicit submitted/queued status; malformed or
+  fallback identities remain unresolved
+- Browser observation events and client callbacks cannot turn an acknowledged
+  mutation into a retryable checkout failure
+- Unstructured direct HTTP 400/409 outcomes retain the recovery pointer,
+  journal, outbox row, and checkout lock; explicit validation/business envelopes
+  remain definite failures
+- Supervisor resolution enforces the canonical POS scope, typed request ID,
+  non-empty reason, supported document/outcome pair, submitted-document proof,
+  rejection of any supposedly-not-submitted existing document, and idempotent
+  immutable audit evidence
+- Offline delete/clear removes only the exact unresolved journal/outbox/legacy
+  ownership set and refuses syncing or acknowledged commands
+- Direct acknowledgement racing a coordinator claim leaves one retained
+  acknowledged row; stale success/failure completion cannot regress or delete it
+- Definite-failure cleanup removes only the exact immutable pending intent and
+  refuses a row that advanced to syncing or acknowledged
+- Single-tab recovery is deterministic; concurrent POS tabs remain unsupported
+  until a tab lease and BroadcastChannel/storage-event tests are implemented
 
 ---
 

@@ -80,4 +80,37 @@ describe("uiStore parked orders", () => {
 		store.closePaymentShortcutHost();
 		expect(store.paymentShortcutHostOpen).toBe(false);
 	});
+
+	it("retains the exact payment host owner until submission and recovery unlock", () => {
+		const store = useUIStore();
+
+		store.setCheckoutPaymentHostOwner("shortcut");
+		store.setCheckoutSubmissionInFlight(true);
+		store.setCheckoutRecoveryLocked(true);
+		store.setCheckoutSubmissionInFlight(false);
+
+		expect(store.checkoutPaymentHostOwner).toBe("shortcut");
+		expect(store.checkoutMutationLocked).toBe(true);
+
+		store.setCheckoutRecoveryLocked(false);
+
+		expect(store.checkoutPaymentHostOwner).toBeNull();
+		expect(store.checkoutMutationLocked).toBe(false);
+	});
+
+	it("does not close or replace the locked payment owner", () => {
+		const store = useUIStore();
+
+		store.openPaymentShortcutHost();
+		store.setCheckoutPaymentHostOwner("shortcut");
+		store.setCheckoutSubmissionInFlight(true);
+		store.closePaymentShortcutHost();
+		store.openPaymentDialog();
+
+		expect(store.paymentShortcutHostOpen).toBe(true);
+		expect(store.paymentDialogOpen).toBe(false);
+
+		store.closePaymentShortcutHost(true);
+		expect(store.paymentShortcutHostOpen).toBe(false);
+	});
 });

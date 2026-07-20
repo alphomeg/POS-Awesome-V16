@@ -40,6 +40,7 @@ describe("offline write queue durability", () => {
 	it("durably persists invoice queue entries with lifecycle metadata", async () => {
 		await saveOfflineInvoice({
 			invoice: {
+				doctype: "Sales Invoice",
 				name: "OFFLINE-SINV-1001",
 				customer: "CUST-001",
 				items: [{ item_code: "ITEM-1", item_name: "Item 1", qty: 1 }],
@@ -62,7 +63,9 @@ describe("offline write queue durability", () => {
 				idempotency_key: expect.any(String),
 				created_at: expect.any(String),
 				payload: expect.objectContaining({
-					invoice: expect.objectContaining({ name: "OFFLINE-SINV-1001" }),
+					invoice: expect.objectContaining({
+						name: "OFFLINE-SINV-1001",
+					}),
 				}),
 			}),
 		);
@@ -94,6 +97,7 @@ describe("offline write queue durability", () => {
 	it("prevents duplicate queue entries for the same idempotent invoice", async () => {
 		const entry = {
 			invoice: {
+				doctype: "Sales Invoice",
 				name: "OFFLINE-SINV-DEDUP-1",
 				customer: "CUST-DEDUP",
 				posa_client_request_id: "inv-fixed-queue-001",
@@ -179,7 +183,7 @@ describe("offline write queue durability", () => {
 		expect(getOfflineInvoices()).toHaveLength(1);
 	});
 
-	it("does not apply offline stock gates or local stock reduction for sales orders", async () => {
+	it("refuses offline sales orders without changing local stock", async () => {
 		memory.pos_opening_storage = {
 			stock_settings: { allow_negative_stock: 0 },
 			pos_profile: {
@@ -191,24 +195,26 @@ describe("offline write queue durability", () => {
 			"ITEM-SO": { actual_qty: 1 },
 		};
 
-		await saveOfflineInvoice({
-			invoice: {
-				doctype: "Sales Order",
-				name: "OFFLINE-SO-1",
-				customer: "CUST-SO",
-				items: [
-					{
-						item_code: "ITEM-SO",
-						item_name: "Order Item",
-						is_stock_item: 1,
-						qty: 10,
-					},
-				],
-			},
-			data: {},
-		});
+		await expect(
+			saveOfflineInvoice({
+				invoice: {
+					doctype: "Sales Order",
+					name: "OFFLINE-SO-1",
+					customer: "CUST-SO",
+					items: [
+						{
+							item_code: "ITEM-SO",
+							item_name: "Order Item",
+							is_stock_item: 1,
+							qty: 10,
+						},
+					],
+				},
+				data: {},
+			}),
+		).rejects.toThrow("only supports Sales Invoice and POS Invoice");
 
-		expect(getOfflineInvoices()).toHaveLength(1);
+		expect(getOfflineInvoices()).toHaveLength(0);
 		expect(memory.local_stock_cache["ITEM-SO"].actual_qty).toBe(1);
 	});
 
@@ -248,7 +254,9 @@ describe("offline write queue durability", () => {
 			},
 		});
 
-		(globalThis as any).frappe.call.mockRejectedValue(new Error("server unavailable"));
+		(globalThis as any).frappe.call.mockRejectedValue(
+			new Error("server unavailable"),
+		);
 
 		let result = await syncOfflineCashMovements();
 		expect(result).toEqual({ pending: 1, synced: 0 });
@@ -283,9 +291,16 @@ describe("offline write queue durability", () => {
 		const legacyEntries = [
 			{
 				invoice: {
+					doctype: "Sales Invoice",
 					name: "LEGACY-SINV-0001",
 					customer: "CUST-LEGACY",
-					items: [{ item_code: "ITEM-LEGACY", item_name: "Legacy", qty: 1 }],
+					items: [
+						{
+							item_code: "ITEM-LEGACY",
+							item_name: "Legacy",
+							qty: 1,
+						},
+					],
 				},
 				data: {},
 			},

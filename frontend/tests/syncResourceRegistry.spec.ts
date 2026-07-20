@@ -11,6 +11,7 @@ describe("sync resource registry", () => {
 		const ids = resources.map((resource) => resource.id);
 
 		expect(ids).toEqual([
+			"invoice_outbox",
 			"bootstrap_config",
 			"price_list_meta",
 			"currency_matrix",
@@ -22,7 +23,6 @@ describe("sync resource registry", () => {
 			"pricing_rules",
 			"stock",
 			"customers",
-			"invoice_outbox",
 			"customer_addresses",
 			"delivery_charges",
 		]);
@@ -30,6 +30,12 @@ describe("sync resource registry", () => {
 	});
 
 	it("filters resources by priority without mutating registry order", () => {
+		expect(
+			getSyncResourcesByPriority("transactional").map(
+				(resource) => resource.id,
+			),
+		).toEqual(["invoice_outbox"]);
+
 		expect(
 			getSyncResourcesByPriority("boot_critical").map(
 				(resource) => resource.id,
@@ -50,6 +56,7 @@ describe("sync resource registry", () => {
 		expect(
 			getSyncResourceDefinitions().map((resource) => resource.id),
 		).toEqual([
+			"invoice_outbox",
 			"bootstrap_config",
 			"price_list_meta",
 			"currency_matrix",
@@ -61,7 +68,6 @@ describe("sync resource registry", () => {
 			"pricing_rules",
 			"stock",
 			"customers",
-			"invoice_outbox",
 			"customer_addresses",
 			"delivery_charges",
 		]);
@@ -84,6 +90,7 @@ describe("sync resource registry", () => {
 				(resource) => resource.id,
 			),
 		).toEqual([
+			"invoice_outbox",
 			"bootstrap_config",
 			"price_list_meta",
 			"currency_matrix",
@@ -95,7 +102,6 @@ describe("sync resource registry", () => {
 			"pricing_rules",
 			"stock",
 			"customers",
-			"invoice_outbox",
 		]);
 	});
 

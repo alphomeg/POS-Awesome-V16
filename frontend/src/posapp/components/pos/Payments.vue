@@ -4,9 +4,64 @@
 		ref="paymentRoot"
 		data-pos-keyboard-root="payment"
 		data-testid="payment-root"
-		:class="['payment-shell', { 'payment-shell--dialog': dialogMode }]"
+		:class="[
+			'payment-shell',
+			{
+				'payment-shell--dialog': dialogMode,
+				'payment-shell--submission-locked': checkoutMutationLocked,
+			},
+		]"
 	>
+		<div
+			v-if="submissionRecoveryLocked"
+			class="submission-recovery-banner"
+			data-testid="submission-recovery-banner"
+			role="alert"
+			aria-live="assertive"
+		>
+			<div class="submission-recovery-banner__copy">
+				<strong>{{ __("Sale received; confirming status — do not retry") }}</strong>
+				<span v-if="submissionRecovery.requestId">
+					{{ __("Request ID: {0}", [submissionRecovery.requestId]) }}
+				</span>
+				<span v-if="submissionRecovery.phase === 'manual_review'">
+					{{
+						submissionRecovery.detail ||
+						__("Automatic confirmation stopped. Ask a POS supervisor to check this sale.")
+					}}
+				</span>
+			</div>
+			<v-btn
+				v-if="
+					submissionRecovery.phase === 'manual_review' &&
+					submissionRecoveryCanCheckStatus &&
+					Boolean(currentCashier?.is_supervisor)
+				"
+				color="warning"
+				variant="flat"
+				:loading="submissionRecoveryChecking"
+				data-testid="submission-recovery-status-check"
+				@click="checkPendingSaleStatus"
+			>
+				{{ __("Check Sale Status") }}
+			</v-btn>
+			<v-btn
+				v-if="
+					submissionRecovery.phase === 'manual_review' &&
+					submissionRecoveryCanResolveManually &&
+					Boolean(currentCashier?.is_supervisor)
+				"
+				color="warning"
+				variant="flat"
+				data-testid="manual-recovery-open"
+				@click="manualRecoveryDialogOpen = true"
+			>
+				{{ __("Resolve Verified Outcome") }}
+			</v-btn>
+		</div>
 		<v-card
+			:inert="checkoutMutationLocked || undefined"
+			:aria-busy="checkoutMutationLocked ? 'true' : 'false'"
 			:class="[
 				'selection mx-auto my-0 pos-themed-card payment-card',
 				dialogMode ? 'payment-card--dialog' : 'mt-3',
@@ -245,6 +300,7 @@
 				:validatePayment="validatePayment"
 				:highlightSubmit="highlightSubmit"
 				:compact="dialogMode"
+				:locked="checkoutMutationLocked"
 				@submit="submit"
 				@submit-and-print="submit(undefined, false, true)"
 				@cancel="back_to_invoice"
@@ -272,6 +328,14 @@
 			:preferred-mode="cashierSigningPreferredMode"
 			@submit="handleCashierSigningSubmit"
 			@cancel="handleCashierSigningCancel"
+		/>
+		<ManualSubmissionRecoveryDialog
+			v-model="manualRecoveryDialogOpen"
+			:request-id="submissionRecovery.requestId || ''"
+			:document-type="submissionRecoveryDocumentType || ''"
+			:suggested-document-name="submissionRecovery.invoiceName || ''"
+			:loading="submissionRecoveryChecking"
+			@resolve="handleManualRecoveryResolution"
 		/>
 		<GiftCardDialog
 			:model-value="giftCardDialogOpen"
@@ -337,6 +401,7 @@ import { resolvePaymentPrintFormat } from "../../utils/paymentPrintFormat";
 import { parseBooleanSetting } from "../../utils/stock";
 import { toCompanyCurrency } from "../../utils/erpnextCurrency";
 import { focusFirstKeyboardTarget } from "../../utils/keyboardNavigation";
+import { getActiveInvoiceSubmissionRecovery } from "../../composables/pos/payments/recoveryState";
 
 // Components
 import PaymentSummary from "./payments/PaymentSummary.vue";
@@ -352,13 +417,21 @@ import PaymentOptions from "./payments/PaymentOptions.vue";
 import PaymentSelectionFields from "./payments/PaymentSelectionFields.vue";
 import PaymentDialogs from "./payments/PaymentDialogs.vue";
 import CashierSaleSigningDialog from "./payments/CashierSaleSigningDialog.vue";
+import ManualSubmissionRecoveryDialog from "./payments/ManualSubmissionRecoveryDialog.vue";
 
-defineProps({
+const props = defineProps({
 	dialogMode: {
 		type: Boolean,
 		default: false,
 	},
+	hostOwner: {
+		type: String,
+		default: "inline",
+		validator: (value) => ["dialog", "inline", "shortcut"].includes(value),
+	},
 });
+
+const emit = defineEmits(["submission-recovery-lock-change"]);
 
 const { proxy } = getCurrentInstance();
 const eventBus = proxy.eventBus;
@@ -433,6 +506,7 @@ const giftCardError = ref("");
 const giftCardRedemptions = ref([]);
 const cashierSigningDialogOpen = ref(false);
 const cashierSigningAmount = ref(0);
+const manualRecoveryDialogOpen = ref(false);
 let cashierSigningResolver = null;
 
 // Computed Properties
@@ -531,7 +605,9 @@ const signingPaymentMethods = computed(() => {
 
 const cashierSigningPreferredMode = computed(() => {
 	const paymentRows = Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : [];
-	const positivePayment = paymentRows.find((payment) => flt(payment?.amount || 0, currency_precision.value) > 0);
+	const positivePayment = paymentRows.find(
+		(payment) => flt(payment?.amount || 0, currency_precision.value) > 0,
+	);
 	if (positivePayment?.mode_of_payment) {
 		return positivePayment.mode_of_payment;
 	}
@@ -705,33 +781,71 @@ const {
 	eventBus: eventBus,
 });
 
-const { ensureReturnPaymentsAreNegative, restoreReturnPayments, validateSubmission, submitInvoice } =
-	usePaymentSubmission({
-		invoiceDoc: computed(() => invoiceStore.invoiceDoc),
-		posProfile: pos_profile,
-		stockSettings: stock_settings,
-		invoiceType: invoiceType,
-		is_write_off_change: is_write_off_change,
-		isCashback: is_cashback,
-		paidChange: paid_change,
-		creditChange: credit_change,
-		redeemedCustomerCredit: redeemed_customer_credit,
-		customerCreditDict: customer_credit_dict,
-		giftCardRedemptions: giftCardRedemptions,
-		diff_payment: diff_payment,
-		is_credit_sale: is_credit_sale,
-		loyaltyAmount: loyalty_amount,
-		customerInfo: customer_info,
-		formatFloat: (val, prec) => flt(val, prec),
-		stores: {
-			toastStore,
-			syncStore,
-			customersStore,
-			uiStore,
-			invoiceStore,
-		},
-		currencyPrecision: currency_precision,
-	});
+const {
+	ensureReturnPaymentsAreNegative,
+	restoreReturnPayments,
+	validateSubmission,
+	submitInvoice,
+	submissionRecovery,
+	submissionRecoveryLocked,
+	submissionRecoveryChecking,
+	submissionRecoveryCanCheckStatus,
+	submissionRecoveryCanResolveManually,
+	submissionRecoveryDocumentType,
+	resumePendingSubmissionRecovery,
+	manuallyReconcilePendingSubmission,
+	resolveManualOnlySubmissionRecovery,
+	stopSubmissionRecoveryMonitor,
+	resetSubmissionRecovery,
+} = usePaymentSubmission({
+	invoiceDoc: computed(() => invoiceStore.invoiceDoc),
+	posProfile: pos_profile,
+	stockSettings: stock_settings,
+	invoiceType: invoiceType,
+	is_write_off_change: is_write_off_change,
+	isCashback: is_cashback,
+	paidChange: paid_change,
+	creditChange: credit_change,
+	redeemedCustomerCredit: redeemed_customer_credit,
+	customerCreditDict: customer_credit_dict,
+	giftCardRedemptions: giftCardRedemptions,
+	diff_payment: diff_payment,
+	is_credit_sale: is_credit_sale,
+	loyaltyAmount: loyalty_amount,
+	customerInfo: customer_info,
+	formatFloat: (val, prec) => flt(val, prec),
+	stores: {
+		toastStore,
+		syncStore,
+		customersStore,
+		uiStore,
+		invoiceStore,
+	},
+	currencyPrecision: currency_precision,
+});
+
+const checkoutMutationLocked = computed(
+	() =>
+		submissionInFlight.value ||
+		Boolean(uiStore.checkoutSubmissionInFlight) ||
+		submissionRecoveryLocked.value,
+);
+
+watch(
+	submissionRecoveryLocked,
+	(locked) => {
+		uiStore.setCheckoutRecoveryLocked?.(Boolean(locked));
+	},
+	{ immediate: true, flush: "sync" },
+);
+
+watch(
+	checkoutMutationLocked,
+	(locked) => {
+		emit("submission-recovery-lock-change", Boolean(locked));
+	},
+	{ immediate: true, flush: "sync" },
+);
 
 const isGiftCardPayment = (payment) => {
 	if (!pos_profile.value?.posa_use_gift_cards) {
@@ -797,6 +911,7 @@ const getGiftCardRemainingAmount = () => {
 };
 
 const clearGiftCardRedemption = () => {
+	if (checkoutMutationLocked.value) return;
 	if (activeGiftCardPayment.value) {
 		activeGiftCardPayment.value.amount = 0;
 		if (activeGiftCardPayment.value.base_amount !== undefined) {
@@ -814,6 +929,7 @@ const clearGiftCardRedemption = () => {
 };
 
 const toggleGiftCardInline = () => {
+	if (checkoutMutationLocked.value) return;
 	giftCardInlineExpanded.value = !giftCardInlineExpanded.value;
 	activeGiftCardPayment.value = null;
 	if (giftCardInlineExpanded.value) {
@@ -828,6 +944,7 @@ const toggleGiftCardInline = () => {
 };
 
 const openGiftCardDialog = (payment = null) => {
+	if (checkoutMutationLocked.value) return;
 	activeGiftCardPayment.value = payment;
 	giftCardDialogOpen.value = true;
 	giftCardCode.value = giftCardRedemptions.value[0]?.gift_card_code || "";
@@ -842,6 +959,7 @@ const openGiftCardDialog = (payment = null) => {
 };
 
 const checkGiftCardBalance = async () => {
+	if (checkoutMutationLocked.value) return;
 	if (!giftCardCode.value || !pos_profile.value?.company) {
 		giftCardError.value = __("Gift card code is required.");
 		return;
@@ -882,6 +1000,7 @@ const checkGiftCardBalance = async () => {
 };
 
 const applyGiftCardRedemption = async () => {
+	if (checkoutMutationLocked.value) return;
 	if (!giftCardBalance.value || !giftCardStatus.value) {
 		await checkGiftCardBalance();
 		if (!giftCardBalance.value || giftCardError.value) {
@@ -919,6 +1038,7 @@ const applyGiftCardRedemption = async () => {
 };
 
 const issueGiftCard = async () => {
+	if (checkoutMutationLocked.value) return;
 	if (!currentCashier.value?.is_supervisor) {
 		giftCardError.value = __("A POS supervisor is required for this action.");
 		return;
@@ -949,6 +1069,7 @@ const issueGiftCard = async () => {
 };
 
 const topUpGiftCard = async () => {
+	if (checkoutMutationLocked.value) return;
 	if (!currentCashier.value?.is_supervisor) {
 		giftCardError.value = __("A POS supervisor is required for this action.");
 		return;
@@ -1082,15 +1203,18 @@ const queueSearchRefocusRecovery = () => {
 	}, 10000);
 };
 
-const back_to_invoice = () => {
+const back_to_invoice = (force = false) => {
+	if (checkoutMutationLocked.value && !force) {
+		return;
+	}
 	const shouldRestoreShortcutFocus = paymentShortcutHostOpen.value;
 	releaseActiveFocus();
 	paymentVisible.value = false;
 	if (paymentDialogOpen.value) {
-		uiStore.closePaymentDialog();
+		uiStore.closePaymentDialog(force);
 	}
 	if (paymentShortcutHostOpen.value) {
-		uiStore.closePaymentShortcutHost();
+		uiStore.closePaymentShortcutHost(force);
 	}
 	if (activeView.value === "payment") {
 		uiStore.setActiveView("items");
@@ -1103,7 +1227,7 @@ const back_to_invoice = () => {
 
 const finishSubmissionNavigation = (clearInvoice = false) => {
 	const submittedType = invoiceType.value;
-	back_to_invoice();
+	back_to_invoice(true);
 	if (clearInvoice) {
 		addresses.value = [];
 		invoiceStore.clear();
@@ -1322,6 +1446,7 @@ const restorePaymentLinesAfterFailedSubmit = () => {
 };
 
 const enableShortcutCreditSale = () => {
+	if (checkoutMutationLocked.value) return false;
 	if (invoice_doc.value?.is_return) {
 		return false;
 	}
@@ -1415,11 +1540,13 @@ const handleShowPayment = () => {
 };
 
 const handleCreditChangeUpdate = (value) => {
+	if (checkoutMutationLocked.value) return;
 	setFormatedCurrency(credit_change, "value", null, false, value);
 	updateCreditChange(credit_change.value);
 };
 
 const handleWriteOffAmountUpdate = (value) => {
+	if (checkoutMutationLocked.value) return;
 	if (!invoice_doc.value) return;
 
 	let nextAmount = flt(value || 0, currency_precision.value);
@@ -1447,6 +1574,7 @@ const handleWriteOffAmountUpdate = (value) => {
 };
 
 const handleRedemptionFormattedCurrency = (data) => {
+	if (checkoutMutationLocked.value) return;
 	if (!data?.field) return;
 
 	if (data.field === "loyalty_amount") {
@@ -1479,6 +1607,7 @@ const updateCreditChange = (rawValue) => {
 };
 
 const handlePaymentAmountChange = (payment, event) => {
+	if (checkoutMutationLocked.value) return;
 	last_payment_change_was_cash.value = isCashLikePayment(payment);
 	setFormatedCurrency(payment, "amount", null, false, event);
 
@@ -1495,6 +1624,7 @@ const handlePaymentAmountChange = (payment, event) => {
 };
 
 const setPaymentToDenomination = (payment, amount) => {
+	if (checkoutMutationLocked.value) return;
 	payment.amount = amount;
 	if (payment.base_amount !== undefined) {
 		payment.base_amount = flt(
@@ -1839,81 +1969,100 @@ const submit = async (_event, payment_received = false, print = false) => {
 	});
 };
 
+const buildSubmissionCallbacks = (_print, callbackOverrides = {}) => ({
+	onPrint: (doc, printOptions = {}) => {
+		// The submission composable owns the print decision, including the
+		// durable printRequested flag restored after a browser crash.
+		if (printOptions.waitForPostSubmitPayments || printOptions.waitForInvoiceProcessing) {
+			void runDeferredPrintWorkflow({
+				name: printOptions.name || doc?.name,
+				doctype: printOptions.doctype,
+				waitForPostSubmitPayments: Boolean(printOptions.waitForPostSubmitPayments),
+				waitForInvoiceProcessing: Boolean(printOptions.waitForInvoiceProcessing),
+			});
+		} else if (isOffline()) {
+			printOfflineInvoice(doc);
+		} else {
+			loadPrintPage({
+				doc,
+				doctype: printOptions.doctype,
+				name: printOptions.name,
+			});
+		}
+	},
+	onSuccess: () => {
+		customer_credit_dict.value = [];
+		redeem_customer_credit.value = false;
+		is_cashback.value = true;
+		show_change_dialog.value = true;
+		is_credit_return.value = false;
+		sales_person.value = "";
+	},
+	onFinishNavigation: (clearInvoice) => {
+		finishSubmissionNavigation(clearInvoice);
+	},
+	onScheduleBackgroundCheck: (payload) => {
+		scheduleBackgroundStatusCheck(payload);
+	},
+	...callbackOverrides,
+});
+
+const checkPendingSaleStatus = async () => {
+	await manuallyReconcilePendingSubmission();
+};
+
+const handleManualRecoveryResolution = async (resolution) => {
+	const result = await resolveManualOnlySubmissionRecovery(resolution);
+	if (result?.resolved) {
+		manualRecoveryDialogOpen.value = false;
+	}
+};
+
 const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {}) => {
-	if (submissionInFlight.value) {
+	if (checkoutMutationLocked.value) {
 		return;
 	}
 
+	uiStore.setCheckoutPaymentHostOwner?.(props.hostOwner);
 	submissionInFlight.value = true;
+	uiStore.setCheckoutSubmissionInFlight?.(true);
+	let closeShortcutAfterUnlock = false;
 	try {
 		const cashierSignature = await requestCashierSigning();
 		if (requiresCashierSigning() && !cashierSignature) {
+			closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
 			return;
 		}
 		loading.value = true;
 		await validateSubmission(options.paymentReceived || false);
-		await submitInvoice(print, {
-			onPrint: (doc, printOptions = {}) => {
-				if (print) {
-					if (printOptions.waitForPostSubmitPayments || printOptions.waitForInvoiceProcessing) {
-						void runDeferredPrintWorkflow({
-							name: printOptions.name || doc?.name,
-							doctype: printOptions.doctype,
-							waitForPostSubmitPayments: Boolean(printOptions.waitForPostSubmitPayments),
-							waitForInvoiceProcessing: Boolean(printOptions.waitForInvoiceProcessing),
-						});
-					} else if (isOffline()) {
-						printOfflineInvoice(doc);
-					} else {
-						loadPrintPage({
-							doc,
-							doctype: printOptions.doctype,
-							name: printOptions.name,
-						});
-					}
-				}
-			},
-			onSuccess: () => {
-				customer_credit_dict.value = [];
-				redeem_customer_credit.value = false;
-				is_cashback.value = true;
-				show_change_dialog.value = true;
-				is_credit_return.value = false;
-				sales_person.value = "";
-			},
-			onFinishNavigation: (clearInvoice) => {
-				finishSubmissionNavigation(clearInvoice);
-			},
-			onScheduleBackgroundCheck: (payload) => {
-				scheduleBackgroundStatusCheck(payload);
-			},
-			...callbackOverrides,
-		}, {
+		await submitInvoice(print, buildSubmissionCallbacks(print, callbackOverrides), {
 			cashierSignature,
 		});
 	} catch (error) {
 		console.error("Submission failed propagate:", error);
 		restorePaymentLinesAfterFailedSubmit();
 
-		if (error?.message) {
+		if (error?.message && !error?.posaToastHandled) {
 			toastStore.show({
 				title: error.message,
 				color: "error",
 			});
 			frappe.utils.play_sound("error");
 		}
-		if (paymentShortcutHostOpen.value) {
-			back_to_invoice();
-		}
+		closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
 	} finally {
 		loading.value = false;
 		submissionInFlight.value = false;
+		uiStore.setCheckoutSubmissionInFlight?.(false);
+		if (closeShortcutAfterUnlock) {
+			back_to_invoice();
+		}
 	}
 };
 
 // Keyboard Shortcuts
 const handlePaymentShortcut = (event) => {
-	if (event.defaultPrevented || submissionInFlight.value || loading.value) return;
+	if (event.defaultPrevented || checkoutMutationLocked.value || loading.value) return;
 	if (event.repeat) return;
 	if (!paymentVisible.value) return;
 
@@ -1935,7 +2084,7 @@ const handlePaymentShortcut = (event) => {
 };
 
 const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
-	if (!paymentVisible.value || submissionInFlight.value || loading.value) return;
+	if (!paymentVisible.value || checkoutMutationLocked.value || loading.value) return;
 	const submitShortcut = () => {
 		nextTick(() => {
 			submit(null, false, print);
@@ -1975,6 +2124,9 @@ const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
 };
 
 const queueShortcutSubmit = (payload = {}) => {
+	if (checkoutMutationLocked.value) {
+		return;
+	}
 	queuedShortcutSubmit.value = payload;
 	if (isPaymentOpen.value) {
 		nextTick(() => {
@@ -2255,18 +2407,28 @@ watch(selectedCustomer, (newCustomer, oldCustomer) => {
 	}
 });
 
+const restorePendingSaleBeforeGeneralSync = async () => {
+	const recovery = await resumePendingSubmissionRecovery(buildSubmissionCallbacks(false));
+	if (!recovery) {
+		await syncStore.syncPendingInvoices({ showToasts: false });
+	}
+};
+
 // Lifecycle
 onMounted(() => {
 	_shortcutHandlers.value.handlePaymentShortcut = handlePaymentShortcut.bind(this);
 	document.addEventListener("keydown", _shortcutHandlers.value.handlePaymentShortcut);
 
-	syncStore.syncPendingInvoices();
-	eventBus.on("network-online", () => syncStore.syncPendingInvoices());
-	eventBus.on("server-online", () => syncStore.syncPendingInvoices());
+	void restorePendingSaleBeforeGeneralSync().catch((error) => {
+		console.warn("Unable to restore pending sale confirmation", error);
+	});
 
 	if (eventBus) {
 		eventBus.on("send_invoice_doc_payment", (doc) => {
 			invoiceStore.setInvoiceDoc(doc);
+			void resumePendingSubmissionRecovery(buildSubmissionCallbacks(false)).catch((error) => {
+				console.warn("Unable to restore pending sale confirmation", error);
+			});
 			void refreshPaymentCustomerInfo(doc);
 			paid_change.value = flt(doc.paid_change || 0, currency_precision.value);
 			credit_change.value = flt(doc.credit_change || 0, currency_precision.value);
@@ -2303,6 +2465,9 @@ onMounted(() => {
 		eventBus.on("register_pos_profile", (data) => {
 			pos_profile.value = data.pos_profile;
 			stock_settings.value = data.stock_settings;
+			void resumePendingSubmissionRecovery(buildSubmissionCallbacks(false)).catch((error) => {
+				console.warn("Unable to resume sale confirmation in the active POS scope", error);
+			});
 		});
 		eventBus.on("add_the_new_address", (data) => {
 			const normalized = normalizeAddress(data);
@@ -2326,6 +2491,10 @@ onMounted(() => {
 		eventBus.on("queue_submit_payment_shortcut", queueShortcutSubmit);
 		eventBus.on("submit_payment_shortcut", handleSubmitPaymentShortcut);
 		eventBus.on("clear_invoice", () => {
+			if (checkoutMutationLocked.value) {
+				return;
+			}
+			resetSubmissionRecovery();
 			invoiceStore.clear();
 			invoiceStore.resetPostingDate();
 			is_return.value = false;
@@ -2341,6 +2510,22 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+	// A host should remain mounted for the whole locked checkout. If an external
+	// parent still removes it, settle component-local signing and transfer any
+	// dispatched request to the durable recovery lock instead of stranding the
+	// signing promise or the process-local lock.
+	settleCashierSigning(null);
+	if (submissionInFlight.value) {
+		if (getActiveInvoiceSubmissionRecovery()) {
+			uiStore.setCheckoutRecoveryLocked?.(true);
+			uiStore.setCheckoutPaymentHostOwner?.("dialog");
+			uiStore.openPaymentDialog?.();
+			uiStore.setActiveView?.("items");
+		}
+		submissionInFlight.value = false;
+		uiStore.setCheckoutSubmissionInFlight?.(false);
+	}
+	stopSubmissionRecoveryMonitor();
 	clearPaymentFocusTimers();
 	eventBus.off("send_invoice_doc_payment");
 	eventBus.off("register_pos_profile");
@@ -2350,8 +2535,6 @@ onBeforeUnmount(() => {
 	eventBus.off("queue_submit_payment_shortcut", queueShortcutSubmit);
 	eventBus.off("submit_payment_shortcut", handleSubmitPaymentShortcut);
 	eventBus.off("clear_invoice");
-	eventBus.off("network-online");
-	eventBus.off("server-online");
 	clearBackgroundStatusCheck();
 
 	if (_shortcutHandlers.value.handlePaymentShortcut) {
@@ -2381,6 +2564,30 @@ defineExpose({
 
 .payment-shell {
 	padding: 0;
+}
+
+.submission-recovery-banner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin: 0 0 12px;
+	padding: 12px 16px;
+	border: 1px solid #b45309;
+	border-radius: 8px;
+	background: #fffbeb;
+	color: #78350f;
+}
+
+.submission-recovery-banner__copy {
+	display: grid;
+	gap: 4px;
+}
+
+.payment-shell--submission-locked .payment-scroll {
+	opacity: 0.72;
+	pointer-events: none;
+	user-select: none;
 }
 
 .payment-shell--dialog {

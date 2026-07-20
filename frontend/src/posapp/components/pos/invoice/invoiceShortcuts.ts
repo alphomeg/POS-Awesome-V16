@@ -146,6 +146,7 @@ interface InvoiceShortcutsVm {
 		off?: (_event: string, _handler: (_payload?: unknown) => void) => void;
 	};
 	uiStore: {
+		checkoutMutationLocked?: boolean;
 		setActiveView: (_view: string) => void;
 		triggerItemSearchFocus: () => void;
 		selectTopItem: () => void;
@@ -259,6 +260,20 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 			}
 
 			const key = event.key;
+			if (this.uiStore?.checkoutMutationLocked) {
+				// This document listener remains mounted behind the payment/recovery
+				// surface. Consume every shortcut it owns while checkout is locked so
+				// keyboard commands cannot close payments, mutate the cart/customer,
+				// navigate away, or reload the application around the shared lock.
+				if (
+					isKnownFunctionCommand(key) ||
+					(isAltOnly(event) && isKnownAltCommand(event)) ||
+					shouldEnterInvoiceGridFromArrow(event)
+				) {
+					consumeEvent(event);
+				}
+				return;
+			}
 			if (
 				event.repeat &&
 				(isKnownFunctionCommand(key) ||
