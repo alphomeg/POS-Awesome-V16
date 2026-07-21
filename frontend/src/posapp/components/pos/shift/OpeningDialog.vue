@@ -1,7 +1,22 @@
 <template>
 	<v-row justify="center">
-		<v-dialog v-model="isOpen" persistent max-width="800px" max-height="90vh">
-			<v-card elevation="8" class="opening-dialog-card">
+		<v-dialog
+			v-model="isOpen"
+			persistent
+			:retain-focus="true"
+			max-width="800px"
+			max-height="90vh"
+			aria-labelledby="opening-shift-title"
+			aria-describedby="opening-shift-description opening-shift-keyboard-help"
+			@after-enter="focusInitialTarget"
+		>
+			<v-card
+				ref="dialogRoot"
+				elevation="8"
+				class="opening-dialog-card"
+				data-testid="opening-shift-dialog"
+				data-pos-keyboard-root="opening-shift"
+			>
 				<!-- Header Section - White Background with Blue Text -->
 				<v-card-title class="opening-dialog-header">
 					<div class="header-content">
@@ -9,9 +24,18 @@
 							<v-icon class="header-icon">mdi-cash-plus</v-icon>
 						</div>
 						<div class="header-text">
-							<h5 class="header-title">{{ __("Create POS Opening Shift") }}</h5>
-							<p class="header-subtitle">
+							<h5 id="opening-shift-title" class="header-title">
+								{{ __("Create POS Opening Shift") }}
+							</h5>
+							<p id="opening-shift-description" class="header-subtitle">
 								{{ __("Initialize your shift with opening balances") }}
+							</p>
+							<p id="opening-shift-keyboard-help" class="opening-dialog-sr-only">
+								{{
+									__(
+										"Use Tab and Shift plus Tab to move through fields. Press Enter in an opening amount to continue.",
+									)
+								}}
 							</p>
 						</div>
 					</div>
@@ -27,6 +51,9 @@
 									:items="companies"
 									:label="frappe._('Company')"
 									v-model="company"
+									data-testid="opening-shift-company"
+									data-pos-keyboard-target="opening-shift-company"
+									data-pos-keyboard-native-arrows
 									required
 									variant="outlined"
 									color="primary"
@@ -42,6 +69,9 @@
 									:items="pos_profiles"
 									:label="frappe._('POS Profile')"
 									v-model="pos_profile"
+									data-testid="opening-shift-pos-profile"
+									data-pos-keyboard-target="opening-shift-pos-profile"
+									data-pos-keyboard-native-arrows
 									required
 									variant="outlined"
 									color="primary"
@@ -55,7 +85,7 @@
 							<!-- Payment Methods Section - Compact -->
 							<v-col cols="12">
 								<div class="section-header-compact">
-									<h6 class="section-title-compact">
+									<h6 id="opening-shift-payment-methods" class="section-title-compact">
 										<v-icon class="section-icon">mdi-credit-card-multiple</v-icon>
 										{{ __("Payment Methods") }}
 									</h6>
@@ -66,6 +96,7 @@
 									:items="payments_methods"
 									item-key="mode_of_payment"
 									class="enhanced-table-compact"
+									aria-labelledby="opening-shift-payment-methods"
 									:items-per-page="itemsPerPage"
 									hide-default-footer
 									density="compact"
@@ -75,6 +106,12 @@
 									<template v-slot:item.amount="{ item }">
 										<v-text-field
 											v-model="item.amount"
+											:data-opening-shift-amount="item.mode_of_payment"
+											:data-testid="`opening-shift-amount-${item.mode_of_payment}`"
+											data-pos-keyboard-target="opening-shift-amount"
+											data-pos-keyboard-native-arrows
+											:aria-label="openingAmountLabel(item)"
+											@keydown.enter.stop.prevent="focusNextAmount($event.target)"
 											:rules="[max25chars]"
 											type="number"
 											density="compact"
@@ -96,6 +133,8 @@
 					<v-btn
 						theme="dark"
 						@click="logout"
+						data-testid="opening-shift-logout"
+						data-pos-keyboard-target="opening-shift-logout"
 						class="pos-action-btn logout-action-btn"
 						size="large"
 						elevation="2"
@@ -107,6 +146,8 @@
 					<v-btn
 						theme="dark"
 						@click="go_desk"
+						data-testid="opening-shift-close"
+						data-pos-keyboard-target="opening-shift-close"
 						class="pos-action-btn cancel-action-btn"
 						size="large"
 						elevation="2"
@@ -116,9 +157,11 @@
 					</v-btn>
 					<v-btn
 						theme="dark"
-						:disabled="is_loading"
+						:disabled="!canSubmit"
 						:loading="is_loading"
 						@click="submit_dialog"
+						data-testid="opening-shift-submit"
+						data-pos-keyboard-target="opening-shift-submit"
 						class="pos-action-btn submit-action-btn"
 						size="large"
 						elevation="2"
@@ -133,7 +176,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import {
 	getOpeningDialogStorage,
 	setOpeningDialogStorage,
@@ -146,6 +189,7 @@ import {
 } from "../../../../offline/index";
 import { createBootstrapSnapshotFromRegisterData } from "../../../../offline/bootstrapSnapshot";
 import authService from "../../../services/authService";
+import { focusFirstKeyboardTarget } from "../../../utils/keyboardNavigation";
 
 defineOptions({
 	name: "OpeningDialog",
@@ -162,6 +206,7 @@ const BUILD_VERSION = typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_VERSION
 
 const isOpen = ref(props.dialog ? props.dialog : false);
 const is_loading = ref(false);
+const dialogRoot = ref(null);
 const companies = ref([]);
 const company = ref("");
 const pos_profiles_data = ref([]);
@@ -185,8 +230,40 @@ const payments_methods_headers = [
 ];
 const itemsPerPage = ref(100);
 const max25chars = (v) => v.length <= 12 || "Input too long!";
+const canSubmit = computed(
+	() => Boolean(payments_methods.value.length && company.value && pos_profile.value) && !is_loading.value,
+);
 
 const currencySymbol = (currency) => get_currency_symbol?.(currency);
+const openingAmountLabel = (item) =>
+	`${__("Opening amount")}: ${item?.mode_of_payment || __("payment method")}`;
+const getPaymentMethodData = (payload) => payload?.payments_method || payload?.payment_method || [];
+
+const getDialogRoot = () => dialogRoot.value?.$el || dialogRoot.value;
+
+function focusInitialTarget() {
+	nextTick(() => {
+		focusFirstKeyboardTarget(getDialogRoot(), "[data-pos-keyboard-target='opening-shift-company']");
+	});
+}
+
+function focusNextAmount(eventTarget) {
+	const target = eventTarget instanceof Element ? eventTarget : null;
+	const amountField = target?.closest?.("[data-opening-shift-amount]");
+	const root = getDialogRoot();
+	if (!amountField || !root) {
+		return false;
+	}
+
+	const fields = Array.from(root.querySelectorAll("[data-opening-shift-amount]"));
+	const currentIndex = fields.indexOf(amountField);
+	const nextField = currentIndex >= 0 ? fields[currentIndex + 1] : null;
+	if (nextField) {
+		return focusFirstKeyboardTarget(nextField);
+	}
+
+	return focusFirstKeyboardTarget(root, "[data-pos-keyboard-target='opening-shift-submit']");
+}
 
 watch(
 	() => props.dialog,
@@ -235,7 +312,7 @@ async function get_opening_dialog_data() {
 		try {
 			companies.value = cached.companies.map((c) => c.name);
 			pos_profiles_data.value = cached.pos_profiles_data || [];
-			payments_method_data.value = cached.payments_method || [];
+			payments_method_data.value = getPaymentMethodData(cached);
 			company.value = companies.value[0] || "";
 		} catch (e) {
 			console.error("Failed to parse opening dialog cache", e);
@@ -249,7 +326,7 @@ async function get_opening_dialog_data() {
 			if (r.message) {
 				companies.value = r.message.companies.map((element) => element.name);
 				pos_profiles_data.value = r.message.pos_profiles_data;
-				payments_method_data.value = r.message.payments_method;
+				payments_method_data.value = getPaymentMethodData(r.message);
 				company.value = companies.value[0] || "";
 				try {
 					setOpeningDialogStorage({
@@ -647,6 +724,31 @@ onMounted(() => {
 	background: rgba(25, 118, 210, 0.02);
 }
 
+.opening-dialog-card :deep(input:focus-visible),
+.opening-dialog-card :deep(button:focus-visible),
+.opening-dialog-card :deep([role="button"]:focus-visible) {
+	outline: 3px solid var(--pos-focus-ring, #1565c0) !important;
+	outline-offset: 2px !important;
+}
+
+.enhanced-field:focus-within,
+.amount-input:focus-within {
+	border-radius: 8px;
+	box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.28);
+}
+
+.opening-dialog-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
 /* Action buttons with improved naming and styling */
 .dialog-actions-container {
 	background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
@@ -719,5 +821,23 @@ onMounted(() => {
 
 .dialog-actions-container {
 	border-top: 1px solid var(--pos-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.opening-dialog-card,
+	.enhanced-field,
+	.header-icon-wrapper,
+	.pos-action-btn {
+		animation: none !important;
+		transition: none !important;
+	}
+}
+
+@media (forced-colors: active) {
+	.opening-dialog-card :deep(input:focus-visible),
+	.opening-dialog-card :deep(button:focus-visible),
+	.opening-dialog-card :deep([role="button"]:focus-visible) {
+		outline: 3px solid Highlight !important;
+	}
 }
 </style>

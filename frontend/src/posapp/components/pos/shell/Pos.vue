@@ -833,11 +833,14 @@ export default {
 			field?.$el?.querySelector?.("input")?.focus?.();
 		};
 		const handlePosTabFocus = (event) => {
-			if (checkoutMutationLocked.value) return;
+			if (event.defaultPrevented || checkoutMutationLocked.value || dialog.value) return;
 			if (counterGridActive.value) {
 				return;
 			}
 			if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) {
+				return;
+			}
+			if (event.target instanceof Element && event.target.closest(".v-overlay__content")) {
 				return;
 			}
 
@@ -1104,6 +1107,9 @@ export default {
 		},
 		closeOpeningDialog() {
 			this.dialog = false;
+			this.$nextTick(() => {
+				this.eventBus?.emit?.("focus_invoice_item_entry");
+			});
 		},
 	},
 
