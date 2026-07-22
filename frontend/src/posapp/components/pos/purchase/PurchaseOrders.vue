@@ -1,16 +1,60 @@
 <template>
-	<div class="pa-0 h-100">
-		<v-row class="h-100 ma-0">
+	<div
+		ref="workspaceRoot"
+		class="purchase-workspace pa-0 h-100"
+		data-pos-keyboard-root
+		@keydown.capture="handleWorkspaceKeydown"
+	>
+		<header class="purchase-mode-bar">
+			<nav class="purchase-mode-switch" :aria-label="__('POS workspace')">
+				<v-btn
+					variant="text"
+					prepend-icon="mdi-network-pos"
+					class="purchase-mode-switch__button"
+					data-pos-keyboard-target
+					@click="openSellingWorkspace"
+				>
+					{{ __("Selling") }}
+				</v-btn>
+				<v-btn
+					variant="flat"
+					color="primary"
+					prepend-icon="mdi-cart-arrow-down"
+					class="purchase-mode-switch__button"
+					aria-current="page"
+					data-pos-keyboard-target
+				>
+					{{ __("Purchasing") }}
+				</v-btn>
+			</nav>
+			<div class="purchase-mode-bar__hint">
+				<kbd>F2</kbd> {{ __("Find item") }}
+				<span aria-hidden="true">·</span>
+				<kbd>Ctrl S</kbd> {{ __("Save draft") }}
+			</div>
+		</header>
+		<v-row class="purchase-workspace__body ma-0">
 			<!-- Left Column: Item Selector -->
-			<v-col cols="12" md="5" class="h-100 pa-0 border-e">
+			<v-col cols="12" md="3" class="h-100 pa-0 border-e purchase-selector-column">
 				<ItemsSelector context="purchase" @add-item="onAddItem" />
 			</v-col>
 
 			<!-- Right Column: Purchase Order Form (Cart) -->
-			<v-col cols="12" md="7" class="h-100 pa-0">
+			<v-col cols="12" md="9" class="h-100 pa-0 purchase-editor-column">
 				<v-card class="h-100 d-flex flex-column pos-themed-card" flat>
-					<v-card-title class="py-2 px-4 bg-primary text-white d-flex align-center flex-wrap ga-2">
-						<span class="text-h6">{{ __("Create Purchase Order") }}</span>
+					<v-card-title class="purchase-title-bar bg-primary text-white d-flex align-center ga-2">
+						<div>
+							<div class="text-subtitle-1 font-weight-bold">
+								{{ __("Purchase Order Draft") }}
+							</div>
+							<div class="text-caption purchase-title-bar__subtitle">
+								{{
+									__(
+										"Build the order now; an authorized administrator can submit it later.",
+									)
+								}}
+							</div>
+						</div>
 						<v-chip
 							v-if="purchaseOrderName"
 							size="small"
@@ -28,10 +72,11 @@
 							@click="clearPurchaseForm"
 							:title="__('Clear All')"
 							:aria-label="__('Clear all purchase order items')"
+							data-pos-keyboard-target
 						></v-btn>
 					</v-card-title>
 
-					<v-card-text class="flex-grow-1 overflow-y-auto pa-4">
+					<v-card-text class="purchase-editor-body flex-grow-1 pa-3">
 						<!-- Header Section -->
 						<PurchaseHeader
 							v-model:supplier="supplier"
@@ -52,7 +97,7 @@
 							@create-supplier="supplierDialog = true"
 						/>
 
-						<v-divider class="mb-4"></v-divider>
+						<v-divider class="mb-2"></v-divider>
 
 						<!-- Items Table Section -->
 						<PurchaseItemsTable
@@ -69,7 +114,7 @@
 							@remove-item="removeItem"
 						/>
 
-						<v-alert v-if="errorMessage" type="error" density="compact" class="mt-4">
+						<v-alert v-if="errorMessage" type="error" density="compact" class="mt-2">
 							{{ errorMessage }}
 						</v-alert>
 					</v-card-text>
@@ -86,77 +131,55 @@
 								{{ formatNumber(totalQty) }} {{ __("qty") }}
 							</span>
 						</div>
-						<v-row dense class="purchase-action-bar__buttons">
-							<v-col cols="12" sm="6">
-								<v-btn
-									block
-									theme="dark"
-									variant="flat"
-									prepend-icon="mdi-content-save"
-									class="purchase-summary-btn purchase-action-btn--save"
-									@click="saveDraft"
-									:loading="draftSaveLoading"
-									:disabled="saveAndClearDisabled"
-								>
-									{{ __("Save & Clear") }}
-								</v-btn>
-							</v-col>
-							<v-col cols="12" sm="6">
-								<v-btn
-									block
-									theme="dark"
-									variant="flat"
-									prepend-icon="mdi-tray-full"
-									class="purchase-summary-btn purchase-action-btn--drafts"
-									@click="draftDialog = true"
-									:disabled="submitLoading || draftSaveLoading"
-								>
-									{{ __("Drafts") }}
-								</v-btn>
-							</v-col>
-							<v-col cols="12">
-								<v-btn
-									block
-									theme="dark"
-									variant="flat"
-									prepend-icon="mdi-folder-search-outline"
-									class="purchase-summary-btn purchase-action-btn--management"
-									@click="managementDialog = true"
-									:disabled="submitLoading || draftSaveLoading"
-								>
-									{{ __("Purchase Mgmt") }}
-								</v-btn>
-							</v-col>
-							<v-col cols="12">
-								<v-btn
-									block
-									theme="dark"
-									variant="flat"
-									size="large"
-									prepend-icon="mdi-credit-card"
-									class="purchase-summary-btn purchase-action-btn--pay purchase-pay-btn"
-									:loading="submitLoading"
-									:disabled="submitLoading || !purchaseItems.length"
-									@click="openPaymentDialog"
-								>
-									{{ __("PAY") }}
-								</v-btn>
-							</v-col>
-						</v-row>
+						<div class="purchase-action-bar__buttons">
+							<v-btn
+								variant="outlined"
+								prepend-icon="mdi-plus"
+								class="purchase-summary-btn"
+								data-pos-keyboard-target
+								@click="clearPurchaseForm"
+							>
+								{{ __("New") }}
+							</v-btn>
+							<v-btn
+								theme="dark"
+								variant="flat"
+								prepend-icon="mdi-content-save"
+								class="purchase-summary-btn purchase-action-btn--save"
+								@click="saveDraft"
+								:loading="draftSaveLoading"
+								:disabled="saveAndClearDisabled"
+								data-pos-keyboard-target
+							>
+								{{ purchaseOrderName ? __("Update Draft") : __("Save Draft") }}
+							</v-btn>
+							<v-btn
+								theme="dark"
+								variant="flat"
+								prepend-icon="mdi-tray-full"
+								class="purchase-summary-btn purchase-action-btn--drafts"
+								@click="draftDialog = true"
+								:disabled="submitLoading || draftSaveLoading"
+								data-pos-keyboard-target
+							>
+								{{ __("Purchase Orders") }}
+							</v-btn>
+							<v-btn
+								theme="dark"
+								variant="flat"
+								prepend-icon="mdi-folder-search-outline"
+								class="purchase-summary-btn purchase-action-btn--management"
+								@click="managementDialog = true"
+								:disabled="submitLoading || draftSaveLoading"
+								data-pos-keyboard-target
+							>
+								{{ __("Submitted & Receiving") }}
+							</v-btn>
+						</div>
 					</div>
 				</v-card>
 			</v-col>
 		</v-row>
-
-		<!-- Payment Dialog -->
-		<PurchasePaymentDialog
-			v-model="paymentDialog"
-			:total-amount="totalAmount"
-			:currency="supplierCurrency"
-			:pos-profile="pos_profile"
-			:create-invoice="createInvoice"
-			@submit="handlePaymentSubmit"
-		/>
 
 		<PurchaseDraftDialog
 			v-model="draftDialog"
@@ -190,20 +213,20 @@ import { useItemsStore } from "../../../stores/itemsStore";
 import { useToastStore } from "../../../stores/toastStore";
 import { usePurchaseOrder } from "../../../composables/pos/payments/usePurchaseOrder";
 import ItemsSelector from "../items/ItemsSelector.vue";
-import PurchasePaymentDialog from "./PurchasePaymentDialog.vue";
 import PurchaseDraftDialog from "./PurchaseDraftDialog.vue";
 import PurchaseManagementDialog from "./PurchaseManagementDialog.vue";
 import SupplierDialog from "../dialogs/purchase/SupplierDialog.vue";
 import PurchaseHeader from "./PurchaseHeader.vue";
 import PurchaseItemsTable from "./PurchaseItemsTable.vue";
 import { computed, ref, watch, onMounted, onBeforeUnmount, inject } from "vue";
+import { useRouter } from "vue-router";
+import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
 import { extractPurchaseServerError, purchaseCurrencySymbol } from "./purchaseFormatting";
 
 export default {
 	mixins: [format],
 	components: {
 		ItemsSelector,
-		PurchasePaymentDialog,
 		PurchaseDraftDialog,
 		PurchaseManagementDialog,
 		SupplierDialog,
@@ -215,6 +238,8 @@ export default {
 		const toastStore = useToastStore();
 		const itemsStore = useItemsStore();
 		const eventBus = inject("eventBus");
+		const router = useRouter();
+		const workspaceRoot = ref(null);
 
 		const pos_profile = ref({});
 		const receiveNow = ref(false);
@@ -222,6 +247,7 @@ export default {
 		const {
 			purchaseItems,
 			purchaseOrderName,
+			purchaseOrderModified,
 			supplier,
 			warehouse,
 			transactionDate,
@@ -254,11 +280,9 @@ export default {
 		const draftDialog = ref(false);
 		const managementDialog = ref(false);
 		const draftSaveLoading = ref(false);
-		const paymentDialog = ref(false);
 		const supplierGroups = ref([]);
 		const warehouseOptions = ref([]);
 		const warehouseLoading = ref(false);
-		const payments = ref([]);
 		const purchaseOrderProgress = ref({});
 		const totalQty = computed(() =>
 			purchaseItems.value.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
@@ -349,12 +373,28 @@ export default {
 			purchaseOrderProgress.value = {};
 		};
 
-		const openPaymentDialog = () => {
-			if (!validatePurchaseOrderForm()) {
+		const openSellingWorkspace = () => router.push("/pos");
+
+		const focusItemSearch = () =>
+			focusFirstKeyboardTarget(
+				workspaceRoot.value?.querySelector(".purchase-selector-column"),
+				"input[type='search'], input",
+			);
+
+		const handleWorkspaceKeydown = (event) => {
+			if (event.key === "F2") {
+				event.preventDefault();
+				focusItemSearch();
 				return;
 			}
-			errorMessage.value = "";
-			paymentDialog.value = true;
+
+			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+				event.preventDefault();
+				if (!saveAndClearDisabled.value) void saveDraft();
+				return;
+			}
+
+			moveFocusByArrow(event, { root: workspaceRoot.value });
 		};
 
 		const validatePurchaseOrderForm = () => {
@@ -374,16 +414,10 @@ export default {
 			return true;
 		};
 
-		const handlePaymentSubmit = ({ payments: p, print, print_format, print_invoice }) => {
-			payments.value = p;
-			paymentDialog.value = false;
-			submitPurchaseOrder(print, print_format, print_invoice);
-		};
-
 		const extractServerError = (error) =>
 			extractPurchaseServerError(error, __("Unable to create purchase order"));
 
-		const buildPurchaseOrderPayload = ({ submit = true } = {}) => {
+		const buildPurchaseOrderPayload = () => {
 			const resolvedSupplier =
 				typeof supplier.value === "object" && supplier.value !== null
 					? supplier.value.name || supplier.value.supplier_name || ""
@@ -391,6 +425,7 @@ export default {
 
 			return {
 				purchase_order: purchaseOrderName.value,
+				expected_modified: purchaseOrderModified.value,
 				supplier: resolvedSupplier,
 				company: pos_profile.value.company,
 				warehouse: warehouse.value,
@@ -398,12 +433,10 @@ export default {
 				buying_price_list: supplierPriceList.value,
 				transaction_date: normalizeDateForBackend(transactionDate.value),
 				schedule_date: normalizeDateForBackend(scheduleDate.value),
-				submit: submit ? 1 : 0,
-				receive: submit && receiveNow.value ? 1 : 0,
-				create_invoice: submit && createInvoice.value ? 1 : 0,
+				submit: 0,
 				pos_profile: pos_profile.value,
-				payments: submit ? payments.value : [],
 				items: purchaseItems.value.map((item) => ({
+					name: item.name,
 					item_code: item.item_code,
 					item_name: item.item_name,
 					stock_uom: item.stock_uom,
@@ -411,10 +444,6 @@ export default {
 					conversion_factor: item.conversion_factor,
 					qty: item.qty,
 					rate: item.rate,
-					received_qty: submit && receiveNow.value ? item.received_qty : undefined,
-					invoice_qty:
-						submit && createInvoice.value ? item.pending_bill_qty || item.qty : undefined,
-					bill_qty: submit && createInvoice.value ? item.pending_bill_qty || item.qty : undefined,
 					warehouse: warehouse.value || item.warehouse,
 				})),
 			};
@@ -429,13 +458,19 @@ export default {
 			try {
 				const { message } = await frappe.call({
 					method: "posawesome.posawesome.api.purchase_orders.create_purchase_order",
-					args: { data: buildPurchaseOrderPayload({ submit: false }) },
+					args: { data: buildPurchaseOrderPayload() },
 				});
 				if (message?.purchase_order) {
 					const savedName = message.purchase_order;
-					clearPurchaseForm();
+					purchaseOrderName.value = savedName;
+					purchaseOrderModified.value = message.modified || purchaseOrderModified.value;
+					(message.items || []).forEach((savedRow, index) => {
+						if (purchaseItems.value[index]) {
+							purchaseItems.value[index].name = savedRow.name;
+						}
+					});
 					toastStore.show({
-						title: __("Purchase Order {0} saved and cleared", [savedName]),
+						title: __("Purchase Order {0} saved as draft", [savedName]),
 						color: "success",
 					});
 				}
@@ -458,6 +493,7 @@ export default {
 			if (!draft) return;
 
 			purchaseOrderName.value = draft.name || null;
+			purchaseOrderModified.value = draft.modified || null;
 			purchaseOrderProgress.value = {
 				docstatus: Number(draft.docstatus || 0),
 				per_received: Number(draft.per_received || 0),
@@ -482,7 +518,6 @@ export default {
 			priceListCurrency.value = draft.currency || priceListCurrency.value;
 			receiveNow.value = false;
 			createInvoice.value = false;
-			payments.value = [];
 			errorMessage.value = "";
 
 			purchaseItems.value = (draft.items || []).map((item) => {
@@ -496,6 +531,7 @@ export default {
 						: Number(item.qty || 0);
 				return {
 					line_id: generateLineId(),
+					name: item.name,
 					item_code: item.item_code,
 					item_name: item.item_name || item.item_code,
 					stock_uom: item.stock_uom,
@@ -511,6 +547,8 @@ export default {
 					standard_rate: Number(item.standard_rate || 0),
 					received_qty: pendingReceiptQty,
 					receivedQtyManual: false,
+					discount_percentage: Number(item.discount_percentage || 0),
+					discount_amount: Number(item.discount_amount || 0),
 					warehouse: item.warehouse,
 					ordered_qty: Number(item.ordered_qty || item.qty || 0),
 					pending_receipt_qty: pendingReceiptQty,
@@ -528,43 +566,6 @@ export default {
 			}
 
 			toastStore.show({ title: __("Purchase Order draft loaded"), color: "success" });
-		};
-
-		const submitPurchaseOrder = async (print = false, printFormat = null, printInvoice = false) => {
-			if (!validatePurchaseOrderForm()) {
-				return;
-			}
-			submitLoading.value = true;
-			try {
-				const payload = buildPurchaseOrderPayload({ submit: true });
-				const { message } = await frappe.call({
-					method: "posawesome.posawesome.api.purchase_orders.create_purchase_order",
-					args: { data: payload },
-				});
-				if (message?.purchase_order) {
-					toastStore.show({ title: __("Purchase Order created"), color: "success" });
-					if (print) {
-						let doctype =
-							printInvoice && message.purchase_invoice ? "Purchase Invoice" : "Purchase Order";
-						let docname =
-							printInvoice && message.purchase_invoice
-								? message.purchase_invoice
-								: message.purchase_order;
-						const formatName =
-							printFormat || pos_profile.value.print_format_for_purchase || "Standard";
-						const printUrl = frappe.urllib.get_full_url(
-							`/printview?doctype=${doctype}&name=${docname}&print_format=${encodeURIComponent(formatName)}`,
-						);
-						window.open(printUrl, "_blank")?.focus();
-					}
-					clearPurchaseForm();
-				}
-			} catch (error) {
-				errorMessage.value = extractServerError(error);
-				toastStore.show({ title: errorMessage.value, color: "error" });
-			} finally {
-				submitLoading.value = false;
-			}
 		};
 
 		onMounted(async () => {
@@ -614,10 +615,12 @@ export default {
 		});
 
 		return {
+			workspaceRoot,
 			pos_profile,
 			receiveNow,
 			purchaseItems,
 			purchaseOrderName,
+			purchaseOrderModified,
 			supplier,
 			warehouse,
 			transactionDate,
@@ -643,10 +646,11 @@ export default {
 			removeItem,
 			resetForm,
 			clearPurchaseForm,
+			openSellingWorkspace,
+			handleWorkspaceKeydown,
 			supplierOptions,
 			supplierLoading,
 			supplierDialog,
-			paymentDialog,
 			supplierGroups,
 			warehouseOptions,
 			warehouseLoading,
@@ -654,8 +658,6 @@ export default {
 			managementDialog,
 			handleSupplierSearch,
 			handleSupplierCreated,
-			openPaymentDialog,
-			handlePaymentSubmit,
 			saveDraft,
 			handleDraftSelected,
 			toastStore,
@@ -693,6 +695,77 @@ export default {
 </script>
 
 <style scoped>
+.purchase-workspace {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.purchase-workspace__body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.purchase-mode-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 6px 12px;
+	border-bottom: 1px solid var(--pos-border);
+	background: var(--pos-surface-raised);
+}
+
+.purchase-mode-switch {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.purchase-mode-switch__button {
+	min-height: 36px !important;
+	text-transform: none !important;
+}
+
+.purchase-mode-bar__hint {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.76rem;
+	color: var(--pos-text-muted);
+}
+
+.purchase-mode-bar__hint kbd {
+	padding: 1px 5px;
+	border: 1px solid var(--pos-border);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: var(--pos-surface-variant);
+	font: inherit;
+	font-weight: 700;
+}
+
+.purchase-selector-column,
+.purchase-editor-column {
+	min-height: 0;
+	overflow: hidden;
+}
+
+.purchase-title-bar {
+	min-height: 52px;
+	padding: 6px 12px !important;
+}
+
+.purchase-title-bar__subtitle {
+	opacity: 0.82;
+}
+
+.purchase-editor-body {
+	min-height: 0;
+	overflow-y: auto;
+}
+
 .cursor-pointer {
 	cursor: pointer;
 }
@@ -702,7 +775,7 @@ export default {
 	align-items: center;
 	justify-content: space-between;
 	gap: 16px;
-	padding: 16px;
+	padding: 8px 12px;
 	border-top: 1px solid var(--pos-border);
 	background: var(--pos-surface-raised);
 	background: color-mix(in srgb, var(--pos-surface-raised) 94%, rgb(var(--v-theme-primary)) 6%);
@@ -727,18 +800,16 @@ export default {
 }
 
 .purchase-action-bar__buttons {
-	flex: 0 0 min(442px, 42vw);
-	margin: 0;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	flex: 1 1 auto;
 	margin-inline-start: auto;
 }
 
-.purchase-action-bar__buttons :deep(.v-col) {
-	padding-top: 4px;
-	padding-bottom: 4px;
-}
-
 .purchase-summary-btn {
-	min-height: 46px !important;
+	min-height: 40px !important;
 	text-transform: none !important;
 	transition: all 0.2s ease !important;
 	position: relative;
@@ -798,18 +869,6 @@ export default {
 	transform: translateY(0);
 }
 
-.purchase-pay-btn {
-	min-height: 58px !important;
-	font-weight: 600 !important;
-	font-size: 1.1rem !important;
-}
-
-.purchase-pay-btn:hover {
-	background: linear-gradient(135deg, #45a049, #3d8b40) !important;
-	box-shadow: 0 6px 16px rgba(76, 175, 80, 0.4) !important;
-	transform: translateY(-2px);
-}
-
 .purchase-summary-btn :deep(.v-btn__overlay),
 .purchase-summary-btn :deep(.v-btn__underlay) {
 	display: none !important;
@@ -825,6 +884,10 @@ export default {
 		flex: 1 1 auto;
 		width: 100%;
 		margin-inline-start: 0;
+	}
+
+	.purchase-mode-bar__hint {
+		display: none;
 	}
 
 	.purchase-summary-btn {

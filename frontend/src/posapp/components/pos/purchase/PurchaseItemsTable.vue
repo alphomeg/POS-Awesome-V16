@@ -1,15 +1,20 @@
 <template>
 	<v-data-table
+		ref="table"
 		:headers="headers"
 		:items="items"
 		item-key="line_id"
-		class="elevation-1 border rounded"
+		class="purchase-items-grid elevation-1 border rounded"
 		density="compact"
 		hide-default-footer
 		:items-per-page="-1"
+		fixed-header
+		height="396"
+		:data-visible-row-capacity="VISIBLE_ROW_CAPACITY"
+		@keydown.capture="handleGridKeydown"
 	>
 		<template v-slot:item.item_name="{ item }">
-			<div class="py-1">
+			<div class="purchase-item-identity" tabindex="0" data-pos-keyboard-target>
 				<div class="font-weight-bold">{{ item.item_name }}</div>
 				<div class="text-caption text-medium-emphasis">
 					{{ item.item_code }}
@@ -40,6 +45,8 @@
 					class="pos-table__editor-input uom-select"
 					:class="{ 'uom-display-mode': !item._isEditingUom }"
 					hide-details
+					data-pos-keyboard-target
+					data-pos-keyboard-native-arrows
 					@focus="item._isEditingUom = true"
 					@blur="item._isEditingUom = false"
 				></v-select>
@@ -70,7 +77,12 @@
 				<div
 					v-if="!item._isEditingQty"
 					class="pos-table__qty-display"
+					tabindex="0"
+					role="button"
+					data-pos-keyboard-target
 					@click.stop="openQtyEdit(item)"
+					@keydown.enter.stop.prevent="openQtyEdit(item)"
+					@keydown.space.stop.prevent="openQtyEdit(item)"
 				>
 					{{ formatNumber(item.qty) }}
 				</div>
@@ -82,6 +94,7 @@
 					class="pos-table__qty-input"
 					@blur="closeQtyEdit(item)"
 					@keydown.enter.prevent="closeQtyEdit(item)"
+					@keydown.esc.prevent="cancelQtyEdit(item)"
 					@click.stop
 					autofocus
 					type="number"
@@ -104,7 +117,12 @@
 				<div
 					v-if="!item._isEditingRate"
 					class="pos-table__editor-display"
+					tabindex="0"
+					role="button"
+					data-pos-keyboard-target
 					@click.stop="openRateEdit(item)"
+					@keydown.enter.stop.prevent="openRateEdit(item)"
+					@keydown.space.stop.prevent="openRateEdit(item)"
 				>
 					<span class="currency-symbol">{{ currencySymbol }}</span>
 					<span class="amount-value">{{ formatCurrency(item.rate) }}</span>
@@ -117,6 +135,7 @@
 					class="pos-table__editor-input"
 					@blur="closeRateEdit(item)"
 					@keydown.enter.prevent="closeRateEdit(item)"
+					@keydown.esc.prevent="cancelRateEdit(item)"
 					@click.stop
 					autofocus
 					type="number"
@@ -154,13 +173,32 @@
 				size="small"
 				@click="$emit('remove-item', item)"
 				:aria-label="__('Remove item')"
+				data-pos-keyboard-target
 			></v-btn>
 		</template>
 
+		<template #body.append>
+			<tr
+				v-for="slot in emptyRowCount"
+				:key="`empty-purchase-row-${slot}`"
+				class="purchase-items-grid__empty-row"
+				aria-hidden="true"
+			>
+				<td :colspan="headers.length">
+					<span v-if="slot === 1 && !items.length">{{
+						__("Scan or search an item to begin")
+					}}</span>
+				</td>
+			</tr>
+		</template>
 	</v-data-table>
 </template>
 
 <script>
+import { moveFocusByArrow } from "../../../utils/keyboardNavigation";
+
+export const VISIBLE_ROW_CAPACITY = 10;
+
 export default {
 	props: {
 		headers: Array,
@@ -171,7 +209,18 @@ export default {
 		formatNumber: Function,
 	},
 	emits: ["update-uom", "update-qty", "update-rate", "update-received-qty", "remove-item"],
+	computed: {
+		emptyRowCount() {
+			return Math.max(VISIBLE_ROW_CAPACITY - this.items.length, 0);
+		},
+		VISIBLE_ROW_CAPACITY() {
+			return VISIBLE_ROW_CAPACITY;
+		},
+	},
 	methods: {
+		handleGridKeydown(event) {
+			moveFocusByArrow(event, { root: this.$refs.table?.$el || null });
+		},
 		changeUom(item, direction) {
 			if (!item.item_uoms || item.item_uoms.length <= 1) return;
 			const uoms = item.item_uoms.map((u) => u.uom);
@@ -204,6 +253,10 @@ export default {
 				item._isEditingQty = false;
 			}
 		},
+		cancelQtyEdit(item) {
+			item._editingQtyValue = "";
+			item._isEditingQty = false;
+		},
 		openRateEdit(item) {
 			item._isEditingRate = true;
 			item._editingRateValue = "";
@@ -219,11 +272,62 @@ export default {
 				item._isEditingRate = false;
 			}
 		},
+		cancelRateEdit(item) {
+			item._editingRateValue = "";
+			item._isEditingRate = false;
+		},
 	},
 };
 </script>
 
 <style scoped>
+.purchase-items-grid {
+	--purchase-grid-header-height: 36px;
+	--purchase-grid-row-height: 36px;
+	background: var(--pos-surface-raised);
+}
+
+.purchase-items-grid :deep(.v-table__wrapper) {
+	max-height: 396px;
+	overflow-y: auto;
+}
+
+.purchase-items-grid :deep(thead tr),
+.purchase-items-grid :deep(thead th) {
+	height: var(--purchase-grid-header-height) !important;
+}
+
+.purchase-items-grid :deep(tbody tr),
+.purchase-items-grid :deep(tbody td) {
+	height: var(--purchase-grid-row-height) !important;
+}
+
+.purchase-items-grid :deep(tbody td) {
+	padding-block: 0 !important;
+}
+
+.purchase-items-grid__empty-row td {
+	border-bottom: 1px solid var(--pos-border-light);
+	border-bottom: 1px solid color-mix(in srgb, var(--pos-border-light) 60%, transparent);
+	color: var(--pos-text-muted);
+	font-size: 0.8rem;
+	text-align: center;
+}
+
+.purchase-item-identity {
+	min-width: 0;
+	outline: none;
+}
+
+.purchase-item-identity:focus-visible,
+.pos-table__qty-display:focus-visible,
+.pos-table__editor-display:focus-visible {
+	box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), 0.28);
+	box-shadow: 0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 28%, transparent);
+	outline: 2px solid rgb(var(--v-theme-primary));
+	outline-offset: 1px;
+}
+
 .pos-table__qty-counter {
 	display: flex;
 	align-items: center;

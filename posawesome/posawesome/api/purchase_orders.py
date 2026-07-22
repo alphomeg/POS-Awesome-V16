@@ -10,29 +10,13 @@ from erpnext.accounts.party import get_party_account
 
 
 from . import utils as pos_utils
+from .pos_access import get_authorized_pos_profile
 
 
 def _resolve_pos_profile(pos_profile):
-    if isinstance(pos_profile, dict):
-        return pos_profile
-
-    if isinstance(pos_profile, str):
-        raw_value = pos_profile.strip()
-        if raw_value:
-            try:
-                decoded = json.loads(raw_value)
-            except Exception:
-                decoded = raw_value
-
-            if isinstance(decoded, dict):
-                return decoded
-            if isinstance(decoded, str) and decoded:
-                return frappe.get_doc("POS Profile", decoded).as_dict()
-
-    profile = pos_utils.get_active_pos_profile()
-    if not profile:
-        frappe.throw(_("POS Profile is required to create purchase documents."))
-    return profile
+    # Never trust feature flags or company details sent by the browser. Resolve
+    # the named profile again and verify that the authenticated user is assigned.
+    return get_authorized_pos_profile(pos_profile)
 
 
 def _assert_pos_write_allowed(profile, company=None):
@@ -906,6 +890,15 @@ def _get_purchase_order_doc(payload, company):
     if company and po_doc.company and po_doc.company != company:
         frappe.throw(_("Purchase Order {0} does not belong to company {1}.").format(po_name, company))
 
+    expected_modified = str(payload.get("expected_modified") or "").strip()
+    current_modified = str(po_doc.get("modified") or "").strip()
+    if expected_modified and expected_modified != current_modified:
+        frappe.throw(
+            _("Purchase Order {0} changed after it was loaded. Reload the draft before saving.").format(
+                po_name
+            )
+        )
+
     return po_doc
 
 
@@ -936,7 +929,21 @@ def _set_purchase_order_items(po_doc, items, warehouse, schedule_date):
     else:
         item_map = {}
 
-    po_doc.set("items", [])
+    existing_rows = {
+        row.name: row
+        for row in (po_doc.get("items") or [])
+        if row.get("name")
+    }
+    requested_existing_names = {
+        row.get("name") for row in items if row.get("name")
+    }
+    unknown_names = requested_existing_names.difference(existing_rows)
+    if unknown_names:
+        frappe.throw(
+            _("One or more Purchase Order item rows are no longer available. Reload the draft and try again.")
+        )
+
+    resolved_rows = []
 
     for row in items:
         item_code = row.get("item_code")
@@ -955,20 +962,27 @@ def _set_purchase_order_items(po_doc, items, warehouse, schedule_date):
         if not conversion_factor:
             conversion_factor = 1
 
-        po_doc.append(
-            "items",
-            {
-                "item_code": item_code,
-                "item_name": item_name,
-                "qty": qty,
-                "uom": uom,
-                "stock_uom": stock_uom,
-                "conversion_factor": conversion_factor,
-                "rate": flt(row.get("rate")),
-                "warehouse": row.get("warehouse") or warehouse,
-                "schedule_date": schedule_date,
-            },
-        )
+        child = existing_rows.get(row.get("name"))
+        values = {
+            "item_code": item_code,
+            "item_name": item_name,
+            "qty": qty,
+            "uom": uom,
+            "stock_uom": stock_uom,
+            "conversion_factor": conversion_factor,
+            "rate": flt(row.get("rate")),
+            "warehouse": row.get("warehouse") or warehouse,
+            "schedule_date": schedule_date,
+        }
+        if child:
+            child.update(values)
+        else:
+            child = po_doc.append("items", values)
+        resolved_rows.append(child)
+
+    # Keep full child documents for retained rows so ERP-only fields (discounts,
+    # accounting dimensions, links and row identity) survive a POS draft edit.
+    po_doc.set("items", resolved_rows)
 
     if not po_doc.items:
         frappe.throw(_("Purchase order requires at least one item with quantity."))
@@ -1015,7 +1029,9 @@ def create_purchase_order(data):
     _assert_pos_write_allowed(profile, company=company)
     _ensure_allowed(profile, "posa_allow_purchase_order", _("Purchase orders"))
 
-    submit_order = cint(payload.get("submit", 1))
+    # Draft is the safe default. Submission must always be an explicit,
+    # separately authorized action from the guided purchasing flow.
+    submit_order = cint(payload.get("submit", 0))
     receive_now = cint(payload.get("receive")) if submit_order else 0
     if receive_now:
         _ensure_allowed(profile, "posa_allow_purchase_receipt", _("Receive stock"))
@@ -1100,6 +1116,15 @@ def create_purchase_order(data):
         return {
             "purchase_order": po_doc.name,
             "draft": 1,
+            "modified": str(po_doc.modified),
+            "items": [
+                {
+                    "name": row.name,
+                    "item_code": row.item_code,
+                    "idx": row.idx,
+                }
+                for row in po_doc.items
+            ],
         }
 
     try:

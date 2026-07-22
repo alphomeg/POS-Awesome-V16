@@ -7,6 +7,7 @@ declare const __: (_str: string, _args?: any[]) => string;
 
 export interface PurchaseItem {
 	line_id: string;
+	name?: string;
 	item_code: string;
 	item_name: string;
 	stock_uom: string;
@@ -20,6 +21,8 @@ export interface PurchaseItem {
 	standard_rate: number;
 	received_qty: number;
 	receivedQtyManual: boolean;
+	discount_percentage?: number;
+	discount_amount?: number;
 	warehouse?: string;
 	ordered_qty?: number;
 	pending_receipt_qty?: number;
@@ -43,6 +46,7 @@ export function usePurchaseOrder(options: {
 
 	const purchaseItems = ref<PurchaseItem[]>([]);
 	const purchaseOrderName = ref<string | null>(null);
+	const purchaseOrderModified = ref<string | null>(null);
 	const supplier = ref<string | null>(null);
 	const warehouse = ref<string | null>(null);
 	const transactionDate = ref<string | null>(null);
@@ -80,7 +84,9 @@ export function usePurchaseOrder(options: {
 				supplierPriceList.value = message.buying_price_list || null;
 				priceListCurrency.value = message.price_list_currency || null;
 				supplierCurrency.value =
-					message.default_currency || posProfile.value?.currency || null;
+					message.default_currency ||
+					posProfile.value?.currency ||
+					null;
 			}
 			return message;
 		} catch (e) {
@@ -128,7 +134,8 @@ export function usePurchaseOrder(options: {
 			}
 
 			// Try fetching price from the active buying price list
-			const activePriceList = supplierPriceList.value || itemsStore.activePriceList;
+			const activePriceList =
+				supplierPriceList.value || itemsStore.activePriceList;
 			if (activePriceList) {
 				try {
 					const { message } = await frappe.call({
@@ -139,7 +146,11 @@ export function usePurchaseOrder(options: {
 							uom: uom,
 						},
 					});
-					if (message !== undefined && message !== null && message > 0) {
+					if (
+						message !== undefined &&
+						message !== null &&
+						message > 0
+					) {
 						rate = message;
 					}
 				} catch (e) {
@@ -185,7 +196,8 @@ export function usePurchaseOrder(options: {
 
 		let priceFound = false;
 		try {
-			const priceList = supplierPriceList.value || itemsStore.activePriceList;
+			const priceList =
+				supplierPriceList.value || itemsStore.activePriceList;
 			if (priceList) {
 				const { message } = await frappe.call({
 					method: "posawesome.posawesome.api.items.get_price_for_uom",
@@ -238,6 +250,7 @@ export function usePurchaseOrder(options: {
 
 	const resetForm = () => {
 		purchaseOrderName.value = null;
+		purchaseOrderModified.value = null;
 		supplier.value = null;
 		supplierPriceList.value = null;
 		priceListCurrency.value = null;
@@ -258,6 +271,7 @@ export function usePurchaseOrder(options: {
 	return {
 		purchaseItems,
 		purchaseOrderName,
+		purchaseOrderModified,
 		supplier,
 		warehouse,
 		transactionDate,

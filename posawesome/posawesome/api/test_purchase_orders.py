@@ -124,6 +124,16 @@ def _install_stubs():
     utils_module.get_default_warehouse = lambda company=None: "Stores - TC"
     sys.modules["posawesome.posawesome.api.utils"] = utils_module
 
+    pos_access_module = types.ModuleType("posawesome.posawesome.api.pos_access")
+    pos_access_module.get_authorized_pos_profile = lambda profile=None, company=None: {
+        "name": "POS-TEST",
+        "warehouse": "Stores - TC",
+        "company": "Test Co",
+        "posa_allow_purchase_order": 1,
+        "posa_allow_purchase_receipt": 1,
+    }
+    sys.modules["posawesome.posawesome.api.pos_access"] = pos_access_module
+
 
 def _load_module():
     module_name = "posawesome.posawesome.api.purchase_orders"
@@ -161,7 +171,12 @@ class FakeDoc(AttrDict):
         self.submitted = False
 
     def append(self, table, row):
-        self.setdefault(table, []).append(AttrDict(row))
+        child = AttrDict(row)
+        self.setdefault(table, []).append(child)
+        return child
+
+    def set(self, fieldname, value):
+        self[fieldname] = value
 
     def insert(self):
         self.inserted = True
@@ -235,6 +250,79 @@ class TestPurchaseOrdersApi(unittest.TestCase):
 
         self.assertEqual(self.module._normalize_date_for_backend("invalid date", fallback), fallback)
         self.assertEqual(self.module._normalize_date_for_backend("2026-02-30", fallback), fallback)
+
+    def test_updating_purchase_items_preserves_existing_erp_row_fields(self):
+        retained = AttrDict(
+            {
+                "name": "POI-001",
+                "item_code": "ITEM-001",
+                "qty": 2,
+                "discount_percentage": 7.5,
+                "cost_center": "Main - TC",
+            }
+        )
+        removed = AttrDict({"name": "POI-REMOVED", "item_code": "ITEM-002", "qty": 1})
+        po_doc = FakeDoc({"items": [retained, removed]})
+        original_get_all = self.module.frappe.get_all
+        self.module.frappe.get_all = lambda *args, **kwargs: [
+            AttrDict({"name": "ITEM-001", "item_name": "Item One", "stock_uom": "Nos"})
+        ]
+
+        try:
+            self.module._set_purchase_order_items(
+                po_doc,
+                [{"name": "POI-001", "item_code": "ITEM-001", "qty": 5, "rate": 12}],
+                "Stores - TC",
+                "2026-04-20",
+            )
+        finally:
+            self.module.frappe.get_all = original_get_all
+
+        self.assertEqual(len(po_doc.items), 1)
+        self.assertIs(po_doc.items[0], retained)
+        self.assertEqual(retained.qty, 5)
+        self.assertEqual(retained.discount_percentage, 7.5)
+        self.assertEqual(retained.cost_center, "Main - TC")
+
+    def test_updating_purchase_items_rejects_unknown_child_row_identity(self):
+        po_doc = FakeDoc(
+            {"items": [AttrDict({"name": "POI-001", "item_code": "ITEM-001", "qty": 2})]}
+        )
+
+        with self.assertRaisesRegex(Exception, "no longer available"):
+            self.module._set_purchase_order_items(
+                po_doc,
+                [{"name": "POI-OTHER", "item_code": "ITEM-001", "qty": 5, "rate": 12}],
+                "Stores - TC",
+                "2026-04-20",
+            )
+
+    def test_loading_draft_for_update_rejects_stale_modified_value(self):
+        po_doc = FakeDoc(
+            {
+                "name": "PO-001",
+                "company": "Test Co",
+                "docstatus": 0,
+                "modified": "2026-04-17 10:00:00.000000",
+            }
+        )
+        original_exists = self.module.frappe.db.exists
+        original_get_doc = self.module.frappe.get_doc
+        self.module.frappe.db.exists = lambda doctype, name: doctype == "Purchase Order"
+        self.module.frappe.get_doc = lambda *args, **kwargs: po_doc
+
+        try:
+            with self.assertRaisesRegex(Exception, "changed after it was loaded"):
+                self.module._get_purchase_order_doc(
+                    {
+                        "purchase_order": "PO-001",
+                        "expected_modified": "2026-04-17 09:00:00.000000",
+                    },
+                    "Test Co",
+                )
+        finally:
+            self.module.frappe.db.exists = original_exists
+            self.module.frappe.get_doc = original_get_doc
 
     def test_create_purchase_receipt_defaults_missing_payload_row(self):
         po_doc = AttrDict(

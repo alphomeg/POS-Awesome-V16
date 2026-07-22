@@ -1,17 +1,17 @@
 <template>
 	<v-dialog v-model="dialog" max-width="980" scrollable>
-		<v-card class="purchase-drafts-card pos-themed-card">
+		<v-card
+			ref="draftDialogRoot"
+			class="purchase-drafts-card pos-themed-card"
+			data-pos-keyboard-root
+			@keydown.capture="handleDraftDialogKeydown"
+		>
 			<v-card-title class="purchase-drafts-card__title">
 				<div class="d-flex align-center ga-2">
 					<v-icon color="primary" icon="mdi-file-document-edit-outline" />
 					<span class="text-h6">{{ __("Select Draft Purchase Order") }}</span>
 				</div>
-				<v-btn
-					icon="mdi-close"
-					variant="text"
-					:aria-label="__('Close')"
-					@click="dialog = false"
-				/>
+				<v-btn icon="mdi-close" variant="text" :aria-label="__('Close')" @click="dialog = false" />
 			</v-card-title>
 
 			<v-card-text class="purchase-drafts-card__body">
@@ -166,7 +166,12 @@
 	</v-dialog>
 
 	<v-dialog v-model="previewDialog" max-width="820" scrollable>
-		<v-card class="purchase-preview-card pos-themed-card">
+		<v-card
+			ref="previewDialogRoot"
+			class="purchase-preview-card pos-themed-card"
+			data-pos-keyboard-root
+			@keydown.capture="handlePreviewDialogKeydown"
+		>
 			<v-card-title class="purchase-preview-card__title">
 				<div>
 					<div class="text-h6">{{ previewDoc?.name || __("Purchase Order") }}</div>
@@ -199,7 +204,8 @@
 					<div>
 						<span>{{ __("Total") }}</span>
 						<strong>
-							{{ currencySymbol(previewDoc.currency) }} {{ formatAmount(previewDoc.grand_total) }}
+							{{ currencySymbol(previewDoc.currency) }}
+							{{ formatAmount(previewDoc.grand_total) }}
 						</strong>
 					</div>
 				</div>
@@ -248,13 +254,10 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { normalizeDateForBackend } from "../../../format";
-import {
-	formatPurchaseAmount,
-	formatPurchaseDate,
-	purchaseCurrencySymbol,
-} from "./purchaseFormatting";
+import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
+import { formatPurchaseAmount, formatPurchaseDate, purchaseCurrencySymbol } from "./purchaseFormatting";
 
 const __ = window.__ || ((text) => text);
 
@@ -297,6 +300,8 @@ const previewName = ref("");
 const previewDialog = ref(false);
 const previewDoc = ref(null);
 const errorMessage = ref("");
+const draftDialogRoot = ref(null);
+const previewDialogRoot = ref(null);
 
 const headers = [
 	{ title: __("Purchase Order"), key: "name", align: "start", sortable: true },
@@ -318,11 +323,36 @@ const previewHeaders = [
 watch(dialog, (value) => {
 	if (value) {
 		searchDrafts();
+		nextTick(() => focusFirstKeyboardTarget(draftDialogRoot.value, "input"));
 	} else {
 		errorMessage.value = "";
 		selectedName.value = "";
 	}
 });
+
+watch(previewDialog, (value) => {
+	if (value) {
+		nextTick(() => focusFirstKeyboardTarget(previewDialogRoot.value));
+	}
+});
+
+function handleDraftDialogKeydown(event) {
+	if (event.key === "Escape" && !previewDialog.value) {
+		event.preventDefault();
+		dialog.value = false;
+		return;
+	}
+	moveFocusByArrow(event, { root: draftDialogRoot.value });
+}
+
+function handlePreviewDialogKeydown(event) {
+	if (event.key === "Escape") {
+		event.preventDefault();
+		previewDialog.value = false;
+		return;
+	}
+	moveFocusByArrow(event, { root: previewDialogRoot.value });
+}
 
 async function fetchDraftDoc(name) {
 	const { message } = await frappe.call({

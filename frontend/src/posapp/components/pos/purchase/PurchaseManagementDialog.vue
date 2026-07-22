@@ -1,6 +1,12 @@
 <template>
 	<v-dialog v-model="dialog" max-width="1180px" scrollable>
-		<v-card class="purchase-management-card pos-themed-card" variant="flat">
+		<v-card
+			ref="managementDialogRoot"
+			class="purchase-management-card pos-themed-card"
+			variant="flat"
+			data-pos-keyboard-root
+			@keydown.capture="handleManagementKeydown"
+		>
 			<v-card-title class="purchase-management-card__title">
 				<div>
 					<div class="text-h5 text-primary">{{ __("Purchase Management") }}</div>
@@ -214,7 +220,12 @@
 		</v-card>
 
 		<v-dialog v-model="previewDialog" max-width="900px" scrollable>
-			<v-card class="pos-themed-card">
+			<v-card
+				ref="previewDialogRoot"
+				class="pos-themed-card"
+				data-pos-keyboard-root
+				@keydown.capture="handlePreviewKeydown"
+			>
 				<v-card-title class="d-flex align-center ga-2">
 					<div>
 						<div class="text-h6">{{ previewDoc?.name || __("Purchase Order") }}</div>
@@ -264,7 +275,12 @@
 		</v-dialog>
 
 		<v-dialog v-model="actionDialog" max-width="940px" scrollable persistent>
-			<v-card class="pos-themed-card purchase-action-dialog">
+			<v-card
+				ref="actionDialogRoot"
+				class="pos-themed-card purchase-action-dialog"
+				data-pos-keyboard-root
+				@keydown.capture="handleActionKeydown"
+			>
 				<v-card-title class="purchase-action-dialog__title">
 					<div>
 						<div class="text-h6">{{ actionTitle }}</div>
@@ -397,9 +413,10 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { normalizeDateForBackend } from "../../../format";
 import { useToastStore } from "../../../stores/toastStore";
+import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
 import PurchasePaymentDialog from "./PurchasePaymentDialog.vue";
 import {
 	extractPurchaseServerError,
@@ -458,6 +475,9 @@ const actionOrder = ref(null);
 const actionDoc = ref(null);
 const actionDate = ref(todayDate());
 const actionRows = ref([]);
+const managementDialogRoot = ref(null);
+const previewDialogRoot = ref(null);
+const actionDialogRoot = ref(null);
 
 const headers = [
 	{ title: __("Purchase Order"), key: "name", align: "start", sortable: true },
@@ -513,6 +533,7 @@ const canSubmitAction = computed(() => !!actionDate.value && selectedActionQty.v
 watch(dialog, (value) => {
 	if (value) {
 		loadOrders();
+		nextTick(() => focusFirstKeyboardTarget(managementDialogRoot.value, "input"));
 	} else {
 		errorMessage.value = "";
 		previewDoc.value = null;
@@ -520,6 +541,41 @@ watch(dialog, (value) => {
 		closeActionDialog(true);
 	}
 });
+
+watch(previewDialog, (value) => {
+	if (value) nextTick(() => focusFirstKeyboardTarget(previewDialogRoot.value));
+});
+
+watch(actionDialog, (value) => {
+	if (value) nextTick(() => focusFirstKeyboardTarget(actionDialogRoot.value, "input"));
+});
+
+function handleManagementKeydown(event) {
+	if (event.key === "Escape" && !previewDialog.value && !actionDialog.value && !paymentDialog.value) {
+		event.preventDefault();
+		dialog.value = false;
+		return;
+	}
+	moveFocusByArrow(event, { root: managementDialogRoot.value });
+}
+
+function handlePreviewKeydown(event) {
+	if (event.key === "Escape") {
+		event.preventDefault();
+		previewDialog.value = false;
+		return;
+	}
+	moveFocusByArrow(event, { root: previewDialogRoot.value });
+}
+
+function handleActionKeydown(event) {
+	if (event.key === "Escape" && !actionLoading.value) {
+		event.preventDefault();
+		closeActionDialog();
+		return;
+	}
+	moveFocusByArrow(event, { root: actionDialogRoot.value });
+}
 
 watch(activeTab, () => {
 	if (dialog.value) loadOrders();

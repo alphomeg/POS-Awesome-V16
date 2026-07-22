@@ -325,7 +325,12 @@ export default {
 			baseItems: [
 				{ text: "POS", icon: "mdi-network-pos", to: "/pos" },
 				{ text: "Payments", icon: "mdi-credit-card", to: "/payments" },
-				{ text: "Purchase Order", icon: "mdi-cart-plus", to: "/orders" },
+				{
+					text: "Purchasing",
+					icon: "mdi-cart-arrow-down",
+					to: "/orders",
+					requiresPurchaseAccess: true,
+				},
 				{ text: "Barcode Printing", icon: "mdi-barcode", to: "/barcode" },
 			],
 			items: [],
@@ -581,7 +586,11 @@ export default {
 			}
 		},
 		updateNavigationItems() {
-			const items = this.baseItems.map((item) => ({ ...item, text: this.__(item.text) }));
+			const items = this.baseItems
+				.filter(
+					(item) => !item.requiresPurchaseAccess || !!this.posProfile?.posa_allow_purchase_order,
+				)
+				.map((item) => ({ ...item, text: this.__(item.text) }));
 			if (this.posProfile?.posa_use_gift_cards) {
 				items.splice(2, 0, {
 					text: this.__("Gift Cards"),

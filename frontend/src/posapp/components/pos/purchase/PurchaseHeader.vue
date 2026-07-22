@@ -1,7 +1,7 @@
 <template>
 	<v-container class="pa-0">
-		<v-row dense class="mb-2">
-			<v-col cols="12" md="6">
+		<v-row dense class="mb-0 purchase-header-row">
+			<v-col cols="12" md="4">
 				<v-autocomplete
 					:model-value="supplier"
 					@update:model-value="$emit('update:supplier', $event)"
@@ -36,7 +36,7 @@
 					</template>
 				</v-autocomplete>
 			</v-col>
-			<v-col cols="12" md="6">
+			<v-col cols="12" md="3">
 				<v-autocomplete
 					:model-value="warehouse"
 					@update:model-value="$emit('update:warehouse', $event)"
@@ -53,10 +53,7 @@
 					class="pos-themed-input"
 				/>
 			</v-col>
-		</v-row>
-
-		<v-row dense class="mb-4">
-			<v-col cols="6">
+			<v-col cols="6" md="2">
 				<VueDatePicker
 					:model-value="transactionDate"
 					@update:model-value="$emit('update:transactionDate', $event)"
@@ -68,7 +65,7 @@
 					class="pos-themed-input"
 				/>
 			</v-col>
-			<v-col cols="6">
+			<v-col cols="6" md="3">
 				<VueDatePicker
 					:model-value="scheduleDate"
 					@update:model-value="$emit('update:scheduleDate', $event)"
@@ -81,30 +78,6 @@
 				/>
 			</v-col>
 		</v-row>
-
-		<div class="d-flex gap-4 mb-4">
-			<v-switch
-				v-if="posProfile.posa_allow_purchase_receipt"
-				:model-value="receiveNow"
-				@update:model-value="$emit('update:receiveNow', $event)"
-				density="compact"
-				hide-details
-				color="success"
-				:disabled="receiveDisabled"
-				:label="receiveDisabled ? __('Received') : __('Receive now')"
-				class="ma-0"
-			></v-switch>
-			<v-switch
-				:model-value="createInvoice"
-				@update:model-value="$emit('update:createInvoice', $event)"
-				density="compact"
-				hide-details
-				color="primary"
-				:disabled="createInvoiceDisabled"
-				:label="createInvoiceDisabled ? __('Billed') : __('Create Bill')"
-				class="ma-0 ml-4"
-			></v-switch>
-		</div>
 	</v-container>
 </template>
 
@@ -138,3 +111,10 @@ export default {
 	],
 };
 </script>
+
+<style scoped>
+.purchase-header-row :deep(.v-field),
+.purchase-header-row :deep(.dp__input) {
+	min-height: 38px;
+}
+</style>

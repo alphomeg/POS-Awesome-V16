@@ -1,6 +1,12 @@
 <template>
 	<v-dialog v-model="dialog" max-width="600px" persistent>
-		<v-card class="pos-themed-card" style="max-height: 80vh; overflow: hidden">
+		<v-card
+			ref="paymentDialogRoot"
+			class="pos-themed-card"
+			style="max-height: 80vh; overflow: hidden"
+			data-pos-keyboard-root
+			@keydown.capture="handlePaymentKeydown"
+		>
 			<v-card-title class="bg-primary text-white d-flex align-center py-3">
 				<span class="text-h6">{{ __("Payment") }}</span>
 				<v-spacer></v-spacer>
@@ -210,9 +216,10 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { formatUtils } from "../../../format";
 import { getSmartTenderSuggestions } from "../../../../utils/smartTender";
+import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
 
 defineOptions({
 	name: "PurchasePaymentDialog",
@@ -248,6 +255,7 @@ const printFormats = ref([]);
 const selectedPrintFormat = ref(null);
 const printInvoice = ref(props.createInvoice);
 const loading = ref(false);
+const paymentDialogRoot = ref(null);
 
 const dialog = computed({
 	get() {
@@ -282,9 +290,19 @@ watch(
 			initializePayments();
 			fetchPrintFormats();
 			loading.value = false;
+			nextTick(() => focusFirstKeyboardTarget(paymentDialogRoot.value, "input:not([readonly])"));
 		}
 	},
 );
+
+function handlePaymentKeydown(event) {
+	if (event.key === "Escape" && !loading.value) {
+		event.preventDefault();
+		close();
+		return;
+	}
+	moveFocusByArrow(event, { root: paymentDialogRoot.value });
+}
 
 watch(printInvoice, () => {
 	fetchPrintFormats();
