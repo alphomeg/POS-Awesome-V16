@@ -4,7 +4,7 @@
 		@update:model-value="$emit('update:modelValue', $event)"
 		max-width="520px"
 	>
-		<v-card>
+		<v-card ref="dialogRoot" data-pos-keyboard-root @keydown.capture="handleDialogKeydown">
 			<v-card-title>
 				<span class="text-h6 text-primary">{{ __("Create Supplier") }}</span>
 			</v-card-title>
@@ -15,6 +15,7 @@
 					density="compact"
 					variant="outlined"
 					class="pos-themed-input"
+					@keydown.enter.prevent="submit"
 				/>
 				<v-select
 					v-model="form.supplier_group"
@@ -69,6 +70,8 @@
 </template>
 
 <script>
+import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../../utils/keyboardNavigation";
+
 export default {
 	props: {
 		modelValue: Boolean,
@@ -91,10 +94,23 @@ export default {
 		modelValue(val) {
 			if (val) {
 				this.resetForm();
+				this.$nextTick(() =>
+					focusFirstKeyboardTarget(this.$refs.dialogRoot?.$el || this.$refs.dialogRoot, "input"),
+				);
 			}
 		},
 	},
 	methods: {
+		handleDialogKeydown(event) {
+			if (event.key === "Escape" && !this.loading) {
+				event.preventDefault();
+				this.$emit("update:modelValue", false);
+				return;
+			}
+			moveFocusByArrow(event, {
+				root: this.$refs.dialogRoot?.$el || this.$refs.dialogRoot,
+			});
+		},
 		resetForm() {
 			this.form = {
 				supplier_name: "",

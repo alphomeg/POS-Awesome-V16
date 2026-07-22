@@ -58,5 +58,15 @@ describe("Purchasing workspace contract", () => {
 		expect(workspace).toContain('event.key === "F2"');
 		expect(workspace).toContain('event.key.toLowerCase() === "s"');
 		expect(workspace).toContain("data-pos-keyboard-root");
+		const supplierDialog = source(
+			"components",
+			"pos",
+			"dialogs",
+			"purchase",
+			"SupplierDialog.vue",
+		);
+		expect(supplierDialog).toContain("handleDialogKeydown");
+		expect(supplierDialog).toContain('event.key === "Escape"');
+		expect(supplierDialog).toContain("focusFirstKeyboardTarget");
 	});
 });
