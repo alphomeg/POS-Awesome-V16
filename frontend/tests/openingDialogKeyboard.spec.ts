@@ -135,6 +135,20 @@ const keydown = (key: string, init: KeyboardEventInit = {}) =>
 		...init,
 	});
 
+const setRect = (element: HTMLElement, left: number) => {
+	vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+		x: left,
+		y: 0,
+		left,
+		top: 0,
+		right: left + 120,
+		bottom: 36,
+		width: 120,
+		height: 36,
+		toJSON: () => ({}),
+	} as DOMRect);
+};
+
 describe("OpeningDialog keyboard accessibility", () => {
 	beforeEach(() => {
 		(globalThis as any).__ = (text: string, values: string[] = []) =>
@@ -194,7 +208,7 @@ describe("OpeningDialog keyboard accessibility", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("names the dialog and moves initial focus to Company", async () => {
+	it("names the dialog and moves initial focus to Submit", async () => {
 		const wrapper = mountDialog();
 		await flushPromises();
 		await nextTick();
@@ -207,11 +221,11 @@ describe("OpeningDialog keyboard accessibility", () => {
 			"opening-shift-description",
 		);
 		expect(document.activeElement).toBe(
-			wrapper.get('[data-testid="opening-shift-company"] input').element,
+			wrapper.get('[data-testid="opening-shift-submit"]').element,
 		);
 	});
 
-	it("keeps native arrow behavior and advances opening amounts with Enter", async () => {
+	it("keeps field keys native and traverses footer actions horizontally", async () => {
 		const wrapper = mountDialog();
 		await flushPromises();
 		await nextTick();
@@ -225,18 +239,53 @@ describe("OpeningDialog keyboard accessibility", () => {
 		expect(autocompleteArrow.defaultPrevented).toBe(false);
 		expect(document.activeElement).toBe(company);
 
-		const cash = wrapper.get('[data-opening-shift-amount="Cash"] input')
+		const cash = wrapper.get('[data-testid="opening-shift-amount-Cash"] input')
 			.element as HTMLInputElement;
-		const card = wrapper.get('[data-opening-shift-amount="Card"] input')
-			.element as HTMLInputElement;
+		const logout = wrapper.get('[data-testid="opening-shift-logout"]')
+			.element as HTMLButtonElement;
+		const close = wrapper.get('[data-testid="opening-shift-close"]')
+			.element as HTMLButtonElement;
 		const submit = wrapper.get('[data-testid="opening-shift-submit"]')
 			.element as HTMLButtonElement;
+		setRect(logout, 0);
+		setRect(close, 200);
+		setRect(submit, 400);
 
 		cash.focus();
-		cash.dispatchEvent(keydown("Enter"));
-		expect(document.activeElement).toBe(card);
+		const amountEnter = keydown("Enter");
+		cash.dispatchEvent(amountEnter);
+		expect(amountEnter.defaultPrevented).toBe(false);
+		expect(document.activeElement).toBe(cash);
 
-		card.dispatchEvent(keydown("Enter"));
+		submit.focus();
+		const leftToClose = keydown("ArrowLeft");
+		submit.dispatchEvent(leftToClose);
+		expect(leftToClose.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(close);
+
+		const leftToLogout = keydown("ArrowLeft");
+		close.dispatchEvent(leftToLogout);
+		expect(leftToLogout.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(logout);
+
+		const rightToClose = keydown("ArrowRight");
+		logout.dispatchEvent(rightToClose);
+		expect(rightToClose.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(close);
+
+		const rightToSubmit = keydown("ArrowRight");
+		close.dispatchEvent(rightToSubmit);
+		expect(rightToSubmit.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(submit);
+
+		const verticalArrow = keydown("ArrowUp");
+		submit.dispatchEvent(verticalArrow);
+		expect(verticalArrow.defaultPrevented).toBe(false);
+		expect(document.activeElement).toBe(submit);
+
+		const modifiedArrow = keydown("ArrowLeft", { altKey: true });
+		submit.dispatchEvent(modifiedArrow);
+		expect(modifiedArrow.defaultPrevented).toBe(false);
 		expect(document.activeElement).toBe(submit);
 	});
 
@@ -257,7 +306,7 @@ describe("OpeningDialog keyboard accessibility", () => {
 		expect(tab.defaultPrevented).toBe(false);
 	});
 
-	it("exposes a logical focus order from profile setup through actions", async () => {
+	it("exposes only footer actions as custom keyboard targets", async () => {
 		const wrapper = mountDialog();
 		await flushPromises();
 		await nextTick();
@@ -271,17 +320,38 @@ describe("OpeningDialog keyboard accessibility", () => {
 			.map((element) => element.getAttribute("data-pos-keyboard-target"));
 
 		expect(targets).toEqual([
-			"opening-shift-company",
-			"opening-shift-pos-profile",
-			"opening-shift-amount",
-			"opening-shift-amount",
 			"opening-shift-logout",
 			"opening-shift-close",
 			"opening-shift-submit",
 		]);
-		expect(wrapper.get('[data-opening-shift-amount="Cash"]').attributes("aria-label")).toBe(
-			"Opening amount: Cash",
-		);
+		expect(
+			wrapper
+				.get('[data-testid="opening-shift-amount-Cash"] input')
+				.attributes("aria-label"),
+		).toBe("Opening amount: Cash");
+	});
+
+	it("does not move focus onto Submit while it is loading", async () => {
+		const wrapper = mountDialog();
+		await flushPromises();
+		await nextTick();
+
+		const close = wrapper.get('[data-testid="opening-shift-close"]')
+			.element as HTMLButtonElement;
+		const submitWrapper = wrapper.get('[data-testid="opening-shift-submit"]');
+		const submit = submitWrapper.element as HTMLButtonElement;
+		setRect(close, 200);
+		setRect(submit, 400);
+
+		await submitWrapper.trigger("click");
+		await nextTick();
+		expect(submit.disabled).toBe(true);
+
+		close.focus();
+		const right = keydown("ArrowRight");
+		close.dispatchEvent(right);
+		expect(right.defaultPrevented).toBe(false);
+		expect(document.activeElement).toBe(close);
 	});
 
 	it("guards shell Tab routing and restores the selling-surface focus contract", () => {

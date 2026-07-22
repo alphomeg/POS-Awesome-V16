@@ -11,7 +11,6 @@
 			@after-enter="focusInitialTarget"
 		>
 			<v-card
-				ref="dialogRoot"
 				elevation="8"
 				class="opening-dialog-card"
 				data-testid="opening-shift-dialog"
@@ -33,7 +32,7 @@
 							<p id="opening-shift-keyboard-help" class="opening-dialog-sr-only">
 								{{
 									__(
-										"Use Tab and Shift plus Tab to move through fields. Press Enter in an opening amount to continue.",
+										"Submit is focused when this dialog opens. Use Left and Right arrow keys to move between actions.",
 									)
 								}}
 							</p>
@@ -52,8 +51,6 @@
 									:label="frappe._('Company')"
 									v-model="company"
 									data-testid="opening-shift-company"
-									data-pos-keyboard-target="opening-shift-company"
-									data-pos-keyboard-native-arrows
 									required
 									variant="outlined"
 									color="primary"
@@ -70,8 +67,6 @@
 									:label="frappe._('POS Profile')"
 									v-model="pos_profile"
 									data-testid="opening-shift-pos-profile"
-									data-pos-keyboard-target="opening-shift-pos-profile"
-									data-pos-keyboard-native-arrows
 									required
 									variant="outlined"
 									color="primary"
@@ -106,12 +101,8 @@
 									<template v-slot:item.amount="{ item }">
 										<v-text-field
 											v-model="item.amount"
-											:data-opening-shift-amount="item.mode_of_payment"
 											:data-testid="`opening-shift-amount-${item.mode_of_payment}`"
-											data-pos-keyboard-target="opening-shift-amount"
-											data-pos-keyboard-native-arrows
 											:aria-label="openingAmountLabel(item)"
-											@keydown.enter.stop.prevent="focusNextAmount($event.target)"
 											:rules="[max25chars]"
 											type="number"
 											density="compact"
@@ -129,7 +120,12 @@
 				</v-card-text>
 
 				<!-- Actions Section -->
-				<v-card-actions class="dialog-actions-container">
+				<v-card-actions
+					ref="actionsRoot"
+					class="dialog-actions-container"
+					data-testid="opening-shift-actions"
+					@keydown.capture="handleActionsKeydown"
+				>
 					<v-btn
 						theme="dark"
 						@click="logout"
@@ -157,7 +153,7 @@
 					</v-btn>
 					<v-btn
 						theme="dark"
-						:disabled="!canSubmit"
+						:disabled="is_loading"
 						:loading="is_loading"
 						@click="submit_dialog"
 						data-testid="opening-shift-submit"
@@ -176,7 +172,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import {
 	getOpeningDialogStorage,
 	setOpeningDialogStorage,
@@ -189,7 +185,10 @@ import {
 } from "../../../../offline/index";
 import { createBootstrapSnapshotFromRegisterData } from "../../../../offline/bootstrapSnapshot";
 import authService from "../../../services/authService";
-import { focusFirstKeyboardTarget } from "../../../utils/keyboardNavigation";
+import {
+	focusFirstKeyboardTarget,
+	moveFocusByArrow,
+} from "../../../utils/keyboardNavigation";
 
 defineOptions({
 	name: "OpeningDialog",
@@ -206,7 +205,7 @@ const BUILD_VERSION = typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_VERSION
 
 const isOpen = ref(props.dialog ? props.dialog : false);
 const is_loading = ref(false);
-const dialogRoot = ref(null);
+const actionsRoot = ref(null);
 const companies = ref([]);
 const company = ref("");
 const pos_profiles_data = ref([]);
@@ -230,39 +229,34 @@ const payments_methods_headers = [
 ];
 const itemsPerPage = ref(100);
 const max25chars = (v) => v.length <= 12 || "Input too long!";
-const canSubmit = computed(
-	() => Boolean(payments_methods.value.length && company.value && pos_profile.value) && !is_loading.value,
-);
-
 const currencySymbol = (currency) => get_currency_symbol?.(currency);
 const openingAmountLabel = (item) =>
 	`${__("Opening amount")}: ${item?.mode_of_payment || __("payment method")}`;
 const getPaymentMethodData = (payload) => payload?.payments_method || payload?.payment_method || [];
 
-const getDialogRoot = () => dialogRoot.value?.$el || dialogRoot.value;
+const getActionsRoot = () => actionsRoot.value?.$el || actionsRoot.value;
 
 function focusInitialTarget() {
 	nextTick(() => {
-		focusFirstKeyboardTarget(getDialogRoot(), "[data-pos-keyboard-target='opening-shift-company']");
+		focusFirstKeyboardTarget(getActionsRoot(), "[data-pos-keyboard-target='opening-shift-submit']");
 	});
 }
 
-function focusNextAmount(eventTarget) {
-	const target = eventTarget instanceof Element ? eventTarget : null;
-	const amountField = target?.closest?.("[data-opening-shift-amount]");
-	const root = getDialogRoot();
-	if (!amountField || !root) {
-		return false;
+function handleActionsKeydown(event) {
+	if (
+		event.defaultPrevented ||
+		event.altKey ||
+		event.ctrlKey ||
+		event.metaKey ||
+		event.shiftKey ||
+		!["ArrowLeft", "ArrowRight"].includes(event.key)
+	) {
+		return;
 	}
 
-	const fields = Array.from(root.querySelectorAll("[data-opening-shift-amount]"));
-	const currentIndex = fields.indexOf(amountField);
-	const nextField = currentIndex >= 0 ? fields[currentIndex + 1] : null;
-	if (nextField) {
-		return focusFirstKeyboardTarget(nextField);
+	if (moveFocusByArrow(event, { root: getActionsRoot() })) {
+		event.stopPropagation();
 	}
-
-	return focusFirstKeyboardTarget(root, "[data-pos-keyboard-target='opening-shift-submit']");
 }
 
 watch(
@@ -724,17 +718,9 @@ onMounted(() => {
 	background: rgba(25, 118, 210, 0.02);
 }
 
-.opening-dialog-card :deep(input:focus-visible),
-.opening-dialog-card :deep(button:focus-visible),
-.opening-dialog-card :deep([role="button"]:focus-visible) {
+.opening-dialog-card :deep(.pos-action-btn:focus-visible) {
 	outline: 3px solid var(--pos-focus-ring, #1565c0) !important;
 	outline-offset: 2px !important;
-}
-
-.enhanced-field:focus-within,
-.amount-input:focus-within {
-	border-radius: 8px;
-	box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.28);
 }
 
 .opening-dialog-sr-only {
@@ -834,9 +820,7 @@ onMounted(() => {
 }
 
 @media (forced-colors: active) {
-	.opening-dialog-card :deep(input:focus-visible),
-	.opening-dialog-card :deep(button:focus-visible),
-	.opening-dialog-card :deep([role="button"]:focus-visible) {
+	.opening-dialog-card :deep(.pos-action-btn:focus-visible) {
 		outline: 3px solid Highlight !important;
 	}
 }
