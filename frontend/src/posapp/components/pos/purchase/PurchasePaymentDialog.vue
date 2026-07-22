@@ -2,7 +2,7 @@
 	<v-dialog v-model="dialog" max-width="600px" persistent>
 		<v-card
 			ref="paymentDialogRoot"
-			class="pos-themed-card"
+			class="pos-themed-card purchase-payment-dialog"
 			style="max-height: 80vh; overflow: hidden"
 			data-pos-keyboard-root
 			@keydown.capture="handlePaymentKeydown"
@@ -255,10 +255,11 @@ const isPaymentValid = computed(() => {
 
 watch(
 	() => props.modelValue,
-	(val) => {
+	async (val) => {
 		if (val) {
 			paymentSource.value = "drawer";
-			initializePayments();
+			await initializePayments();
+			if (!props.modelValue) return;
 			loading.value = false;
 			nextTick(() => focusFirstKeyboardTarget(paymentDialogRoot.value, "input:not([readonly])"));
 		}
@@ -306,8 +307,24 @@ function formatCurrency(value, precision) {
 	return formatted;
 }
 
-function initializePayments() {
-	const modes = props.posProfile.payments || [];
+async function initializePayments() {
+	let modes = Array.isArray(props.posProfile.payments)
+		? props.posProfile.payments.filter((row) => row?.mode_of_payment)
+		: [];
+	if (!modes.length) {
+		try {
+			const { message } = await frappe.call({
+				method: "posawesome.posawesome.api.purchase_orders.get_purchase_payment_methods",
+				args: {
+					pos_profile: props.posProfile.name || null,
+					company: props.posProfile.company,
+				},
+			});
+			modes = message || [];
+		} catch (error) {
+			console.error("Failed to load purchase payment methods", error);
+		}
+	}
 	paymentLines.value = modes.map((m) => ({
 		mode_of_payment: m.mode_of_payment,
 		amount: 0,

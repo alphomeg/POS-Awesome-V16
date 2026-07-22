@@ -9,6 +9,7 @@ import {
 } from "./bootstrap/bootController";
 import {
 	buildPosAppRecoveryLocation,
+	resolvePosAppCanonicalAliasLocation,
 	resolvePosAppNormalizedPath,
 } from "./loader-utils";
 
@@ -49,6 +50,17 @@ function normalizePosAppPath(): boolean {
 	}
 
 	const { pathname, search, hash } = window.location;
+	const canonicalDeskAlias = resolvePosAppCanonicalAliasLocation(
+		window.location,
+	);
+	if (canonicalDeskAlias) {
+		window.history.replaceState(
+			window.history.state,
+			"",
+			canonicalDeskAlias,
+		);
+		return false;
+	}
 	const normalizedPath = resolvePosAppNormalizedPath(
 		pathname,
 		POSAPP_BASE_PATH,
@@ -178,9 +190,7 @@ export async function importPosAwesomeBundle(
 		preferredVersion,
 	);
 	try {
-		const module = await import(
-			/* @vite-ignore */ preferredUrl
-		);
+		const module = await import(/* @vite-ignore */ preferredUrl);
 		if (preferredVersion && preferredVersion !== initialVersion) {
 			recordPendingBundleActivation(preferredVersion);
 		}

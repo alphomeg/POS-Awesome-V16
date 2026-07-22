@@ -5,6 +5,7 @@
 		persistent
 		@update:model-value="handleModelUpdate"
 		@after-enter="focusPin"
+		@after-leave="restoreTriggerFocus"
 	>
 		<v-card
 			ref="dialogRoot"
@@ -93,11 +94,15 @@ const pin = ref("");
 const pinInput = ref(null);
 const dialogRoot = ref(null);
 const errorMessage = ref("");
+const triggerElement = ref(null);
+const restoreFocusOnLeave = ref(false);
 
 watch(
 	() => props.modelValue,
 	(value) => {
 		if (value) {
+			triggerElement.value = document.activeElement;
+			restoreFocusOnLeave.value = false;
 			pin.value = "";
 			errorMessage.value = props.error || "";
 		}
@@ -125,8 +130,17 @@ function handleModelUpdate(value) {
 
 function cancel() {
 	if (props.loading) return;
+	restoreFocusOnLeave.value = true;
 	emit("cancel");
 	emit("update:modelValue", false);
+}
+
+function restoreTriggerFocus() {
+	if (restoreFocusOnLeave.value && triggerElement.value?.isConnected) {
+		triggerElement.value.focus?.();
+	}
+	restoreFocusOnLeave.value = false;
+	triggerElement.value = null;
 }
 
 function submit() {

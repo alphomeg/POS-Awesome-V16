@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildPosAppRecoveryLocation,
+	resolvePosAppCanonicalAliasLocation,
 	resolvePosAppNormalizedPath,
 	resolvePosAppRouteFullPath,
 } from "../src/loader-utils";
@@ -44,6 +45,24 @@ describe("resolvePosAppNormalizedPath", () => {
 		).toBe("/payments?draft=1#summary");
 	});
 
+	it("canonicalizes the Frappe Desk redirect without losing a deep route", () => {
+		expect(
+			resolvePosAppCanonicalAliasLocation({
+				pathname: "/desk/posapp/orders",
+				search: "?draft=1",
+				hash: "#items",
+			}),
+		).toBe("/app/posapp/orders?draft=1#items");
+	});
+
+	it("does not canonicalize unrelated Desk pages", () => {
+		expect(
+			resolvePosAppCanonicalAliasLocation({
+				pathname: "/desk/purchase-order",
+			}),
+		).toBeNull();
+	});
+
 	it("builds recovery URLs without losing the active sub-route", () => {
 		expect(
 			buildPosAppRecoveryLocation(
@@ -55,8 +74,6 @@ describe("resolvePosAppNormalizedPath", () => {
 				"_posa_loader_recovery",
 				123,
 			),
-		).toBe(
-			"/app/posapp/orders?draft=1&_posa_loader_recovery=123#items",
-		);
+		).toBe("/app/posapp/orders?draft=1&_posa_loader_recovery=123#items");
 	});
 });

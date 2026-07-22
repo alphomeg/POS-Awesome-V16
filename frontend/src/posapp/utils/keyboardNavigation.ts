@@ -12,6 +12,21 @@ export const KEYBOARD_TARGET_SELECTOR = [
 
 const ARROW_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 
+type KeyboardRoot = ParentNode | { $el?: ParentNode | null } | null | undefined;
+
+const resolveKeyboardRoot = (root: KeyboardRoot): ParentNode | null => {
+	if (!root) {
+		return null;
+	}
+	if ("querySelectorAll" in root) {
+		return root;
+	}
+	const componentRoot = root.$el;
+	return componentRoot && "querySelectorAll" in componentRoot
+		? componentRoot
+		: null;
+};
+
 const isHTMLElement = (value: unknown): value is HTMLElement =>
 	value instanceof HTMLElement;
 
@@ -32,14 +47,20 @@ export const isEditableElement = (element: Element | null | undefined) => {
 		return false;
 	}
 
-	if (target.matches("input[type='checkbox'], input[type='radio'], input[type='button'], input[type='submit']")) {
+	if (
+		target.matches(
+			"input[type='checkbox'], input[type='radio'], input[type='button'], input[type='submit']",
+		)
+	) {
 		return false;
 	}
 
 	return true;
 };
 
-const shouldUseEditableArrowNavigation = (element: Element | null | undefined) => {
+const shouldUseEditableArrowNavigation = (
+	element: Element | null | undefined,
+) => {
 	if (!element || !isHTMLElement(element)) {
 		return false;
 	}
@@ -63,7 +84,11 @@ export const isElementVisible = (element: HTMLElement) => {
 	}
 
 	const style = window.getComputedStyle(element);
-	if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+	if (
+		style.display === "none" ||
+		style.visibility === "hidden" ||
+		style.opacity === "0"
+	) {
 		return false;
 	}
 
@@ -72,7 +97,11 @@ export const isElementVisible = (element: HTMLElement) => {
 		return true;
 	}
 
-	return Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+	return Boolean(
+		element.offsetWidth ||
+			element.offsetHeight ||
+			element.getClientRects().length,
+	);
 };
 
 const normalizeTarget = (element: Element) => {
@@ -80,27 +109,37 @@ const normalizeTarget = (element: Element) => {
 		return null;
 	}
 
-	const nestedFocusable = element.matches(KEYBOARD_TARGET_SELECTOR) && isDirectlyFocusable(element)
-		? element
-		: element.querySelector<HTMLElement>(
-				"button, a[href], input:not([type='hidden']), select, textarea, [contenteditable='true'], [tabindex]:not([tabindex='-1'])",
-			);
+	const nestedFocusable =
+		element.matches(KEYBOARD_TARGET_SELECTOR) &&
+		isDirectlyFocusable(element)
+			? element
+			: element.querySelector<HTMLElement>(
+					"button, a[href], input:not([type='hidden']), select, textarea, [contenteditable='true'], [tabindex]:not([tabindex='-1'])",
+				);
 
 	return nestedFocusable instanceof HTMLElement ? nestedFocusable : null;
 };
 
-export const collectKeyboardTargets = (root: ParentNode | null | undefined) => {
-	if (!root) {
+export const collectKeyboardTargets = (root: KeyboardRoot) => {
+	const resolvedRoot = resolveKeyboardRoot(root);
+	if (!resolvedRoot) {
 		return [];
 	}
 
 	const seen = new Set<HTMLElement>();
-	const nodes = Array.from(root.querySelectorAll(KEYBOARD_TARGET_SELECTOR));
+	const nodes = Array.from(
+		resolvedRoot.querySelectorAll(KEYBOARD_TARGET_SELECTOR),
+	);
 	const targets: HTMLElement[] = [];
 
 	for (const node of nodes) {
 		const target = normalizeTarget(node);
-		if (!target || seen.has(target) || hasDisabledState(target) || !isElementVisible(target)) {
+		if (
+			!target ||
+			seen.has(target) ||
+			hasDisabledState(target) ||
+			!isElementVisible(target)
+		) {
 			continue;
 		}
 
@@ -133,8 +172,14 @@ const scoreCandidate = (
 	if (key === "ArrowDown" && dy <= 1) return null;
 	if (key === "ArrowUp" && dy >= -1) return null;
 
-	const primary = key === "ArrowRight" || key === "ArrowLeft" ? Math.abs(dx) : Math.abs(dy);
-	const secondary = key === "ArrowRight" || key === "ArrowLeft" ? Math.abs(dy) : Math.abs(dx);
+	const primary =
+		key === "ArrowRight" || key === "ArrowLeft"
+			? Math.abs(dx)
+			: Math.abs(dy);
+	const secondary =
+		key === "ArrowRight" || key === "ArrowLeft"
+			? Math.abs(dy)
+			: Math.abs(dx);
 
 	return secondary * 1000 + primary;
 };
@@ -147,19 +192,28 @@ const sortTargetsByPosition = (targets: HTMLElement[]) =>
 	});
 
 export const focusFirstKeyboardTarget = (
-	root: ParentNode | null | undefined,
+	root: KeyboardRoot,
 	preferredSelector?: string,
 ) => {
-	if (!root) {
+	const resolvedRoot = resolveKeyboardRoot(root);
+	if (!resolvedRoot) {
 		return false;
 	}
 
 	const preferred = preferredSelector
-		? Array.from(root.querySelectorAll(preferredSelector))
+		? Array.from(resolvedRoot.querySelectorAll(preferredSelector))
 				.map(normalizeTarget)
-				.find((target): target is HTMLElement => Boolean(target && !hasDisabledState(target) && isElementVisible(target)))
+				.find((target): target is HTMLElement =>
+					Boolean(
+						target &&
+							!hasDisabledState(target) &&
+							isElementVisible(target),
+					),
+				)
 		: null;
-	const target = preferred || sortTargetsByPosition(collectKeyboardTargets(root))[0];
+	const target =
+		preferred ||
+		sortTargetsByPosition(collectKeyboardTargets(resolvedRoot))[0];
 	if (!target) {
 		return false;
 	}
@@ -177,7 +231,9 @@ export const resolveKeyboardNavigationRoot = (
 		document.querySelectorAll<HTMLElement>(".v-overlay__content"),
 	).filter(isElementVisible);
 	const overlayRoots = Array.from(
-		document.querySelectorAll<HTMLElement>(".v-overlay__content [data-pos-keyboard-root]"),
+		document.querySelectorAll<HTMLElement>(
+			".v-overlay__content [data-pos-keyboard-root]",
+		),
 	).filter(isElementVisible);
 
 	if (overlayRoots.length) {
@@ -192,7 +248,11 @@ export const resolveKeyboardNavigationRoot = (
 		return null;
 	}
 
-	if (!activeElement || activeElement === document.body || defaultRoot.contains(activeElement)) {
+	if (
+		!activeElement ||
+		activeElement === document.body ||
+		defaultRoot.contains(activeElement)
+	) {
 		return defaultRoot;
 	}
 
@@ -201,7 +261,7 @@ export const resolveKeyboardNavigationRoot = (
 
 export const moveFocusByArrow = (
 	event: KeyboardEvent,
-	options: { root: HTMLElement | null | undefined },
+	options: { root: KeyboardRoot },
 ) => {
 	if (
 		event.defaultPrevented ||
@@ -213,13 +273,16 @@ export const moveFocusByArrow = (
 		return false;
 	}
 
-	const root = options.root;
+	const root = resolveKeyboardRoot(options.root);
 	if (!root) {
 		return false;
 	}
 
 	const activeElement = document.activeElement;
-	if (isEditableElement(activeElement) && !shouldUseEditableArrowNavigation(activeElement)) {
+	if (
+		isEditableElement(activeElement) &&
+		!shouldUseEditableArrowNavigation(activeElement)
+	) {
 		return false;
 	}
 
@@ -230,7 +293,11 @@ export const moveFocusByArrow = (
 
 	const activeTarget =
 		activeElement instanceof HTMLElement
-			? targets.find((target) => target === activeElement || target.contains(activeElement))
+			? targets.find(
+					(target) =>
+						target === activeElement ||
+						target.contains(activeElement),
+				)
 			: null;
 
 	if (!activeTarget) {

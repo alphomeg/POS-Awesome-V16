@@ -61,7 +61,7 @@ describe("Purchasing workspace contract", () => {
 
 		expect(table).toContain("VISIBLE_ROW_CAPACITY = 10");
 		expect(table).toContain("VISIBLE_ROW_CAPACITY - this.items.length");
-		expect(table).toContain('height="396"');
+		expect(table).toContain('height="456"');
 		expect(table).toContain("--purchase-grid-row-height: 36px");
 		expect(table).toContain("moveFocusByArrow");
 		expect(table).toContain('@keydown.esc.prevent="cancelQtyEdit(item)"');

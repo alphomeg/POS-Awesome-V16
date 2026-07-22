@@ -705,12 +705,22 @@ export default {
 
 		onMounted(async () => {
 			const cachedData = getOpeningStorage();
-			if (cachedData?.pos_profile) pos_profile.value = cachedData.pos_profile;
+			const withPaymentMethods = (profile) => {
+				if (!profile) return profile;
+				if (profile.payments?.length) return profile;
+				const payments = (cachedData?.payments_method || []).filter(
+					(row) => row.parent === profile.name,
+				);
+				return payments.length ? { ...profile, payments } : profile;
+			};
+			if (cachedData?.pos_profile) {
+				pos_profile.value = withPaymentMethods(cachedData.pos_profile);
+			}
 
 			watch(
 				() => uiStore.posProfile,
 				(p) => {
-					if (p) pos_profile.value = p;
+					if (p) pos_profile.value = withPaymentMethods(p);
 				},
 				{ immediate: true },
 			);

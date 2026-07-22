@@ -9,7 +9,7 @@
 		hide-default-footer
 		:items-per-page="-1"
 		fixed-header
-		height="396"
+		height="456"
 		:data-visible-row-capacity="VISIBLE_ROW_CAPACITY"
 		@keydown.capture="handleGridKeydown"
 	>
@@ -288,7 +288,7 @@ export default {
 }
 
 .purchase-items-grid :deep(.v-table__wrapper) {
-	max-height: 396px;
+	max-height: 456px;
 	overflow-y: auto;
 }
 

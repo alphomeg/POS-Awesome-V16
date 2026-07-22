@@ -27,6 +27,30 @@ def _ensure_allowed(profile, flag, label):
         frappe.throw(_("{0} is disabled for this POS Profile.").format(label))
 
 
+@frappe.whitelist()
+def get_purchase_payment_methods(pos_profile=None, company=None):
+    """Return only payment modes configured on the authorized POS Profile."""
+
+    profile = _resolve_pos_profile(pos_profile)
+    company = company or profile.get("company")
+    _assert_pos_write_allowed(profile, company=company)
+    _ensure_allowed(profile, "posa_allow_purchase_order", _("Purchase orders"))
+
+    rows = []
+    for payment in profile.get("payments") or []:
+        mode = payment.get("mode_of_payment")
+        if not mode:
+            continue
+        rows.append(
+            {
+                "mode_of_payment": mode,
+                "default": cint(payment.get("default")),
+                "type": frappe.db.get_value("Mode of Payment", mode, "type"),
+            }
+        )
+    return rows
+
+
 INVALID_DATE_MARKERS = {"invalid date", "nan", "none", "null", "undefined"}
 
 

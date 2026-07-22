@@ -639,6 +639,41 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 "account",
             )
 
+    def test_purchase_payment_methods_come_from_authorized_profile(self):
+        profile = AttrDict(
+            {
+                "name": "POS-TEST",
+                "company": "Test Co",
+                "posa_allow_purchase_order": 1,
+                "payments": [
+                    AttrDict({"mode_of_payment": "Cash", "default": 1}),
+                    AttrDict({"mode_of_payment": "Bank", "default": 0}),
+                ],
+            }
+        )
+        original_resolve = self.module._resolve_pos_profile
+        original_get_value = self.module.frappe.db.get_value
+        self.module._resolve_pos_profile = lambda _profile: profile
+        self.module.frappe.db.get_value = (
+            lambda doctype, name, fieldname=None: {
+                "Cash": "Cash",
+                "Bank": "Bank",
+            }.get(name)
+            if doctype == "Mode of Payment"
+            else original_get_value(doctype, name, fieldname)
+        )
+        try:
+            self.assertEqual(
+                self.module.get_purchase_payment_methods("POS-TEST"),
+                [
+                    {"mode_of_payment": "Cash", "default": 1, "type": "Cash"},
+                    {"mode_of_payment": "Bank", "default": 0, "type": "Bank"},
+                ],
+            )
+        finally:
+            self.module._resolve_pos_profile = original_resolve
+            self.module.frappe.db.get_value = original_get_value
+
 
 if __name__ == "__main__":
     unittest.main()

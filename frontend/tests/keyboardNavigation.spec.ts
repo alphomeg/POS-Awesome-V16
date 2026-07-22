@@ -130,8 +130,25 @@ describe("keyboardNavigation", () => {
 		setRect(fallback, { left: 20, top: 20 });
 		setRect(preferred, { left: 120, top: 20 });
 
-		expect(focusFirstKeyboardTarget(root, "[data-pos-keyboard-target='payment-amount']")).toBe(true);
+		expect(
+			focusFirstKeyboardTarget(
+				root,
+				"[data-pos-keyboard-target='payment-amount']",
+			),
+		).toBe(true);
 		expect(document.activeElement).toBe(preferred);
+	});
+
+	it("unwraps Vue component refs before focusing dialog controls", () => {
+		const root = document.createElement("div");
+		const input = document.createElement("input");
+		root.appendChild(input);
+		document.body.appendChild(root);
+		setRect(root, { left: 0, top: 0, width: 400, height: 300 });
+		setRect(input, { left: 20, top: 20 });
+
+		expect(focusFirstKeyboardTarget({ $el: root }, "input")).toBe(true);
+		expect(document.activeElement).toBe(input);
 	});
 
 	it("prefers a visible overlay keyboard root over the POS root", () => {

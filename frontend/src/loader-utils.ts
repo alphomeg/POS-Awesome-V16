@@ -1,4 +1,5 @@
 const DEFAULT_POSAPP_BASE_PATH = "/app/posapp";
+const DEFAULT_POSAPP_DESK_ALIAS_PATH = "/desk/posapp";
 
 function trimTrailingSlash(path: string): string {
 	if (!path) {
@@ -60,7 +61,10 @@ export function resolvePosAppNormalizedPath(
 }
 
 export function resolvePosAppRouteFullPath(
-	locationLike: { pathname?: string; search?: string; hash?: string } | null | undefined,
+	locationLike:
+		| { pathname?: string; search?: string; hash?: string }
+		| null
+		| undefined,
 	basePath = DEFAULT_POSAPP_BASE_PATH,
 ): string | null {
 	const pathname = locationLike?.pathname || "";
@@ -74,8 +78,29 @@ export function resolvePosAppRouteFullPath(
 	return `${routePath}${locationLike?.search || ""}${locationLike?.hash || ""}`;
 }
 
+export function resolvePosAppCanonicalAliasLocation(
+	locationLike:
+		| { pathname?: string; search?: string; hash?: string }
+		| null
+		| undefined,
+	aliasBasePath = DEFAULT_POSAPP_DESK_ALIAS_PATH,
+	canonicalBasePath = DEFAULT_POSAPP_BASE_PATH,
+): string | null {
+	const pathname = locationLike?.pathname || "";
+	const match = resolvePosAppPathMatch(pathname, aliasBasePath);
+	if (!match) {
+		return null;
+	}
+
+	const suffix = match.suffix === "/" ? "" : trimTrailingSlash(match.suffix);
+	return `${trimTrailingSlash(canonicalBasePath)}${suffix}${locationLike?.search || ""}${locationLike?.hash || ""}`;
+}
+
 export function buildPosAppRecoveryLocation(
-	locationLike: { pathname?: string; search?: string; hash?: string } | null | undefined,
+	locationLike:
+		| { pathname?: string; search?: string; hash?: string }
+		| null
+		| undefined,
 	param: string,
 	token: string | number = Date.now(),
 	basePath = DEFAULT_POSAPP_BASE_PATH,
