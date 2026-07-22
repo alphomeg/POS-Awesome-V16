@@ -49,6 +49,7 @@ const emit = defineEmits<{
 	submit: [query: string];
 	navigateBack: [method: "arrow-up" | "shift-tab"];
 	navigateForward: [];
+	navigatePay: [];
 }>();
 const entryRow = ref<HTMLTableRowElement | null>(null);
 const __ = window.__ || ((value: string) => value);
@@ -60,6 +61,19 @@ const updateValue = (event: Event) => {
 };
 
 const handleKeydown = (event: KeyboardEvent) => {
+	if (
+		event.key === "ArrowLeft" &&
+		!event.altKey &&
+		!event.ctrlKey &&
+		!event.metaKey &&
+		!event.shiftKey &&
+		!(event.currentTarget as HTMLInputElement | null)?.value
+	) {
+		event.preventDefault();
+		event.stopPropagation();
+		emit("navigatePay");
+		return;
+	}
 	if (
 		event.key === "ArrowDown" &&
 		!event.altKey &&

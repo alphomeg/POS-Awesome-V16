@@ -219,7 +219,7 @@
 		width="360"
 		class="drafts-drawer"
 	>
-		<div class="drafts-drawer__body">
+		<div class="drafts-drawer__body" data-drafts-focus-root>
 			<DocumentSourceSelector
 				v-if="showDraftSourceSelector"
 				v-model="currentDraftSource"
@@ -252,11 +252,11 @@
 		<v-card class="pos-themed-card">
 			<v-card-title class="d-flex align-center justify-space-between">
 				<span>{{ __(currentDraftSourceOption.panelTitle) }}</span>
-				<v-btn variant="text" size="small" @click="mobileDraftsDialog = false">
+				<v-btn variant="text" size="small" @click="closeDraftsSurface">
 					{{ __("Close") }}
 				</v-btn>
 			</v-card-title>
-			<v-card-text class="pt-0">
+			<v-card-text class="pt-0" data-drafts-focus-root>
 				<DocumentSourceSelector
 					v-if="showDraftSourceSelector"
 					v-model="currentDraftSource"
@@ -344,6 +344,7 @@ const emit = defineEmits([
 	"open-offers",
 	"open-coupons",
 	"focus-counter-grid-entry",
+	"focus-item-search",
 	"resume-parked-order",
 ]);
 
@@ -510,6 +511,10 @@ function focusCounterGridActions() {
 	return counterGridActionButtons.value?.focusFirstAction?.() || false;
 }
 
+function focusCounterGridPay() {
+	return counterGridActionButtons.value?.focusPayAction?.() || false;
+}
+
 function formatRatio(value) {
 	const ratio = Number.isFinite(Number(value)) ? Number(value) : 0;
 	const percent = Math.round(ratio * 10000) / 100;
@@ -534,7 +539,7 @@ function handleLoadDrafts() {
 	const nextSource = getDefaultDocumentSource(props.pos_profile, "invoice");
 	uiStore.setDraftSource(nextSource);
 	uiStore.setParkedOrders([]);
-	openDraftsSurface({ focus: false });
+	openDraftsSurface();
 	emit("load-drafts", nextSource);
 }
 
@@ -553,17 +558,26 @@ function openDraftsSurface(options = {}) {
 	}
 }
 
-function closeDraftsSurface() {
+function restoreDraftsReturnFocus() {
+	emit("focus-item-search");
+}
+
+function closeDraftsSurface(options = {}) {
 	desktopDraftsDrawer.value = false;
 	mobileDraftsDialog.value = false;
+	if (options.restoreFocus !== false) {
+		void restoreDraftsReturnFocus();
+	}
 }
 
 function handleGlobalDraftsKeydown(event) {
-	if (event.key !== "Escape" || (!desktopDraftsDrawer.value && !mobileDraftsDialog.value)) {
+	const isDraftsOpen = desktopDraftsDrawer.value || mobileDraftsDialog.value;
+	if (!isDraftsOpen || (event.key !== "Escape" && event.key !== "ArrowLeft")) {
 		return;
 	}
 	event.preventDefault();
 	event.stopPropagation();
+	event.stopImmediatePropagation?.();
 	closeDraftsSurface();
 }
 
@@ -608,7 +622,7 @@ async function handleOpenInvoiceManagement() {
 }
 
 function handleManageAllDrafts() {
-	closeDraftsSurface();
+	closeDraftsSurface({ restoreFocus: false });
 	uiStore.setInvoiceManagementDraftSource(currentDraftSource.value);
 	emit("open-invoice-management", "drafts", currentDraftSource.value);
 }
@@ -665,6 +679,7 @@ onBeforeUnmount(() => {
 defineExpose({
 	focusAdditionalDiscountField,
 	focusCounterGridActions,
+	focusCounterGridPay,
 	focusDraftsSurface,
 	handleManageAllDrafts,
 	openDraftsSurface,

@@ -160,6 +160,11 @@ describe("InvoiceActionButtons", () => {
 		expect(document.activeElement).toBe(
 			wrapper.get('[data-testid="invoice-action-save-clear"]').element,
 		);
+		await (wrapper.vm as any).focusPayAction();
+		expect(document.activeElement).toBe(
+			wrapper.get('[data-testid="invoice-action-pay"]').element,
+		);
+		await (wrapper.vm as any).focusFirstAction();
 
 		await actions.trigger("keydown", {
 			key: "ArrowRight",

@@ -146,6 +146,55 @@ test.describe("Counter Grid shell", () => {
 		await expect(entry).toHaveValue(KNOWN_ITEM_CODES[0]);
 	});
 
+	test("locks saved-draft keyboard navigation and restores item-entry focus", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 720 });
+		await waitForPos(page);
+
+		const entry = page.getByTestId("counter-grid-item-entry");
+		await expect(entry).toBeFocused({ timeout: 15_000 });
+		await page.keyboard.press("ArrowLeft");
+		await expect(page.getByTestId("invoice-action-pay")).toBeFocused();
+		await entry.focus();
+		await addKnownItemFromCounterSearch(page);
+		await entry.focus();
+		await page.keyboard.press("Alt+l");
+
+		const drawer = page.locator(".drafts-drawer");
+		const cards = drawer.locator(".drafts-list__card");
+		await expect(drawer).toBeVisible();
+		await expect(
+			drawer.locator('[data-test="drafts-retailmind-brand"]'),
+		).toContainText("RetailMind-POS");
+		await expect(cards.first()).toBeFocused({ timeout: 30_000 });
+		await expect(cards.first()).toHaveAttribute("aria-current", "true");
+
+		const cardCount = await cards.count();
+		expect(cardCount).toBeGreaterThan(0);
+		await page.keyboard.press("ArrowDown");
+		const nextCard = cards.nth(cardCount > 1 ? 1 : 0);
+		await expect(nextCard).toBeFocused();
+		await expect(nextCard).toHaveClass(/drafts-list__card--selected/);
+		await page.keyboard.press("ArrowUp");
+		await expect(cards.first()).toBeFocused();
+		await page.keyboard.press("ArrowRight");
+		await expect(cards.first()).toBeFocused();
+
+		await page.keyboard.press("ArrowLeft");
+		await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/);
+		await expect(entry).toBeFocused({ timeout: 15_000 });
+
+		await page.keyboard.press("Alt+l");
+		await expect(drawer).toHaveClass(/v-navigation-drawer--active/);
+		await expect(cards.first()).toBeFocused({ timeout: 30_000 });
+		await page.keyboard.press("Enter");
+		await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/, {
+			timeout: 30_000,
+		});
+		await expect(entry).toBeFocused({ timeout: 30_000 });
+	});
+
 	test("highlights only the active pharmacy search result", async ({
 		page,
 	}) => {
@@ -236,15 +285,24 @@ test.describe("Counter Grid shell", () => {
 		];
 
 		await expect(entry).toBeFocused({ timeout: 15_000 });
-		await page.keyboard.press("ArrowDown");
-		await expect(page.getByTestId("invoice-action-save-clear")).toBeFocused({
+		await page.keyboard.press("ArrowLeft");
+		await expect(page.getByTestId("invoice-action-pay")).toBeFocused({
 			timeout: 15_000,
 		});
+		await entry.focus();
+		await page.keyboard.press("ArrowDown");
+		await expect(page.getByTestId("invoice-action-save-clear")).toBeFocused(
+			{
+				timeout: 15_000,
+			},
+		);
 		await page.keyboard.press("ArrowUp");
 		await expect(entry).toBeFocused({ timeout: 15_000 });
 
 		const { cartRow } = await addKnownItemFromCounterSearch(page);
-		const quantity = cartRow.locator('[data-column-key="qty"] input').first();
+		const quantity = cartRow
+			.locator('[data-column-key="qty"] input')
+			.first();
 		await expect(quantity).toBeFocused({ timeout: 15_000 });
 		await page.keyboard.press("Shift+ArrowDown");
 		await expect(quantity).toBeFocused({ timeout: 15_000 });
@@ -253,7 +311,9 @@ test.describe("Counter Grid shell", () => {
 
 		await page.keyboard.press("ArrowDown");
 		for (const [index, testId] of actionIds.entries()) {
-			await expect(page.getByTestId(testId)).toBeFocused({ timeout: 15_000 });
+			await expect(page.getByTestId(testId)).toBeFocused({
+				timeout: 15_000,
+			});
 			if (index < actionIds.length - 1) {
 				await page.keyboard.press("ArrowRight");
 			}
@@ -261,7 +321,9 @@ test.describe("Counter Grid shell", () => {
 
 		for (let index = actionIds.length - 1; index > 0; index -= 1) {
 			await page.keyboard.press("ArrowLeft");
-			await expect(page.getByTestId(actionIds[index - 1])).toBeFocused({ timeout: 15_000 });
+			await expect(page.getByTestId(actionIds[index - 1])).toBeFocused({
+				timeout: 15_000,
+			});
 		}
 
 		await page.keyboard.press("ArrowUp");

@@ -268,6 +268,7 @@
 								@view-packed="openPackedItems"
 								@edit-item="openItemQuickEditForItem"
 								@focus-actions="focusCounterGridActions"
+								@focus-pay="focusCounterGridPay"
 							/>
 
 							<PackedItemsDialog
@@ -346,6 +347,7 @@
 			@open-offers="handleOpenCounterAuxiliary('offers')"
 			@open-coupons="handleOpenCounterAuxiliary('coupons')"
 			@focus-counter-grid-entry="focusCounterGridEntry"
+			@focus-item-search="focusItemSearchField"
 			@resume-parked-order="resume_parked_order"
 		/>
 	</div>
@@ -683,6 +685,13 @@ export default {
 				return false;
 			}
 			return this.$refs.invoiceSummary?.focusCounterGridActions?.() || false;
+		},
+
+		focusCounterGridPay() {
+			if (!this.isCounterGridPresentation) {
+				return false;
+			}
+			return this.$refs.invoiceSummary?.focusCounterGridPay?.() || false;
 		},
 
 		clearCounterGridEntry() {
@@ -1282,6 +1291,9 @@ export default {
 					title: __("Unable to load parked order"),
 					color: "error",
 				});
+			} finally {
+				await this.$nextTick();
+				this.focusItemSearchField();
 			}
 		},
 		handleOpenCustomerDisplayRequest() {

@@ -344,6 +344,9 @@ const showMoreActions = computed(
 const focusFirstAction = () =>
 	focusFirstKeyboardTarget(actionsRoot.value, '[data-testid="invoice-action-save-clear"]');
 
+const focusPayAction = () =>
+	focusFirstKeyboardTarget(actionsRoot.value, '[data-testid="invoice-action-pay"]');
+
 const isFirstActionFocused = () => {
 	const firstAction = collectKeyboardTargets(actionsRoot.value)[0];
 	const activeElement = document.activeElement;
@@ -376,7 +379,7 @@ const handleCounterGridActionsKeydown = (event) => {
 	moveFocusByArrow(event, { root: actionsRoot.value });
 };
 
-defineExpose({ focusFirstAction });
+defineExpose({ focusFirstAction, focusPayAction });
 </script>
 
 <style scoped>

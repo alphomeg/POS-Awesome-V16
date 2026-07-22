@@ -50,7 +50,7 @@ describe("ParkedOrdersList keyboard control", () => {
 			global: {
 				stubs: {
 					VBtn: {
-						template: "<button type=\"button\"><slot /></button>",
+						template: '<button type="button"><slot /></button>',
 					},
 					VProgressCircular: {
 						template: "<span />",
@@ -86,5 +86,47 @@ describe("ParkedOrdersList keyboard control", () => {
 
 		expect(onClose).toHaveBeenCalledTimes(1);
 		expect(onResume).not.toHaveBeenCalled();
+	});
+
+	it("owns all arrow keys and closes from the back arrow", async () => {
+		const { wrapper, onResume, onClose } = mountList();
+
+		await (wrapper.vm as any).focusFirstDraft();
+		const cards = wrapper.findAll(".drafts-list__card");
+		await cards[0].trigger("keydown", { key: "ArrowRight" });
+		expect(document.activeElement).toBe(cards[0].element);
+		expect(onResume).not.toHaveBeenCalled();
+
+		await cards[0].trigger("keydown", { key: "ArrowLeft" });
+		expect(onClose).toHaveBeenCalledTimes(1);
+		expect(onResume).not.toHaveBeenCalled();
+	});
+
+	it("keeps Tab focus inside the drafts surface", async () => {
+		const { wrapper } = mountList();
+		await (wrapper.vm as any).focusFirstDraft();
+
+		const selectedCard = wrapper.findAll(".drafts-list__card")[0];
+		await selectedCard.trigger("keydown", { key: "Tab" });
+		expect(document.activeElement).toBe(selectedCard.element);
+	});
+
+	it("shows RetailMind-POS branding and moves the active state with pointer selection", async () => {
+		const { wrapper } = mountList();
+		const cards = wrapper.findAll(".drafts-list__card");
+
+		expect(
+			wrapper.get('[data-test="drafts-retailmind-brand"]').text(),
+		).toBe("RetailMind-POS");
+		expect(wrapper.attributes("data-pos-arrow-navigation-root")).toBe(
+			"saved-drafts",
+		);
+		expect(cards[0].classes()).toContain("drafts-list__card--selected");
+
+		await cards[1].trigger("mouseenter");
+
+		expect(cards[0].classes()).not.toContain("drafts-list__card--selected");
+		expect(cards[1].classes()).toContain("drafts-list__card--selected");
+		expect(cards[1].attributes("aria-current")).toBe("true");
 	});
 });

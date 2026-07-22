@@ -63,6 +63,7 @@
 					@submit="openCounterGridItemSearch"
 					@navigate-back="focusPreviousCounterGridEntry"
 					@navigate-forward="focusCounterGridActions"
+					@navigate-pay="focusCounterGridPay"
 				/>
 				<CartItemRow
 					v-else
@@ -244,6 +245,7 @@ const emit = defineEmits<{
 	"item-dropped": [val: boolean];
 	"edit-item": [item: any];
 	"focus-actions": [];
+	"focus-pay": [];
 }>();
 
 const { proxy } = getCurrentInstance() as any;
@@ -796,6 +798,12 @@ const focusCounterGridEntry = async () => {
 const focusCounterGridActions = () => {
 	deactivateKeyboardGrid();
 	emit("focus-actions");
+	return true;
+};
+
+const focusCounterGridPay = () => {
+	deactivateKeyboardGrid();
+	emit("focus-pay");
 	return true;
 };
 

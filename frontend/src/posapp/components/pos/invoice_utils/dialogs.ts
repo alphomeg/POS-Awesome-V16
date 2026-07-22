@@ -191,7 +191,7 @@ export async function get_draft_invoices(
 		context.uiStore.setDraftSource?.(selectedSource);
 		context.uiStore.setParkedOrders?.([]);
 		context.$refs?.invoiceSummary?.setDraftsLoading?.(true);
-		context.$refs?.invoiceSummary?.openDraftsSurface?.({ focus: false });
+		context.$refs?.invoiceSummary?.openDraftsSurface?.();
 
 		const drafts = await fetchDocumentSourceRecords({
 			source: selectedSource,

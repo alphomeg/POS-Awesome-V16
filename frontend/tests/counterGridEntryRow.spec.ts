@@ -15,8 +15,9 @@ describe("CounterGridEntryRow", () => {
 				data: () => ({
 					query: "",
 					submitted: "",
-						navigationMethod: "",
-						forwardNavigationCount: 0,
+					navigationMethod: "",
+					forwardNavigationCount: 0,
+					payNavigationCount: 0,
 				}),
 				template: `
 				<table><tbody>
@@ -26,6 +27,7 @@ describe("CounterGridEntryRow", () => {
 						@submit="submitted = $event"
 						@navigate-back="navigationMethod = $event"
 						@navigate-forward="forwardNavigationCount += 1"
+						@navigate-pay="payNavigationCount += 1"
 					/>
 				</tbody></table>
 			`,
@@ -74,6 +76,28 @@ describe("CounterGridEntryRow", () => {
 		await wrapper.vm.$nextTick();
 		expect((wrapper.vm as any).forwardNavigationCount).toBe(1);
 		expect(modifiedForwardEvent.defaultPrevented).toBe(false);
+
+		await input.setValue("");
+		const payEvent = new KeyboardEvent("keydown", {
+			key: "ArrowLeft",
+			bubbles: true,
+			cancelable: true,
+		});
+		input.element.dispatchEvent(payEvent);
+		await wrapper.vm.$nextTick();
+		expect((wrapper.vm as any).payNavigationCount).toBe(1);
+		expect(payEvent.defaultPrevented).toBe(true);
+
+		await input.setValue("panadol");
+		const caretEvent = new KeyboardEvent("keydown", {
+			key: "ArrowLeft",
+			bubbles: true,
+			cancelable: true,
+		});
+		input.element.dispatchEvent(caretEvent);
+		await wrapper.vm.$nextTick();
+		expect((wrapper.vm as any).payNavigationCount).toBe(1);
+		expect(caretEvent.defaultPrevented).toBe(false);
 	});
 
 	it("does not open an unscoped search for an empty value", async () => {

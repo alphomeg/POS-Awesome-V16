@@ -146,4 +146,37 @@ describe("InvoiceSummary drafts placement", () => {
 
 		expect(displayValue).toBe(125);
 	});
+
+	it("restores the Counter Grid entry focus when the drafts surface closes", async () => {
+		const onFocusItemSearch = vi.fn();
+		const wrapper = mount(InvoiceSummary, {
+			props: { ...baseProps, onFocusItemSearch },
+			global: {
+				stubs: {
+					VCard: BoxStub,
+					VRow: BoxStub,
+					VCol: BoxStub,
+					VAlert: BoxStub,
+					VTextField: BoxStub,
+					VBtn: BoxStub,
+					VNavigationDrawer: BoxStub,
+					VCardTitle: BoxStub,
+					VCardText: BoxStub,
+					VCardActions: BoxStub,
+					VChip: BoxStub,
+					VIcon: BoxStub,
+					InvoiceActionButtons: true,
+					ParkedOrdersList: true,
+					VDialog: BoxStub,
+				},
+			},
+		});
+
+		const setupState = (wrapper.vm as any).$?.setupState || {};
+		expect(typeof setupState.closeDraftsSurface).toBe("function");
+		setupState.closeDraftsSurface();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(onFocusItemSearch).toHaveBeenCalledTimes(1);
+	});
 });
