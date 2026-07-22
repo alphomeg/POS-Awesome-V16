@@ -27,6 +27,8 @@ def _install_stubs():
     frappe_module.whitelist = lambda *args, **kwargs: (lambda fn: fn)
     frappe_module.get_doc = lambda *args, **kwargs: None
     frappe_module.flags = types.SimpleNamespace(ignore_account_permission=False)
+    frappe_module.defaults = types.SimpleNamespace(get_default=lambda fieldname: "Test Co")
+    frappe_module.session = types.SimpleNamespace(user="cashier@example.com")
 
     class _Db:
         def __init__(self):
@@ -50,6 +52,9 @@ def _install_stubs():
 
         def exists(self, doctype, name):
             return doctype == "Supplier" and name == "SUP-001"
+
+        def has_column(self, doctype, fieldname):
+            return False
 
         def sql(self, query, params=None, as_dict=False):
             self.sql_calls.append((query, params, as_dict))
@@ -115,6 +120,41 @@ def _install_stubs():
     erpnext_accounts_party.get_party_account = lambda *args, **kwargs: "Creditors - TC"
     sys.modules["erpnext.accounts.party"] = erpnext_accounts_party
 
+    for package_name in (
+        "erpnext",
+        "erpnext.buying",
+        "erpnext.buying.doctype",
+        "erpnext.buying.doctype.purchase_order",
+        "erpnext.stock",
+        "erpnext.stock.doctype",
+        "erpnext.stock.doctype.purchase_receipt",
+        "erpnext.accounts",
+        "erpnext.accounts.doctype",
+        "erpnext.accounts.doctype.payment_entry",
+    ):
+        package = types.ModuleType(package_name)
+        package.__path__ = []
+        sys.modules.setdefault(package_name, package)
+
+    purchase_order_mapper = types.ModuleType(
+        "erpnext.buying.doctype.purchase_order.purchase_order"
+    )
+    purchase_order_mapper.make_purchase_receipt = lambda *_args, **_kwargs: None
+    purchase_order_mapper.make_purchase_invoice = lambda *_args, **_kwargs: None
+    sys.modules[purchase_order_mapper.__name__] = purchase_order_mapper
+
+    purchase_receipt_mapper = types.ModuleType(
+        "erpnext.stock.doctype.purchase_receipt.purchase_receipt"
+    )
+    purchase_receipt_mapper.make_purchase_invoice = lambda *_args, **_kwargs: None
+    sys.modules[purchase_receipt_mapper.__name__] = purchase_receipt_mapper
+
+    payment_entry_mapper = types.ModuleType(
+        "erpnext.accounts.doctype.payment_entry.payment_entry"
+    )
+    payment_entry_mapper.get_payment_entry = lambda *_args, **_kwargs: None
+    sys.modules[payment_entry_mapper.__name__] = payment_entry_mapper
+
     utils_module = types.ModuleType("posawesome.posawesome.api.utils")
     utils_module.get_active_pos_profile = lambda: {
         "name": "POS-TEST",
@@ -122,6 +162,7 @@ def _install_stubs():
         "company": "Test Co",
     }
     utils_module.get_default_warehouse = lambda company=None: "Stores - TC"
+    utils_module.assert_pos_profile_write_allowed = lambda profile, company=None: profile
     sys.modules["posawesome.posawesome.api.utils"] = utils_module
 
     pos_access_module = types.ModuleType("posawesome.posawesome.api.pos_access")
@@ -133,6 +174,30 @@ def _install_stubs():
         "posa_allow_purchase_receipt": 1,
     }
     sys.modules["posawesome.posawesome.api.pos_access"] = pos_access_module
+
+    purchase_security = types.ModuleType("posawesome.posawesome.api.purchase_action_security")
+
+    def run_purchase_action(**kwargs):
+        result = kwargs["operation"](
+            {
+                "user": "manager@example.com",
+                "full_name": "Purchase Manager",
+                "required_role": "Purchase Manager",
+            }
+        )
+        result.update(
+            {
+                "authorized_by": "manager@example.com",
+                "authorized_by_name": "Purchase Manager",
+                "required_role": "Purchase Manager",
+                "client_request_id": kwargs["client_request_id"],
+                "idempotent": False,
+            }
+        )
+        return result
+
+    purchase_security.run_idempotent_purchase_action = run_purchase_action
+    sys.modules[purchase_security.__name__] = purchase_security
 
 
 def _load_module():
@@ -183,6 +248,10 @@ class FakeDoc(AttrDict):
 
     def submit(self):
         self.submitted = True
+        self.docstatus = 1
+
+    def reload(self):
+        return self
 
 
 class TestPurchaseOrdersApi(unittest.TestCase):
@@ -308,8 +377,10 @@ class TestPurchaseOrdersApi(unittest.TestCase):
         )
         original_exists = self.module.frappe.db.exists
         original_get_doc = self.module.frappe.get_doc
+        original_entitlement = self.module.assert_purchase_entitlement
         self.module.frappe.db.exists = lambda doctype, name: doctype == "Purchase Order"
         self.module.frappe.get_doc = lambda *args, **kwargs: po_doc
+        self.module.assert_purchase_entitlement = lambda _profile: {"active": True}
 
         try:
             with self.assertRaisesRegex(Exception, "changed after it was loaded"):
@@ -323,6 +394,47 @@ class TestPurchaseOrdersApi(unittest.TestCase):
         finally:
             self.module.frappe.db.exists = original_exists
             self.module.frappe.get_doc = original_get_doc
+            self.module.assert_purchase_entitlement = original_entitlement
+
+    def test_management_submit_uses_authorized_idempotent_checkpoint(self):
+        po_doc = FakeDoc(
+            {
+                "doctype": "Purchase Order",
+                "name": "PO-001",
+                "company": "Test Co",
+                "docstatus": 0,
+                "modified": "2026-04-17 10:00:00.000000",
+                "status": "Draft",
+            }
+        )
+        original_exists = self.module.frappe.db.exists
+        original_get_doc = self.module.frappe.get_doc
+        original_entitlement = self.module.assert_purchase_entitlement
+        self.module.frappe.db.exists = lambda doctype, name: doctype == "Purchase Order"
+        self.module.frappe.get_doc = lambda *args, **kwargs: po_doc
+        self.module.assert_purchase_entitlement = lambda _profile: {"active": True}
+
+        try:
+            result = self.module.process_purchase_management_action(
+                {
+                    "purchase_order": "PO-001",
+                    "action": "submit",
+                    "pos_profile": {"name": "POS-TEST"},
+                    "company": "Test Co",
+                    "expected_modified": "2026-04-17 10:00:00.000000",
+                    "client_request_id": "submit-request-001",
+                    "authorization_pin": "1234",
+                }
+            )
+        finally:
+            self.module.frappe.db.exists = original_exists
+            self.module.frappe.get_doc = original_get_doc
+            self.module.assert_purchase_entitlement = original_entitlement
+
+        self.assertTrue(po_doc.submitted)
+        self.assertEqual(result["purchase_order"], "PO-001")
+        self.assertEqual(result["authorized_by"], "manager@example.com")
+        self.assertEqual(result["client_request_id"], "submit-request-001")
 
     def test_create_purchase_receipt_defaults_missing_payload_row(self):
         po_doc = AttrDict(
@@ -350,11 +462,16 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 ],
             }
         )
-        receipt_doc = FakeDoc({"doctype": "Purchase Receipt", "name": "PREC-001"})
-        original_get_doc = self.module.frappe.get_doc
-        original_resolver = self.module._resolve_po_input_row
-        self.module.frappe.get_doc = lambda data, *args, **kwargs: receipt_doc if isinstance(data, dict) else None
-        self.module._resolve_po_input_row = lambda *_args: None
+        receipt_doc = FakeDoc(
+            {
+                "doctype": "Purchase Receipt",
+                "name": "PREC-001",
+                "items": [AttrDict({"qty": 2, "warehouse": "Stores - TC"})],
+            }
+        )
+        mapper = sys.modules["erpnext.buying.doctype.purchase_order.purchase_order"]
+        original_mapper = mapper.make_purchase_receipt
+        mapper.make_purchase_receipt = lambda source_name: receipt_doc
 
         try:
             receipt_name = self.module._create_purchase_receipt(
@@ -364,8 +481,7 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 "2026-04-17",
             )
         finally:
-            self.module.frappe.get_doc = original_get_doc
-            self.module._resolve_po_input_row = original_resolver
+            mapper.make_purchase_receipt = original_mapper
 
         self.assertEqual(receipt_name, "PREC-001")
         self.assertEqual(receipt_doc.items[0].qty, 2)
@@ -397,13 +513,16 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 ],
             }
         )
-        invoice_doc = FakeDoc({"doctype": "Purchase Invoice", "name": "PINV-001"})
-        original_get_doc = self.module.frappe.get_doc
-        original_resolver = self.module._resolve_po_input_row
-        original_billed = self.module._get_billed_qty_by_po_item
-        self.module.frappe.get_doc = lambda data, *args, **kwargs: invoice_doc if isinstance(data, dict) else None
-        self.module._resolve_po_input_row = lambda *_args: None
-        self.module._get_billed_qty_by_po_item = lambda _po_doc: {}
+        invoice_doc = FakeDoc(
+            {
+                "doctype": "Purchase Invoice",
+                "name": "PINV-001",
+                "items": [AttrDict({"qty": 3, "warehouse": "Stores - TC"})],
+            }
+        )
+        mapper = sys.modules["erpnext.buying.doctype.purchase_order.purchase_order"]
+        original_mapper = mapper.make_purchase_invoice
+        mapper.make_purchase_invoice = lambda source_name: invoice_doc
 
         try:
             invoice_name = self.module._create_purchase_invoice(
@@ -413,9 +532,7 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 "2026-04-17",
             )
         finally:
-            self.module.frappe.get_doc = original_get_doc
-            self.module._resolve_po_input_row = original_resolver
-            self.module._get_billed_qty_by_po_item = original_billed
+            mapper.make_purchase_invoice = original_mapper
 
         self.assertEqual(invoice_name, "PINV-001")
         self.assertEqual(invoice_doc.items[0].qty, 3)
@@ -441,10 +558,31 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 }
             ),
         ]
-        payment_doc = FakeDoc({"doctype": "Payment Entry", "name": "PE-001"})
-        original_new_doc = getattr(self.module.frappe, "new_doc", None)
+        payment_docs = []
+        mapper = sys.modules["erpnext.accounts.doctype.payment_entry.payment_entry"]
+        original_mapper = mapper.get_payment_entry
+
+        def make_payment_entry(doctype, name, party_amount=None, **_kwargs):
+            payment_doc = FakeDoc(
+                {
+                    "doctype": "Payment Entry",
+                    "name": f"PE-{len(payment_docs) + 1:03d}",
+                    "references": [
+                        AttrDict(
+                            {
+                                "reference_doctype": doctype,
+                                "reference_name": name,
+                                "allocated_amount": party_amount,
+                            }
+                        )
+                    ],
+                }
+            )
+            payment_docs.append(payment_doc)
+            return payment_doc
+
+        mapper.get_payment_entry = make_payment_entry
         original_mop_account = self.module._get_mode_of_payment_account
-        self.module.frappe.new_doc = lambda doctype: payment_doc
         self.module._get_mode_of_payment_account = lambda _mode, _company: "Cash - TC"
 
         try:
@@ -455,16 +593,14 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 "2026-04-17",
             )
         finally:
-            if original_new_doc is None:
-                delattr(self.module.frappe, "new_doc")
-            else:
-                self.module.frappe.new_doc = original_new_doc
+            mapper.get_payment_entry = original_mapper
             self.module._get_mode_of_payment_account = original_mop_account
 
-        self.assertEqual(created, ["PE-001"])
+        self.assertEqual(created, ["PE-001", "PE-002"])
         self.assertEqual(
             [
                 (row.reference_doctype, row.reference_name, row.allocated_amount)
+                for payment_doc in payment_docs
                 for row in payment_doc.references
             ],
             [
@@ -472,6 +608,36 @@ class TestPurchaseOrdersApi(unittest.TestCase):
                 ("Purchase Invoice", "PINV-002", 50),
             ],
         )
+
+    def test_guided_payment_requires_fully_billed_order(self):
+        original_progress = self.module._get_purchase_order_progress
+        self.module._get_purchase_order_progress = lambda _doc: {
+            "receipt_complete": True,
+            "invoice_complete": False,
+            "receipt_partial": False,
+            "invoice_partial": True,
+        }
+        try:
+            with self.assertRaisesRegex(Exception, "bill in full"):
+                self.module._assert_simple_purchase_lifecycle(AttrDict({}), "payment")
+        finally:
+            self.module._get_purchase_order_progress = original_progress
+
+    def test_purchase_payment_mode_must_be_configured_on_profile(self):
+        profile = AttrDict(
+            {
+                "name": "POS-TEST",
+                "payments": [AttrDict({"mode_of_payment": "Cash"})],
+            }
+        )
+
+        with self.assertRaisesRegex(Exception, "not available"):
+            self.module._prepare_purchase_payments(
+                profile,
+                "Test Co",
+                [{"mode_of_payment": "Bank", "amount": 50}],
+                "account",
+            )
 
 
 if __name__ == "__main__":

@@ -134,8 +134,7 @@ export function usePurchaseOrder(options: {
 			}
 
 			// Try fetching price from the active buying price list
-			const activePriceList =
-				supplierPriceList.value || itemsStore.activePriceList;
+			const activePriceList = supplierPriceList.value;
 			if (activePriceList) {
 				try {
 					const { message } = await frappe.call({
@@ -196,8 +195,7 @@ export function usePurchaseOrder(options: {
 
 		let priceFound = false;
 		try {
-			const priceList =
-				supplierPriceList.value || itemsStore.activePriceList;
+			const priceList = supplierPriceList.value;
 			if (priceList) {
 				const { message } = await frappe.call({
 					method: "posawesome.posawesome.api.items.get_price_for_uom",

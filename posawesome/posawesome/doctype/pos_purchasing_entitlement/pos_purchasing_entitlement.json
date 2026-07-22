@@ -1,0 +1,67 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-07-23 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "expires_on",
+  "terminal_limit",
+  "commercial_notice"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "description": "Local pilot entitlement. Disable to make Purchasing read-only on every POS terminal.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Purchasing Enabled"
+  },
+  {
+   "description": "Optional final day of access. Purchasing becomes read-only after this date.",
+   "fieldname": "expires_on",
+   "fieldtype": "Date",
+   "label": "Access Expires On"
+  },
+  {
+   "default": "0",
+   "description": "Maximum concurrently open POS shifts that have used Purchasing. Zero means unlimited.",
+   "fieldname": "terminal_limit",
+   "fieldtype": "Int",
+   "label": "Active Terminal Limit",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "commercial_notice",
+   "fieldtype": "HTML",
+   "options": "<div class=\"alert alert-warning\">This local setting supports pilot packaging; it is not a signed commercial licence.</div>"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "POSAwesome",
+ "name": "POS Purchasing Entitlement",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "quick_entry": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -48,6 +48,9 @@
 			<v-divider />
 
 			<v-card-text class="purchase-management-card__body">
+				<v-alert v-if="readOnly" type="warning" density="compact" variant="tonal" class="mb-3">
+					{{ __("Read-only access: receiving, billing, and payment actions are unavailable.") }}
+				</v-alert>
 				<div class="purchase-management-filters">
 					<v-text-field
 						v-model="filters.search"
@@ -185,7 +188,7 @@
 								color="success"
 								variant="tonal"
 								prepend-icon="mdi-truck-check-outline"
-								:disabled="item.receipt_complete"
+								:disabled="readOnly || item.receipt_complete || item.receipt_partial"
 								:loading="actionLoading === `${item.name}:receipt`"
 								@click="openActionDialog(item, 'receipt')"
 							>
@@ -196,7 +199,12 @@
 								color="primary"
 								variant="tonal"
 								prepend-icon="mdi-file-document-check-outline"
-								:disabled="item.invoice_complete"
+								:disabled="
+									readOnly ||
+									!item.receipt_complete ||
+									item.invoice_complete ||
+									item.invoice_partial
+								"
 								:loading="actionLoading === `${item.name}:invoice`"
 								@click="openActionDialog(item, 'invoice')"
 							>
@@ -207,11 +215,15 @@
 								color="deep-purple"
 								variant="tonal"
 								prepend-icon="mdi-credit-card-outline"
-								:disabled="Number(item.payable_amount || 0) <= 0"
+								:disabled="
+									readOnly ||
+									!item.invoice_complete ||
+									Number(item.payable_amount || 0) <= 0
+								"
 								:loading="actionLoading === `${item.name}:payment`"
 								@click="openPayment(item)"
 							>
-								{{ item.invoice_count ? __("Pay") : __("Advance") }}
+								{{ __("Pay") }}
 							</v-btn>
 						</div>
 					</template>
@@ -317,22 +329,9 @@
 								{{ formatAmount(selectedActionAmount) }}
 							</strong>
 						</div>
-						<v-btn
-							variant="tonal"
-							color="primary"
-							prepend-icon="mdi-check-all"
-							@click="setAllActionQty"
-						>
-							{{ __("All Pending") }}
-						</v-btn>
-						<v-btn
-							variant="text"
-							color="error"
-							prepend-icon="mdi-close-circle-outline"
-							@click="clearActionQty"
-						>
-							{{ __("Clear") }}
-						</v-btn>
+						<v-chip color="primary" variant="tonal" prepend-icon="mdi-check-all">
+							{{ __("Full pending quantities") }}
+						</v-chip>
 					</div>
 
 					<v-alert v-if="!actionRows.length" type="info" density="compact" class="mb-3">
@@ -357,18 +356,7 @@
 							{{ formatAmount(item.pending_qty) }}
 						</template>
 						<template #item.action_qty="{ item }">
-							<v-text-field
-								:model-value="item.action_qty"
-								type="number"
-								min="0"
-								:max="item.pending_qty"
-								step="0.01"
-								variant="outlined"
-								density="compact"
-								hide-details
-								class="purchase-action-qty"
-								@update:model-value="updateActionQty(item, $event)"
-							/>
+							<strong>{{ formatAmount(item.action_qty) }}</strong>
 						</template>
 						<template #item.amount="{ item }">
 							<strong>
@@ -406,8 +394,20 @@
 			:total-amount="Number(paymentOrder?.payable_amount || 0)"
 			:currency="paymentOrder?.currency || posProfile?.currency"
 			:pos-profile="posProfile"
-			:create-invoice="false"
 			@submit="handlePaymentSubmit"
+		/>
+
+		<PurchaseAuthorizationDialog
+			v-model="authorizationDialog"
+			:title="authorizationTitle"
+			:description="authorizationDescription"
+			:document-name="authorizationRequest?.purchase_order || ''"
+			:required-role="authorizationRequiredRole"
+			:confirm-label="authorizationConfirmLabel"
+			:loading="authorizationLoading"
+			:error="authorizationError"
+			@submit="executeAuthorizedAction"
+			@cancel="cancelAuthorization"
 		/>
 	</v-dialog>
 </template>
@@ -418,6 +418,7 @@ import { normalizeDateForBackend } from "../../../format";
 import { useToastStore } from "../../../stores/toastStore";
 import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
 import PurchasePaymentDialog from "./PurchasePaymentDialog.vue";
+import PurchaseAuthorizationDialog from "./PurchaseAuthorizationDialog.vue";
 import {
 	extractPurchaseServerError,
 	formatPurchaseAmount,
@@ -439,6 +440,10 @@ const props = defineProps({
 	warehouseOptions: {
 		type: Array,
 		default: () => [],
+	},
+	readOnly: {
+		type: Boolean,
+		default: false,
 	},
 });
 
@@ -475,6 +480,10 @@ const actionOrder = ref(null);
 const actionDoc = ref(null);
 const actionDate = ref(todayDate());
 const actionRows = ref([]);
+const authorizationDialog = ref(false);
+const authorizationLoading = ref(false);
+const authorizationError = ref("");
+const authorizationRequest = ref(null);
 const managementDialogRoot = ref(null);
 const previewDialogRoot = ref(null);
 const actionDialogRoot = ref(null);
@@ -529,6 +538,30 @@ const selectedActionAmount = computed(() =>
 	actionRows.value.reduce((sum, row) => sum + (Number(row.action_qty) || 0) * (Number(row.rate) || 0), 0),
 );
 const canSubmitAction = computed(() => !!actionDate.value && selectedActionQty.value > 0);
+const authorizationTitle = computed(() => {
+	if (authorizationRequest.value?.action === "receipt") return __("Authorize Stock Receipt");
+	if (authorizationRequest.value?.action === "invoice") return __("Authorize Supplier Bill");
+	return __("Authorize Supplier Payment");
+});
+const authorizationDescription = computed(() => {
+	if (authorizationRequest.value?.action === "receipt") {
+		return __("Creates and submits a full Purchase Receipt in ERPNext.");
+	}
+	if (authorizationRequest.value?.action === "invoice") {
+		return __("Creates and submits a full Purchase Invoice in ERPNext.");
+	}
+	return authorizationRequest.value?.payment_source === "drawer"
+		? __("Pays the supplier from this terminal's open POS drawer.")
+		: __("Pays the supplier from the configured ERP account without affecting the POS drawer.");
+});
+const authorizationRequiredRole = computed(() =>
+	authorizationRequest.value?.action === "receipt" ? __("Stock Manager") : __("Accounts Manager"),
+);
+const authorizationConfirmLabel = computed(() => {
+	if (authorizationRequest.value?.action === "receipt") return __("Create Receipt");
+	if (authorizationRequest.value?.action === "invoice") return __("Create Bill");
+	return __("Create Payment");
+});
 
 watch(dialog, (value) => {
 	if (value) {
@@ -538,6 +571,7 @@ watch(dialog, (value) => {
 		errorMessage.value = "";
 		previewDoc.value = null;
 		paymentOrder.value = null;
+		cancelAuthorization(true);
 		closeActionDialog(true);
 	}
 });
@@ -659,58 +693,36 @@ async function openActionDialog(row, action) {
 	}
 }
 
-async function submitAction() {
+function createRequestId(action) {
+	const suffix =
+		globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	return `purchase-${action}-${suffix}`;
+}
+
+function requestAuthorization(request) {
+	authorizationRequest.value = {
+		...request,
+		client_request_id: request.client_request_id || createRequestId(request.action),
+	};
+	authorizationError.value = "";
+	authorizationDialog.value = true;
+}
+
+function submitAction() {
 	if (!actionOrder.value?.name || !canSubmitAction.value || actionLoading.value) return;
 
 	const row = actionOrder.value;
 	const action = actionType.value;
-	actionLoading.value = `${row.name}:${action}`;
-	try {
-		const items = actionRows.value
-			.filter((item) => Number(item.action_qty) > 0)
-			.map((item) => ({
-				item_code: item.item_code,
-				item_name: item.item_name,
-				po_detail: item.name,
-				purchase_order_item: item.name,
-				qty: Number(item.action_qty) || 0,
-				received_qty: action === "receipt" ? Number(item.action_qty) || 0 : undefined,
-				invoice_qty: action === "invoice" ? Number(item.action_qty) || 0 : undefined,
-				bill_qty: action === "invoice" ? Number(item.action_qty) || 0 : undefined,
-				warehouse: item.warehouse || row.set_warehouse,
-			}));
-
-		const { message } = await frappe.call({
-			method: "posawesome.posawesome.api.purchase_orders.process_purchase_management_action",
-			args: {
-				data: {
-					purchase_order: row.name,
-					action,
-					pos_profile: props.posProfile,
-					company: props.posProfile?.company,
-					warehouse: row.set_warehouse,
-					transaction_date: normalizeDateForBackend(actionDate.value),
-					receipt_date:
-						action === "receipt" ? normalizeDateForBackend(actionDate.value) : undefined,
-					invoice_date:
-						action === "invoice" ? normalizeDateForBackend(actionDate.value) : undefined,
-					items,
-				},
-			},
-		});
-		const createdDoc = message?.purchase_receipt || message?.purchase_invoice || row.name;
-		toastStore.show({ title: __("Purchase action completed: {0}", [createdDoc]), color: "success" });
-		closeActionDialog();
-		await loadOrders();
-		if (previewDialog.value && previewDoc.value?.name === row.name) {
-			previewDoc.value = await fetchManagementDoc(row.name);
-		}
-	} catch (error) {
-		console.error("Failed purchase management action", error);
-		toastStore.show({ title: extractServerError(error), color: "error" });
-	} finally {
-		actionLoading.value = "";
-	}
+	requestAuthorization({
+		purchase_order: row.name,
+		action,
+		pos_profile: props.posProfile,
+		company: props.posProfile?.company,
+		warehouse: row.set_warehouse,
+		transaction_date: normalizeDateForBackend(actionDate.value),
+		receipt_date: action === "receipt" ? normalizeDateForBackend(actionDate.value) : undefined,
+		invoice_date: action === "invoice" ? normalizeDateForBackend(actionDate.value) : undefined,
+	});
 }
 
 function buildActionRows(doc, action) {
@@ -725,23 +737,6 @@ function buildActionRows(doc, action) {
 			};
 		})
 		.filter((item) => item.pending_qty > 0);
-}
-
-function updateActionQty(item, value) {
-	const numericValue = Math.max(Number(value) || 0, 0);
-	item.action_qty = Math.min(numericValue, Number(item.pending_qty) || 0);
-}
-
-function setAllActionQty() {
-	actionRows.value.forEach((item) => {
-		item.action_qty = Number(item.pending_qty) || 0;
-	});
-}
-
-function clearActionQty() {
-	actionRows.value.forEach((item) => {
-		item.action_qty = 0;
-	});
 }
 
 function closeActionDialog(force = false) {
@@ -760,38 +755,68 @@ function openPayment(row) {
 	paymentDialog.value = true;
 }
 
-async function handlePaymentSubmit({ payments }) {
+function handlePaymentSubmit({ payments, payment_source }) {
 	if (!paymentOrder.value) return;
 
 	const row = paymentOrder.value;
 	paymentDialog.value = false;
-	actionLoading.value = `${row.name}:payment`;
+	requestAuthorization({
+		purchase_order: row.name,
+		action: "payment",
+		pos_profile: props.posProfile,
+		company: props.posProfile?.company,
+		payments,
+		payment_source,
+	});
+}
+
+function cancelAuthorization(force = false) {
+	if (authorizationLoading.value && !force) return;
+	authorizationDialog.value = false;
+	authorizationError.value = "";
+	authorizationRequest.value = null;
+}
+
+async function executeAuthorizedAction({ authorizationPin }) {
+	if (!authorizationRequest.value || authorizationLoading.value) return;
+
+	const request = authorizationRequest.value;
+	authorizationLoading.value = true;
+	authorizationError.value = "";
+	actionLoading.value = `${request.purchase_order}:${request.action}`;
 	try {
 		const { message } = await frappe.call({
 			method: "posawesome.posawesome.api.purchase_orders.process_purchase_management_action",
 			args: {
 				data: {
-					purchase_order: row.name,
-					action: "payment",
-					pos_profile: props.posProfile,
-					company: props.posProfile?.company,
-					payments,
+					...request,
+					authorization_pin: authorizationPin,
 				},
 			},
 		});
-		const entries = message?.payment_entries || [];
-		paymentOrder.value = null;
+		const createdDocs = [
+			message?.purchase_receipt,
+			message?.purchase_invoice,
+			...(message?.payment_entries || []),
+		].filter(Boolean);
 		toastStore.show({
-			title: entries.length
-				? __("Payment created: {0}", [entries.join(", ")])
-				: __("Payment completed"),
+			title: __("Purchase checkpoint completed: {0}", [
+				createdDocs.join(", ") || request.purchase_order,
+			]),
 			color: "success",
 		});
+		cancelAuthorization(true);
+		paymentOrder.value = null;
+		if (actionDialog.value) closeActionDialog(true);
 		await loadOrders();
+		if (previewDialog.value && previewDoc.value?.name === request.purchase_order) {
+			previewDoc.value = await fetchManagementDoc(request.purchase_order);
+		}
 	} catch (error) {
-		console.error("Failed purchase payment", error);
-		toastStore.show({ title: extractServerError(error), color: "error" });
+		console.error("Failed authorized purchase action", error);
+		authorizationError.value = extractServerError(error);
 	} finally {
+		authorizationLoading.value = false;
 		actionLoading.value = "";
 	}
 }

@@ -374,6 +374,10 @@ const props = defineProps({
 		type: Object,
 		default: null,
 	},
+	priceListOverride: {
+		type: String,
+		default: "",
+	},
 });
 
 const emit = defineEmits(["add-item", "add-items", "item-added", "alternates-cancelled"]);
@@ -525,14 +529,30 @@ const items_group = computed(() => itemsIntegration.items_group.value || []);
 const offersCount = computed(() => uiStore.offersCount || 0);
 const couponsCount = computed(() => uiStore.couponsCount || 0);
 // selected_currency is now a local ref synced via eventBus
-const active_price_list = computed(
-	() => itemsIntegration.active_price_list.value || pos_profile.value?.selling_price_list,
+const scopedPriceList = ref("");
+const active_price_list = computed(() =>
+	props.context === "purchase"
+		? scopedPriceList.value || props.priceListOverride || pos_profile.value?.selling_price_list
+		: itemsIntegration.active_price_list.value || pos_profile.value?.selling_price_list,
 );
 const { syncSelectorPriceList } = useItemsSelectorPriceListSync({
-	activePriceList: itemsIntegration.active_price_list,
+	activePriceList: props.context === "purchase" ? scopedPriceList : itemsIntegration.active_price_list,
 	getDefaultPriceList: () => pos_profile.value?.selling_price_list || "",
-	updatePriceList: (priceList) => itemsIntegration.updatePriceList(priceList),
+	updatePriceList: (priceList) => {
+		if (props.context === "purchase") {
+			scopedPriceList.value = priceList;
+			return;
+		}
+		return itemsIntegration.updatePriceList(priceList);
+	},
 });
+watch(
+	() => props.priceListOverride,
+	(value) => {
+		if (props.context === "purchase" && value) scopedPriceList.value = value.trim();
+	},
+	{ immediate: true },
+);
 const isPosSupervisor = computed(() => parseBooleanSetting(currentCashier.value?.is_supervisor));
 
 const isReturnInvoice = computed(() => {

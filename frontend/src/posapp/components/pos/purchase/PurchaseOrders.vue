@@ -33,10 +33,31 @@
 				<kbd>Ctrl S</kbd> {{ __("Save draft") }}
 			</div>
 		</header>
+		<v-alert
+			v-if="entitlementStatus.read_only"
+			type="warning"
+			density="compact"
+			variant="tonal"
+			class="ma-2 mb-0"
+			role="status"
+		>
+			<strong>{{ __("Purchasing is read-only") }}.</strong>
+			{{ entitlementStatus.reason || __("Purchasing access is unavailable on this terminal.") }}
+			{{ __("Past purchase orders remain available below.") }}
+		</v-alert>
 		<v-row class="purchase-workspace__body ma-0">
 			<!-- Left Column: Item Selector -->
-			<v-col cols="12" md="3" class="h-100 pa-0 border-e purchase-selector-column">
-				<ItemsSelector context="purchase" @add-item="onAddItem" />
+			<v-col
+				cols="12"
+				md="3"
+				class="h-100 pa-0 border-e purchase-selector-column"
+				:class="{ 'purchase-write-locked': entitlementStatus.read_only }"
+			>
+				<ItemsSelector
+					context="purchase"
+					:price-list-override="supplierPriceList || defaultBuyingPriceList"
+					@add-item="onAddItem"
+				/>
 			</v-col>
 
 			<!-- Right Column: Purchase Order Form (Cart) -->
@@ -73,10 +94,14 @@
 							:title="__('Clear All')"
 							:aria-label="__('Clear all purchase order items')"
 							data-pos-keyboard-target
+							:disabled="entitlementStatus.read_only"
 						></v-btn>
 					</v-card-title>
 
-					<v-card-text class="purchase-editor-body flex-grow-1 pa-3">
+					<v-card-text
+						class="purchase-editor-body flex-grow-1 pa-3"
+						:class="{ 'purchase-write-locked': entitlementStatus.read_only }"
+					>
 						<!-- Header Section -->
 						<PurchaseHeader
 							v-model:supplier="supplier"
@@ -137,9 +162,21 @@
 								prepend-icon="mdi-plus"
 								class="purchase-summary-btn"
 								data-pos-keyboard-target
+								:disabled="entitlementStatus.read_only"
 								@click="clearPurchaseForm"
 							>
 								{{ __("New") }}
+							</v-btn>
+							<v-btn
+								color="primary"
+								variant="flat"
+								prepend-icon="mdi-shield-check-outline"
+								class="purchase-summary-btn"
+								:disabled="saveAndClearDisabled"
+								data-pos-keyboard-target
+								@click="prepareSubmitAuthorization"
+							>
+								{{ __("Authorize Submit") }}
 							</v-btn>
 							<v-btn
 								theme="dark"
@@ -192,6 +229,20 @@
 			v-model="managementDialog"
 			:pos-profile="pos_profile"
 			:warehouse-options="warehouseOptions"
+			:read-only="entitlementStatus.read_only"
+		/>
+
+		<PurchaseAuthorizationDialog
+			v-model="submitAuthorizationDialog"
+			:title="__('Submit Purchase Order')"
+			:description="__('This submits the ERPNext Purchase Order and locks draft editing.')"
+			:document-name="purchaseOrderName || ''"
+			:required-role="__('Purchase Manager')"
+			:confirm-label="__('Submit Order')"
+			:loading="submitLoading"
+			:error="submitAuthorizationError"
+			@submit="handleAuthorizedSubmit"
+			@cancel="resetSubmitAuthorization"
 		/>
 
 		<!-- Supplier Dialog -->
@@ -209,7 +260,6 @@
 import format, { normalizeDateForBackend } from "../../../format";
 import { useUIStore } from "../../../stores/uiStore.js";
 import { getOpeningStorage } from "../../../../offline/index";
-import { useItemsStore } from "../../../stores/itemsStore";
 import { useToastStore } from "../../../stores/toastStore";
 import { usePurchaseOrder } from "../../../composables/pos/payments/usePurchaseOrder";
 import ItemsSelector from "../items/ItemsSelector.vue";
@@ -218,6 +268,7 @@ import PurchaseManagementDialog from "./PurchaseManagementDialog.vue";
 import SupplierDialog from "../dialogs/purchase/SupplierDialog.vue";
 import PurchaseHeader from "./PurchaseHeader.vue";
 import PurchaseItemsTable from "./PurchaseItemsTable.vue";
+import PurchaseAuthorizationDialog from "./PurchaseAuthorizationDialog.vue";
 import { computed, ref, watch, onMounted, onBeforeUnmount, inject } from "vue";
 import { useRouter } from "vue-router";
 import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
@@ -232,11 +283,11 @@ export default {
 		SupplierDialog,
 		PurchaseHeader,
 		PurchaseItemsTable,
+		PurchaseAuthorizationDialog,
 	},
 	setup() {
 		const uiStore = useUIStore();
 		const toastStore = useToastStore();
-		const itemsStore = useItemsStore();
 		const eventBus = inject("eventBus");
 		const router = useRouter();
 		const workspaceRoot = ref(null);
@@ -280,10 +331,15 @@ export default {
 		const draftDialog = ref(false);
 		const managementDialog = ref(false);
 		const draftSaveLoading = ref(false);
+		const submitAuthorizationDialog = ref(false);
+		const submitAuthorizationError = ref("");
+		const submitRequestId = ref("");
 		const supplierGroups = ref([]);
 		const warehouseOptions = ref([]);
 		const warehouseLoading = ref(false);
 		const purchaseOrderProgress = ref({});
+		const defaultBuyingPriceList = ref("");
+		const entitlementStatus = ref({ active: true, read_only: false, reason: "" });
 		const totalQty = computed(() =>
 			purchaseItems.value.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
 		);
@@ -294,6 +350,7 @@ export default {
 		);
 		const saveAndClearDisabled = computed(
 			() =>
+				entitlementStatus.value.read_only ||
 				submitLoading.value ||
 				draftSaveLoading.value ||
 				!purchaseItems.value.length ||
@@ -323,6 +380,26 @@ export default {
 				console.error("Failed to fetch suppliers:", error);
 			} finally {
 				supplierLoading.value = false;
+			}
+		};
+
+		const loadEntitlement = async () => {
+			try {
+				const { message } = await frappe.call({
+					method: "posawesome.posawesome.api.purchase_orders.get_purchase_entitlement",
+					args: {
+						pos_profile: pos_profile.value,
+						company: pos_profile.value?.company,
+						claim_seat: 1,
+					},
+				});
+				entitlementStatus.value = message || entitlementStatus.value;
+			} catch (error) {
+				entitlementStatus.value = {
+					active: false,
+					read_only: true,
+					reason: extractPurchaseServerError(error, __("Unable to verify Purchasing access.")),
+				};
 			}
 		};
 
@@ -451,7 +528,7 @@ export default {
 
 		const saveDraft = async () => {
 			if (!validatePurchaseOrderForm()) {
-				return;
+				return false;
 			}
 
 			draftSaveLoading.value = true;
@@ -473,12 +550,73 @@ export default {
 						title: __("Purchase Order {0} saved as draft", [savedName]),
 						color: "success",
 					});
+					return true;
 				}
+				return false;
 			} catch (error) {
 				errorMessage.value = extractServerError(error);
 				toastStore.show({ title: errorMessage.value, color: "error" });
+				return false;
 			} finally {
 				draftSaveLoading.value = false;
+			}
+		};
+
+		const createRequestId = (action) => {
+			const suffix =
+				globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+			return `purchase-${action}-${suffix}`;
+		};
+
+		const prepareSubmitAuthorization = async () => {
+			if (!(await saveDraft())) return;
+			submitAuthorizationError.value = "";
+			submitRequestId.value = createRequestId("submit");
+			submitAuthorizationDialog.value = true;
+		};
+
+		const resetSubmitAuthorization = () => {
+			if (submitLoading.value) return;
+			submitAuthorizationDialog.value = false;
+			submitAuthorizationError.value = "";
+			submitRequestId.value = "";
+		};
+
+		const handleAuthorizedSubmit = async ({ authorizationPin }) => {
+			if (!purchaseOrderName.value || submitLoading.value) return;
+			submitLoading.value = true;
+			submitAuthorizationError.value = "";
+			try {
+				const { message } = await frappe.call({
+					method: "posawesome.posawesome.api.purchase_orders.process_purchase_management_action",
+					args: {
+						data: {
+							purchase_order: purchaseOrderName.value,
+							action: "submit",
+							pos_profile: pos_profile.value,
+							company: pos_profile.value?.company,
+							expected_modified: purchaseOrderModified.value,
+							client_request_id: submitRequestId.value,
+							authorization_pin: authorizationPin,
+						},
+					},
+				});
+				toastStore.show({
+					title: __("Purchase Order {0} submitted by {1}", [
+						message?.purchase_order || purchaseOrderName.value,
+						message?.authorized_by_name || message?.authorized_by || __("authorized user"),
+					]),
+					color: "success",
+				});
+				submitAuthorizationDialog.value = false;
+				submitAuthorizationError.value = "";
+				submitRequestId.value = "";
+				clearPurchaseForm();
+				managementDialog.value = true;
+			} catch (error) {
+				submitAuthorizationError.value = extractServerError(error);
+			} finally {
+				submitLoading.value = false;
 			}
 		};
 
@@ -559,10 +697,7 @@ export default {
 			});
 
 			if (draft.supplier) {
-				const info = await fetchSupplierInfo(draft.supplier);
-				if (info?.buying_price_list) {
-					await itemsStore.updatePriceList(info.buying_price_list);
-				}
+				await fetchSupplierInfo(draft.supplier);
 			}
 
 			toastStore.show({ title: __("Purchase Order draft loaded"), color: "success" });
@@ -582,11 +717,8 @@ export default {
 			watch(supplier, async (val) => {
 				if (val) {
 					const info = await fetchSupplierInfo(val);
-					if (info?.buying_price_list) {
-						await itemsStore.updatePriceList(info.buying_price_list);
-					}
 					eventBus?.emit?.("update_buying_price_list", {
-						price_list: info?.buying_price_list || null,
+						price_list: info?.buying_price_list || defaultBuyingPriceList.value || null,
 						supplier: val,
 					});
 				} else {
@@ -599,19 +731,18 @@ export default {
 				const { message } = await frappe.call({
 					method: "posawesome.posawesome.api.purchase_orders.get_buying_price_list",
 				});
-				if (message) await itemsStore.updatePriceList(message);
+				defaultBuyingPriceList.value = message || "";
 			} catch (e) {
 				console.error("Failed price list load", e);
 			}
 
 			clearPurchaseForm();
+			await loadEntitlement();
 			await Promise.all([searchSuppliers(""), loadSupplierGroups(), loadWarehouses()]);
 		});
 
 		onBeforeUnmount(() => {
 			eventBus?.emit?.("update_buying_price_list", null);
-			if (pos_profile.value?.selling_price_list)
-				itemsStore.updatePriceList(pos_profile.value.selling_price_list);
 		});
 
 		return {
@@ -628,6 +759,8 @@ export default {
 			createInvoice,
 			supplierCurrency,
 			supplierPriceList,
+			defaultBuyingPriceList,
+			entitlementStatus,
 			priceListCurrency,
 			totalAmount,
 			totalQty,
@@ -656,16 +789,23 @@ export default {
 			warehouseLoading,
 			draftDialog,
 			managementDialog,
+			submitAuthorizationDialog,
+			submitAuthorizationError,
 			handleSupplierSearch,
 			handleSupplierCreated,
 			saveDraft,
+			prepareSubmitAuthorization,
+			resetSubmitAuthorization,
+			handleAuthorizedSubmit,
 			handleDraftSelected,
 			toastStore,
 		};
 	},
 	computed: {
 		allowCreateSupplier() {
-			return !!this.pos_profile?.posa_allow_create_purchase_suppliers;
+			return (
+				!this.entitlementStatus?.read_only && !!this.pos_profile?.posa_allow_create_purchase_suppliers
+			);
 		},
 		itemHeaders() {
 			const h = [
@@ -750,6 +890,12 @@ export default {
 .purchase-editor-column {
 	min-height: 0;
 	overflow: hidden;
+}
+
+.purchase-write-locked {
+	pointer-events: none;
+	filter: grayscale(0.35);
+	opacity: 0.68;
 }
 
 .purchase-title-bar {

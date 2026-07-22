@@ -16,6 +16,27 @@
 			</v-card-title>
 
 			<v-card-text class="pa-0 overflow-y-auto" style="max-height: 60vh">
+				<section class="purchase-payment-source pa-3">
+					<div class="text-subtitle-2 mb-2">{{ __("Payment source") }}</div>
+					<v-btn-toggle v-model="paymentSource" mandatory color="primary" class="w-100">
+						<v-btn value="drawer" class="flex-grow-1" prepend-icon="mdi-cash-register">
+							{{ __("POS Drawer") }}
+						</v-btn>
+						<v-btn value="account" class="flex-grow-1" prepend-icon="mdi-bank-outline">
+							{{ __("ERP Account") }}
+						</v-btn>
+					</v-btn-toggle>
+					<div class="text-caption text-medium-emphasis mt-2">
+						{{
+							paymentSource === "drawer"
+								? __("Included as cash-out in this terminal's shift closing.")
+								: __("Posted in ERPNext without changing the POS drawer balance.")
+						}}
+					</div>
+				</section>
+
+				<v-divider class="mx-3" />
+
 				<!-- Payment Summary -->
 				<v-row v-if="totalAmount > 0" class="pa-3 ma-0" dense>
 					<v-col cols="6">
@@ -139,62 +160,22 @@
 						></v-text-field>
 					</v-col>
 				</v-row>
-
-				<!-- Print Format Selection -->
-				<v-row class="pa-3 ma-0" dense>
-					<v-col cols="12" v-if="createInvoice">
-						<v-switch
-							v-model="printInvoice"
-							density="compact"
-							color="primary"
-							hide-details
-							:label="__('Print Purchase Invoice instead of PO')"
-							class="ma-0 mb-2"
-						></v-switch>
-					</v-col>
-					<v-col cols="12">
-						<v-select
-							v-model="selectedPrintFormat"
-							:items="printFormats"
-							:label="printInvoice ? __('Print Format (Invoice)') : __('Print Format (Order)')"
-							density="compact"
-							variant="solo"
-							color="primary"
-							hide-details
-							class="sleek-field pos-themed-input"
-							clearable
-						></v-select>
-					</v-col>
-				</v-row>
 			</v-card-text>
 
 			<v-card-actions class="pa-4 border-t bg-surface">
 				<v-row align="start" no-gutters class="w-100">
-					<v-col cols="6" class="pr-1">
+					<v-col cols="12">
 						<v-btn
 							block
 							size="large"
 							color="primary"
 							theme="dark"
 							class="submit-btn"
-							@click="submit(false)"
+							@click="submit"
 							:loading="loading"
 							:disabled="loading || !isPaymentValid"
 						>
-							{{ __("Submit") }}
-						</v-btn>
-					</v-col>
-					<v-col cols="6" class="pl-1">
-						<v-btn
-							block
-							size="large"
-							color="success"
-							theme="dark"
-							@click="submit(true)"
-							:loading="loading"
-							:disabled="loading || !isPaymentValid"
-						>
-							{{ __("Submit & Print") }}
+							{{ __("Continue to Authorization") }}
 						</v-btn>
 					</v-col>
 					<v-col cols="12" class="mt-2">
@@ -241,21 +222,15 @@ const props = defineProps({
 		type: Object,
 		required: true,
 	},
-	createInvoice: {
-		type: Boolean,
-		default: false,
-	},
 });
 
 const emit = defineEmits(["update:modelValue", "submit"]);
 const currency_precision = ref(2);
 
 const paymentLines = ref([]);
-const printFormats = ref([]);
-const selectedPrintFormat = ref(null);
-const printInvoice = ref(props.createInvoice);
 const loading = ref(false);
 const paymentDialogRoot = ref(null);
+const paymentSource = ref("drawer");
 
 const dialog = computed({
 	get() {
@@ -275,20 +250,15 @@ const remainingAmount = computed(() => props.totalAmount - paidAmount.value);
 const isPaymentValid = computed(() => {
 	const hasNegativePayment = paymentLines.value.some((p) => (parseFloat(p.amount) || 0) < 0);
 	if (hasNegativePayment) return false;
-
-	// Allow submitting Purchase Order even with zero payment.
-	// If any payment is entered, keep full-settlement behavior.
-	if (paidAmount.value <= 0) return true;
-	return remainingAmount.value <= 0;
+	return paidAmount.value > 0 && Math.abs(remainingAmount.value) <= 0.01;
 });
 
 watch(
 	() => props.modelValue,
 	(val) => {
 		if (val) {
-			printInvoice.value = props.createInvoice;
+			paymentSource.value = "drawer";
 			initializePayments();
-			fetchPrintFormats();
 			loading.value = false;
 			nextTick(() => focusFirstKeyboardTarget(paymentDialogRoot.value, "input:not([readonly])"));
 		}
@@ -303,10 +273,6 @@ function handlePaymentKeydown(event) {
 	}
 	moveFocusByArrow(event, { root: paymentDialogRoot.value });
 }
-
-watch(printInvoice, () => {
-	fetchPrintFormats();
-});
 
 const flt = (value, precision, number_format, rounding_method) => {
 	if (!precision && precision != 0) {
@@ -449,7 +415,7 @@ function close() {
 	dialog.value = false;
 }
 
-function submit(doPrint) {
+function submit() {
 	loading.value = true;
 	const payments = paymentLines.value
 		.filter((p) => p.amount > 0)
@@ -460,34 +426,8 @@ function submit(doPrint) {
 
 	emit("submit", {
 		payments,
-		print: doPrint,
-		print_format: selectedPrintFormat.value,
-		print_invoice: printInvoice.value,
+		payment_source: paymentSource.value,
 	});
-}
-
-async function fetchPrintFormats() {
-	try {
-		const doctype = printInvoice.value ? "Purchase Invoice" : "Purchase Order";
-		const { message } = await frappe.call({
-			method: "posawesome.posawesome.api.print_formats.get_print_formats",
-			args: {
-				doctype: doctype,
-			},
-		});
-		printFormats.value = message || [];
-		selectedPrintFormat.value = null;
-
-		if (printFormats.value.length) {
-			if (props.posProfile.print_format && printFormats.value.includes(props.posProfile.print_format)) {
-				selectedPrintFormat.value = props.posProfile.print_format;
-			} else {
-				selectedPrintFormat.value = printFormats.value[0];
-			}
-		}
-	} catch (e) {
-		console.error("Failed to fetch print formats", e);
-	}
 }
 </script>
 
