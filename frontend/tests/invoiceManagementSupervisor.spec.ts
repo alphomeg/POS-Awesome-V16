@@ -160,6 +160,69 @@ describe("InvoiceManagement supervisor scope", () => {
 		]);
 	});
 
+	it("loads consolidated Sales Invoice balances in the unpaid tab for POS Invoice profiles", async () => {
+		const callMock = (globalThis as any).frappe.call as ReturnType<typeof vi.fn>;
+		callMock
+			.mockResolvedValueOnce({
+				message: [
+					{
+						name: "ACC-PSINV-2026-0001",
+						outstanding_amount: 180,
+						consolidated_invoice: "ACC-SINV-2026-08801",
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				message: [
+					{
+						name: "ACC-SINV-2026-08801",
+						posting_date: "2026-07-23",
+						outstanding_amount: 180,
+					},
+				],
+			});
+
+		const context = {
+			posProfile: {
+				name: "Majid Ali",
+				company: "Farooq Chemicals",
+				create_pos_invoice_instead_of_sales_invoice: 1,
+			},
+			currentCashier: { is_supervisor: false },
+			currentInvoiceDoctype: "POS Invoice",
+			isSupervisorScope: (InvoiceManagement as any).methods.isSupervisorScope,
+			resolveSupervisorProfileScope: (InvoiceManagement as any).methods.resolveSupervisorProfileScope,
+			buildInvoiceFilters: (InvoiceManagement as any).methods.buildInvoiceFilters,
+			getInvoiceListFields: (InvoiceManagement as any).methods.getInvoiceListFields,
+			submittedInvoiceListArgs: (InvoiceManagement as any).methods.submittedInvoiceListArgs,
+			unpaidInvoices: [],
+			loading: false,
+			toastStore: { show: vi.fn() },
+		};
+
+		await (InvoiceManagement as any).methods.loadUnpaidInvoices.call(context);
+
+		expect(callMock).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({
+				args: expect.objectContaining({ doctype: "POS Invoice" }),
+			}),
+		);
+		expect(callMock).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				args: expect.objectContaining({ doctype: "Sales Invoice" }),
+			}),
+		);
+		expect(context.unpaidInvoices).toEqual([
+			expect.objectContaining({
+				name: "ACC-SINV-2026-08801",
+				doctype: "Sales Invoice",
+				outstanding_amount: 180,
+			}),
+		]);
+	});
+
 	it("defaults supervisor filtering to the current profile and supports all profiles", () => {
 		const context = {
 			posProfile: { name: "Main POS", company: "Farooq Chemicals" },

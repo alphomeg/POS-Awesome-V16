@@ -17,6 +17,16 @@ type ProvisionedCashier = {
 
 const provisionedCashiers = new WeakMap<Page, ProvisionedCashier>();
 
+export function getProvisionedTerminalCashier(page: Page) {
+	const provisioned = provisionedCashiers.get(page);
+	if (!provisioned) return null;
+	return {
+		user: provisioned.user,
+		pin: provisioned.pin,
+		profileName: provisioned.profileName,
+	};
+}
+
 async function provisionTemporaryCashier(page: Page, profileName: string) {
 	const user =
 		process.env.POSA_E2E_PROVISIONED_CASHIER?.trim() ||

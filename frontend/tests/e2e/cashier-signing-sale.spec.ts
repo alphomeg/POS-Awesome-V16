@@ -172,7 +172,7 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		"cashier-sale-payment-method",
 	);
 	await expect(paymentMethods).toHaveCount(expectedPaymentMethods.length);
-	expect(await paymentMethods.locator("span").allTextContents()).toEqual(
+	expect(await paymentMethods.locator("strong").allTextContents()).toEqual(
 		expectedPaymentMethods,
 	);
 	await expect(paymentMethods.first()).toHaveAttribute(

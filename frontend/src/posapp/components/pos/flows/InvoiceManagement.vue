@@ -3000,13 +3000,30 @@ export default {
 					is_return: 0,
 					outstanding_amount: [">", 0],
 				});
-				const { message } = await frappe.call({
-					method: "posawesome.posawesome.api.invoices.list_submitted_invoices",
-					args: this.submittedInvoiceListArgs(this.currentInvoiceDoctype, filters, ["due_date"]),
-				});
-				this.unpaidInvoices = Array.isArray(message)
-					? message.map((entry) => ({ ...entry, doctype: this.currentInvoiceDoctype }))
-					: [];
+				const doctypes =
+					typeof this.historyInvoiceDoctypes === "function"
+						? this.historyInvoiceDoctypes()
+						: this.currentInvoiceDoctype === "POS Invoice"
+							? ["POS Invoice", "Sales Invoice"]
+							: [this.currentInvoiceDoctype || "Sales Invoice"];
+				const results = await Promise.all(
+					doctypes.map(async (doctype) => {
+						const { message } = await frappe.call({
+							method: "posawesome.posawesome.api.invoices.list_submitted_invoices",
+							args: this.submittedInvoiceListArgs(doctype, filters, ["due_date"]),
+						});
+						return Array.isArray(message)
+							? message
+									.map((entry) => ({ ...entry, doctype }))
+									.filter(
+										(entry) =>
+											doctype !== "POS Invoice" ||
+											!entry.consolidated_invoice,
+									)
+							: [];
+					}),
+				);
+				this.unpaidInvoices = results.flat();
 			} catch (error) {
 				console.error("Error loading unpaid invoices:", error);
 				this.toastStore.show({ title: __("Unable to fetch unpaid invoices"), color: "error" });
