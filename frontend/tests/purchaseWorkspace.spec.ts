@@ -67,15 +67,30 @@ describe("Purchasing workspace contract", () => {
 			"purchase",
 			"PurchaseOrders.vue",
 		);
+		const entryRow = source(
+			"components",
+			"pos",
+			"purchase",
+			"PurchaseEntryRow.vue",
+		);
 
 		expect(table).toContain("VISIBLE_ROW_CAPACITY = 10");
 		expect(table).toContain("VISIBLE_ROW_CAPACITY - this.items.length");
+		expect(table).toContain("<PurchaseEntryRow");
+		expect(entryRow).toContain('data-testid="purchase-item-entry"');
 		expect(table).toContain('height="456"');
 		expect(table).toContain("--purchase-grid-row-height: 36px");
+		expect(table).toContain(".v-data-table-rows-no-data");
 		expect(table).toContain("moveFocusByArrow");
 		expect(table).toContain('@keydown.esc.prevent="cancelQtyEdit(item)"');
 		expect(table).toContain('@keydown.esc.prevent="cancelRateEdit(item)"');
 		expect(workspace).toContain('event.key === "F2"');
+		expect(workspace).toContain('presentation="counter-grid-dialog"');
+		expect(workspace).toContain('@add-item="handlePurchaseItemAdded"');
+		expect(workspace).toContain("await onAddItem(item)");
+		expect(workspace).toContain("purchaseItemsTable.value?.clearEntry?.()");
+		expect(workspace).toContain("purchaseItemsTable.value?.focusEntry?.()");
+		expect(workspace).not.toContain("purchase-selector-column");
 		expect(workspace).toContain('event.key.toLowerCase() === "s"');
 		expect(workspace).toContain("data-pos-keyboard-root");
 		const supplierDialog = source(

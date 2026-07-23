@@ -13,6 +13,8 @@
 		:data-visible-row-capacity="VISIBLE_ROW_CAPACITY"
 		@keydown.capture="handleGridKeydown"
 	>
+		<template #no-data></template>
+
 		<template v-slot:item.item_name="{ item }">
 			<div class="purchase-item-identity" tabindex="0" data-pos-keyboard-target>
 				<div class="font-weight-bold">{{ item.item_name }}</div>
@@ -178,28 +180,35 @@
 		</template>
 
 		<template #body.append>
+			<PurchaseEntryRow
+				ref="entryRow"
+				v-model="entryQuery"
+				:headers="headers"
+				:disabled="disabled"
+				@submit="$emit('search-item', $event)"
+				@navigate-back="focusPreviousRow"
+				@navigate-forward="$emit('navigate-forward')"
+			/>
 			<tr
 				v-for="slot in emptyRowCount"
 				:key="`empty-purchase-row-${slot}`"
 				class="purchase-items-grid__empty-row"
 				aria-hidden="true"
 			>
-				<td :colspan="headers.length">
-					<span v-if="slot === 1 && !items.length">{{
-						__("Scan or search an item to begin")
-					}}</span>
-				</td>
+				<td :colspan="headers.length"></td>
 			</tr>
 		</template>
 	</v-data-table>
 </template>
 
 <script>
+import PurchaseEntryRow from "./PurchaseEntryRow.vue";
 import { moveFocusByArrow } from "../../../utils/keyboardNavigation";
 
 export const VISIBLE_ROW_CAPACITY = 10;
 
 export default {
+	components: { PurchaseEntryRow },
 	props: {
 		headers: Array,
 		items: Array,
@@ -207,8 +216,20 @@ export default {
 		receiveNow: Boolean,
 		formatCurrency: Function,
 		formatNumber: Function,
+		disabled: Boolean,
 	},
-	emits: ["update-uom", "update-qty", "update-rate", "update-received-qty", "remove-item"],
+	emits: [
+		"update-uom",
+		"update-qty",
+		"update-rate",
+		"update-received-qty",
+		"remove-item",
+		"search-item",
+		"navigate-forward",
+	],
+	data() {
+		return { entryQuery: "" };
+	},
 	computed: {
 		emptyRowCount() {
 			return Math.max(VISIBLE_ROW_CAPACITY - this.items.length, 0);
@@ -218,6 +239,23 @@ export default {
 		},
 	},
 	methods: {
+		focusEntry({ select = false } = {}) {
+			this.$nextTick(() => {
+				this.$refs.entryRow?.focus?.({ preventScroll: true });
+				if (select) this.$refs.entryRow?.select?.();
+			});
+		},
+		clearEntry() {
+			this.entryQuery = "";
+		},
+		focusPreviousRow() {
+			const targets = Array.from(
+				this.$refs.table?.$el?.querySelectorAll?.(
+					"tbody tr:not(.purchase-entry-row) [data-pos-keyboard-target]",
+				) || [],
+			).filter((element) => !element.disabled && element.offsetParent !== null);
+			targets.at(-1)?.focus?.({ preventScroll: true });
+		},
 		handleGridKeydown(event) {
 			moveFocusByArrow(event, { root: this.$refs.table?.$el || null });
 		},
@@ -290,6 +328,10 @@ export default {
 .purchase-items-grid :deep(.v-table__wrapper) {
 	max-height: 456px;
 	overflow-y: auto;
+}
+
+.purchase-items-grid :deep(.v-data-table-rows-no-data) {
+	display: none;
 }
 
 .purchase-items-grid :deep(thead tr),

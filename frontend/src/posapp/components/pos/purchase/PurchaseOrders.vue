@@ -18,22 +18,7 @@
 			{{ __("Past purchase orders remain available below.") }}
 		</v-alert>
 		<v-row class="purchase-workspace__body ma-0">
-			<!-- Left Column: Item Selector -->
-			<v-col
-				cols="12"
-				md="3"
-				class="h-100 pa-0 border-e purchase-selector-column"
-				:class="{ 'purchase-write-locked': entitlementStatus.read_only }"
-			>
-				<ItemsSelector
-					context="purchase"
-					:price-list-override="supplierPriceList || defaultBuyingPriceList"
-					@add-item="onAddItem"
-				/>
-			</v-col>
-
-			<!-- Right Column: Purchase Order Form (Cart) -->
-			<v-col cols="12" md="9" class="h-100 pa-0 purchase-editor-column">
+			<v-col cols="12" class="h-100 pa-0 purchase-editor-column">
 				<v-card class="h-100 d-flex flex-column pos-themed-card" flat>
 					<v-card-title class="purchase-title-bar bg-primary text-white d-flex align-center ga-2">
 						<div>
@@ -98,17 +83,21 @@
 
 						<!-- Items Table Section -->
 						<PurchaseItemsTable
+							ref="purchaseItemsTable"
 							:headers="itemHeaders"
 							:items="purchaseItems"
 							:currencySymbol="currencySymbol(priceListCurrency || supplierCurrency)"
 							:receiveNow="receiveNow"
 							:formatCurrency="formatCurrency"
 							:formatNumber="formatNumber"
+							:disabled="entitlementStatus.read_only"
 							@update-uom="({ item, value }) => updateItemUom(item, value)"
 							@update-qty="({ item, value }) => updateItemQty(item, value)"
 							@update-rate="({ item, value }) => updateItemRate(item, value)"
 							@update-received-qty="({ item, value }) => updateItemReceivedQty(item, value)"
 							@remove-item="removeItem"
+							@search-item="openPurchaseItemSearch"
+							@navigate-forward="focusFirstPurchaseAction"
 						/>
 
 						<v-alert v-if="errorMessage" type="error" density="compact" class="mt-2">
@@ -190,6 +179,42 @@
 			</v-col>
 		</v-row>
 
+		<v-dialog
+			v-model="purchaseItemSearchOpen"
+			eager
+			:retain-focus="true"
+			width="calc(100vw - 32px)"
+			max-width="1500"
+			scrim="rgba(9, 37, 61, 0.56)"
+			class="purchase-item-search-dialog"
+			@after-enter="handlePurchaseItemSearchAfterEnter"
+			@after-leave="handlePurchaseItemSearchAfterLeave"
+		>
+			<section class="purchase-item-search-surface" :aria-label="__('Purchase item search')">
+				<header class="purchase-item-search-header">
+					<div>
+						<strong>{{ __("Add Purchase Item") }}</strong>
+						<span>{{ __("Choose an item; focus returns to the next entry row.") }}</span>
+					</div>
+					<v-btn
+						icon="mdi-close"
+						variant="text"
+						:aria-label="__('Close purchase item search')"
+						@click="purchaseItemSearchOpen = false"
+					/>
+				</header>
+				<ItemsSelector
+					ref="purchaseItemsSelector"
+					context="purchase"
+					presentation="counter-grid-dialog"
+					:initial-search="purchaseItemSearchQuery"
+					:pos-profile-override="pos_profile"
+					:price-list-override="supplierPriceList || defaultBuyingPriceList"
+					@add-item="handlePurchaseItemAdded"
+				/>
+			</section>
+		</v-dialog>
+
 		<PurchaseDraftDialog
 			v-model="draftDialog"
 			:pos-profile="pos_profile"
@@ -241,8 +266,8 @@ import SupplierDialog from "../dialogs/purchase/SupplierDialog.vue";
 import PurchaseHeader from "./PurchaseHeader.vue";
 import PurchaseItemsTable from "./PurchaseItemsTable.vue";
 import PurchaseAuthorizationDialog from "./PurchaseAuthorizationDialog.vue";
-import { computed, ref, watch, onMounted, onBeforeUnmount, inject } from "vue";
-import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
+import { computed, ref, watch, onMounted, onBeforeUnmount, inject, nextTick } from "vue";
+import { moveFocusByArrow } from "../../../utils/keyboardNavigation";
 import { extractPurchaseServerError, purchaseCurrencySymbol } from "./purchaseFormatting";
 
 export default {
@@ -261,6 +286,10 @@ export default {
 		const toastStore = useToastStore();
 		const eventBus = inject("eventBus");
 		const workspaceRoot = ref(null);
+		const purchaseItemsTable = ref(null);
+		const purchaseItemsSelector = ref(null);
+		const purchaseItemSearchOpen = ref(false);
+		const purchaseItemSearchQuery = ref("");
 
 		const pos_profile = ref({});
 		const receiveNow = ref(false);
@@ -420,26 +449,55 @@ export default {
 			purchaseOrderProgress.value = {};
 		};
 
-		const focusItemSearch = () =>
-			focusFirstKeyboardTarget(
-				workspaceRoot.value?.querySelector(".purchase-selector-column"),
-				"input[type='search'], input",
-			);
+		const focusItemSearch = () => purchaseItemsTable.value?.focusEntry?.({ select: true });
+		const focusFirstPurchaseAction = () =>
+			workspaceRoot.value
+				?.querySelector(".purchase-action-bar [data-pos-keyboard-target]:not([disabled])")
+				?.focus?.({ preventScroll: true });
+		const openPurchaseItemSearch = (query) => {
+			if (entitlementStatus.value.read_only) return;
+			const normalizedQuery = String(query || "").trim();
+			if (!normalizedQuery) return;
+			purchaseItemSearchQuery.value = normalizedQuery;
+			purchaseItemSearchOpen.value = true;
+		};
+		const handlePurchaseItemAdded = async (item) => {
+			if (!item || entitlementStatus.value.read_only) return;
+			await onAddItem(item);
+			purchaseItemsTable.value?.clearEntry?.();
+			purchaseItemSearchOpen.value = false;
+		};
+		const handlePurchaseItemSearchAfterEnter = () => {
+			nextTick(() => purchaseItemsSelector.value?.focusSearchInput?.());
+		};
+		const handlePurchaseItemSearchAfterLeave = () => {
+			if (purchaseItemSearchOpen.value) return;
+			purchaseItemSearchQuery.value = "";
+			nextTick(() => purchaseItemsTable.value?.focusEntry?.());
+		};
 
-		const handleWorkspaceKeydown = (event) => {
+		const handlePurchaseShortcut = (event) => {
 			if (event.key === "F2") {
 				event.preventDefault();
 				focusItemSearch();
-				return;
+				return true;
 			}
 
 			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
 				event.preventDefault();
 				if (!saveAndClearDisabled.value) void saveDraft();
-				return;
+				return true;
 			}
+			return false;
+		};
 
+		const handleWorkspaceKeydown = (event) => {
+			if (handlePurchaseShortcut(event)) return;
 			moveFocusByArrow(event, { root: workspaceRoot.value });
+		};
+		const handleGlobalKeydown = (event) => {
+			if (workspaceRoot.value?.contains(event.target)) return;
+			handlePurchaseShortcut(event);
 		};
 
 		const validatePurchaseOrderForm = () => {
@@ -672,6 +730,7 @@ export default {
 		};
 
 		onMounted(async () => {
+			window.addEventListener("keydown", handleGlobalKeydown, true);
 			const cachedData = getOpeningStorage();
 			const withPaymentMethods = (profile) => {
 				if (!profile) return profile;
@@ -682,7 +741,9 @@ export default {
 				return payments.length ? { ...profile, payments } : profile;
 			};
 			if (cachedData?.pos_profile) {
-				pos_profile.value = withPaymentMethods(cachedData.pos_profile);
+				const cachedProfile = withPaymentMethods(cachedData.pos_profile);
+				pos_profile.value = cachedProfile;
+				uiStore.setPosProfile(cachedProfile);
 			}
 
 			watch(
@@ -720,11 +781,16 @@ export default {
 		});
 
 		onBeforeUnmount(() => {
+			window.removeEventListener("keydown", handleGlobalKeydown, true);
 			eventBus?.emit?.("update_buying_price_list", null);
 		});
 
 		return {
 			workspaceRoot,
+			purchaseItemsTable,
+			purchaseItemsSelector,
+			purchaseItemSearchOpen,
+			purchaseItemSearchQuery,
 			pos_profile,
 			receiveNow,
 			purchaseItems,
@@ -758,6 +824,11 @@ export default {
 			resetForm,
 			clearPurchaseForm,
 			handleWorkspaceKeydown,
+			openPurchaseItemSearch,
+			handlePurchaseItemAdded,
+			handlePurchaseItemSearchAfterEnter,
+			handlePurchaseItemSearchAfterLeave,
+			focusFirstPurchaseAction,
 			supplierOptions,
 			supplierLoading,
 			supplierDialog,
@@ -825,8 +896,57 @@ export default {
 	overflow: hidden;
 }
 
-.purchase-selector-column,
 .purchase-editor-column {
+	min-height: 0;
+	overflow: hidden;
+}
+
+.purchase-item-search-surface {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-height: calc(100vh - 24px);
+	max-height: calc(100dvh - 24px);
+	min-height: 0;
+	overflow: hidden;
+	border: 3px solid var(--pos-text-primary);
+	border-radius: 5px;
+	background: var(--pos-surface-muted);
+	box-shadow: 0 5px 14px rgba(23, 59, 43, 0.24);
+}
+
+.purchase-item-search-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	min-height: 58px;
+	padding: 7px 10px 7px 16px;
+	border-bottom: 2px solid rgb(var(--v-theme-primary));
+	background: rgb(var(--v-theme-primary));
+	color: #fff;
+}
+
+.purchase-item-search-header > div {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.purchase-item-search-header strong {
+	font-size: 1rem;
+}
+
+.purchase-item-search-header span {
+	font-size: 0.78rem;
+}
+
+.purchase-item-search-header :deep(.v-btn) {
+	color: #fff !important;
+}
+
+.purchase-item-search-surface :deep(.items-selector-shell) {
+	flex: 1 1 auto;
 	min-height: 0;
 	overflow: hidden;
 }

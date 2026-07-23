@@ -378,6 +378,10 @@ const props = defineProps({
 		type: String,
 		default: "",
 	},
+	posProfileOverride: {
+		type: Object,
+		default: null,
+	},
 });
 
 const emit = defineEmits(["add-item", "add-items", "item-added", "alternates-cancelled"]);
@@ -396,6 +400,9 @@ const {
 	triggerTopItemSelection,
 	activeView,
 } = storeToRefs(uiStore);
+const effectivePosProfile = computed(() =>
+	props.posProfileOverride?.name ? props.posProfileOverride : uiPosProfile.value,
+);
 const { currentCashier } = storeToRefs(employeeStore);
 const { deferStockValidationToPayment: invoiceTypeDefersStockValidation } = storeToRefs(invoiceStore);
 
@@ -1161,7 +1168,7 @@ const handleCounterResultEnter = async (event?: KeyboardEvent) => {
 		await selectAlternateItem(highlighted);
 		return;
 	}
-	if (highlighted && isUnavailableForSale(highlighted, qty.value)) {
+	if (props.context === "pos" && highlighted && isUnavailableForSale(highlighted, qty.value)) {
 		event?.preventDefault?.();
 		await openAlternateMode(
 			{
@@ -1470,7 +1477,7 @@ onMounted(async () => {
 	});
 
 	stopItemInitializationWatcher = startItemsSelectorInitialization({
-		uiPosProfile,
+		uiPosProfile: effectivePosProfile,
 		selectedCustomer,
 		customerPriceList: customer_price_list,
 		selectedCurrency: selected_currency,
@@ -1776,7 +1783,7 @@ const click_item_row = (e: any, data: any) => {
 			void selectAlternateItem(item);
 			return;
 		}
-		if (isUnavailableForSale(item, qty.value)) {
+		if (props.context === "pos" && isUnavailableForSale(item, qty.value)) {
 			void openAlternateMode(
 				{
 					...item,

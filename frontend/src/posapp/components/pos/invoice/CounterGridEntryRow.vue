@@ -74,13 +74,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 		emit("navigatePay");
 		return;
 	}
-	if (
-		event.key === "ArrowDown" &&
-		!event.altKey &&
-		!event.ctrlKey &&
-		!event.metaKey &&
-		!event.shiftKey
-	) {
+	if (event.key === "ArrowDown" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
 		event.preventDefault();
 		event.stopPropagation();
 		emit("navigateForward");
@@ -107,7 +101,7 @@ defineExpose({ focus, select });
 
 <style scoped>
 .counter-grid-entry-row {
-	height: 60px;
+	height: 44px;
 	background: #f8fbf9;
 	border-top: 2px solid var(--rm-cg-line-strong);
 }
@@ -131,8 +125,8 @@ defineExpose({ focus, select });
 	align-items: center;
 	gap: 8px;
 	width: 100%;
-	min-height: 38px;
-	padding: 6px 10px;
+	min-height: 34px;
+	padding: 4px 10px;
 	border: 2px solid var(--rm-cg-focus);
 	border-radius: 3px;
 	background: #ffffff;

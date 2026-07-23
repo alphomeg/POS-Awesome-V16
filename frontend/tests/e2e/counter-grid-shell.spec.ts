@@ -355,6 +355,66 @@ test.describe("Counter Grid shell", () => {
 		expect(codes.slice(0, 2)).toEqual([first.itemCode, second.itemCode]);
 	});
 
+	test("keeps at least seven selling item rows visible at the retail desktop viewport", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 2048, height: 1050 });
+		await waitForPos(page);
+		await addKnownItemFromCounterSearch(page);
+
+		const metrics = await page.locator(".posa-cart-table--counter-grid").evaluate((table) => {
+			const container = table.closest(".posa-items-table-container");
+			const header = table.querySelector("thead");
+			const row = table.querySelector(".posa-cart-item-row");
+			const containerHeight = container?.getBoundingClientRect().height || 0;
+			const headerHeight = header?.getBoundingClientRect().height || 0;
+			const rowHeight = row?.getBoundingClientRect().height || 0;
+			return {
+				rowHeight,
+				visibleItemCapacity: rowHeight
+					? Math.floor((containerHeight - headerHeight) / rowHeight)
+					: 0,
+			};
+		});
+
+		expect(metrics.rowHeight).toBeGreaterThanOrEqual(40);
+		expect(metrics.rowHeight).toBeLessThanOrEqual(66);
+		expect(metrics.visibleItemCapacity).toBeGreaterThanOrEqual(7);
+	});
+
+	test("adds a purchase item by keyboard and restores the trailing entry focus", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 2048, height: 1050 });
+		await waitForPos(page);
+		await page.getByRole("button", { name: "Purchasing", exact: true }).click();
+		await expect(page.locator(".purchase-workspace")).toBeVisible();
+
+		const entry = page.getByTestId("purchase-item-entry");
+		await page.keyboard.press("F2");
+		await expect(entry).toBeFocused();
+		await entry.fill(KNOWN_ITEM_CODES[0]);
+		await entry.press("Enter");
+
+		const surface = page.locator(".purchase-item-search-surface");
+		const search = page.getByTestId("pos-item-search").locator("input");
+		await expect(surface).toBeVisible();
+		await expect(search).toBeFocused();
+		await expect(search).toHaveValue(KNOWN_ITEM_CODES[0]);
+		await expect(
+			surface.locator(".items-selector-shell--counter-dialog"),
+		).toHaveAttribute("data-search-ready-query", KNOWN_ITEM_CODES[0], {
+			timeout: 30_000,
+		});
+		await expect(page.getByTestId(`pos-item-row-${KNOWN_ITEM_CODES[0]}`)).toBeVisible();
+		await search.press("Enter");
+
+		await expect(surface).toBeHidden();
+		await expect(page.locator(".purchase-item-identity")).toHaveCount(1);
+		await expect(entry).toBeFocused();
+		await expect(entry).toHaveValue("");
+	});
+
 	test("supports spreadsheet boundary keys and reverse Enter progression", async ({
 		page,
 	}) => {
