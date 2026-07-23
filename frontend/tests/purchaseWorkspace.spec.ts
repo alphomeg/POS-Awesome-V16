@@ -17,9 +17,18 @@ describe("Purchasing workspace contract", () => {
 			"purchase",
 			"PurchaseOrders.vue",
 		);
+		const modeSwitch = source(
+			"components",
+			"navigation",
+			"WorkspaceModeSwitch.vue",
+		);
 
-		expect(workspace).toContain('{{ __("Selling") }}');
-		expect(workspace).toContain('{{ __("Purchasing") }}');
+		expect(modeSwitch).toContain('{{ __("Selling") }}');
+		expect(modeSwitch).toContain('{{ __("Purchasing") }}');
+		expect(modeSwitch).toContain("router.push('/pos')");
+		expect(modeSwitch).toContain("router.push('/orders')");
+		const layout = source("layouts", "DefaultLayout.vue");
+		expect(layout).toContain("<WorkspaceModeSwitch");
 		expect(workspace).toContain("submit: 0");
 		expect(workspace).toContain(
 			"expected_modified: purchaseOrderModified.value",

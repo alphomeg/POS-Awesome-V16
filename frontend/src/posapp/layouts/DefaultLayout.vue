@@ -40,6 +40,7 @@
 				@refresh-cache-usage="handleRefreshCacheUsage"
 				@update-after-delete="handleUpdateAfterDelete"
 			/>
+			<WorkspaceModeSwitch />
 			<v-snackbar
 				v-model="bootstrapSnackbarVisible"
 				:timeout="8000"
@@ -84,6 +85,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, getCurrentInstance } from "vue";
 // Note paths updated to be relative to layouts/ directory
 import Navbar from "../components/Navbar.vue";
+import WorkspaceModeSwitch from "../components/navigation/WorkspaceModeSwitch.vue";
 import ClosingDialog from "../components/pos/shell/ClosingDialog.vue";
 import AppLoadingOverlay from "../components/ui/LoadingOverlay.vue";
 import UpdatePrompt from "../components/ui/UpdatePrompt.vue";

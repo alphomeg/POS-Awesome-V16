@@ -5,34 +5,6 @@
 		data-pos-keyboard-root
 		@keydown.capture="handleWorkspaceKeydown"
 	>
-		<header class="purchase-mode-bar">
-			<nav class="purchase-mode-switch" :aria-label="__('POS workspace')">
-				<v-btn
-					variant="text"
-					prepend-icon="mdi-network-pos"
-					class="purchase-mode-switch__button"
-					data-pos-keyboard-target
-					@click="openSellingWorkspace"
-				>
-					{{ __("Selling") }}
-				</v-btn>
-				<v-btn
-					variant="flat"
-					color="primary"
-					prepend-icon="mdi-cart-arrow-down"
-					class="purchase-mode-switch__button"
-					aria-current="page"
-					data-pos-keyboard-target
-				>
-					{{ __("Purchasing") }}
-				</v-btn>
-			</nav>
-			<div class="purchase-mode-bar__hint">
-				<kbd>F2</kbd> {{ __("Find item") }}
-				<span aria-hidden="true">·</span>
-				<kbd>Ctrl S</kbd> {{ __("Save draft") }}
-			</div>
-		</header>
 		<v-alert
 			v-if="entitlementStatus.read_only"
 			type="warning"
@@ -270,7 +242,6 @@ import PurchaseHeader from "./PurchaseHeader.vue";
 import PurchaseItemsTable from "./PurchaseItemsTable.vue";
 import PurchaseAuthorizationDialog from "./PurchaseAuthorizationDialog.vue";
 import { computed, ref, watch, onMounted, onBeforeUnmount, inject } from "vue";
-import { useRouter } from "vue-router";
 import { focusFirstKeyboardTarget, moveFocusByArrow } from "../../../utils/keyboardNavigation";
 import { extractPurchaseServerError, purchaseCurrencySymbol } from "./purchaseFormatting";
 
@@ -289,7 +260,6 @@ export default {
 		const uiStore = useUIStore();
 		const toastStore = useToastStore();
 		const eventBus = inject("eventBus");
-		const router = useRouter();
 		const workspaceRoot = ref(null);
 
 		const pos_profile = ref({});
@@ -449,8 +419,6 @@ export default {
 			resetForm();
 			purchaseOrderProgress.value = {};
 		};
-
-		const openSellingWorkspace = () => router.push("/pos");
 
 		const focusItemSearch = () =>
 			focusFirstKeyboardTarget(
@@ -789,7 +757,6 @@ export default {
 			removeItem,
 			resetForm,
 			clearPurchaseForm,
-			openSellingWorkspace,
 			handleWorkspaceKeydown,
 			supplierOptions,
 			supplierLoading,
@@ -856,44 +823,6 @@ export default {
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow: hidden;
-}
-
-.purchase-mode-bar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	padding: 6px 12px;
-	border-bottom: 1px solid var(--pos-border);
-	background: var(--pos-surface-raised);
-}
-
-.purchase-mode-switch {
-	display: inline-flex;
-	gap: 4px;
-}
-
-.purchase-mode-switch__button {
-	min-height: 36px !important;
-	text-transform: none !important;
-}
-
-.purchase-mode-bar__hint {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	font-size: 0.76rem;
-	color: var(--pos-text-muted);
-}
-
-.purchase-mode-bar__hint kbd {
-	padding: 1px 5px;
-	border: 1px solid var(--pos-border);
-	border-bottom-width: 2px;
-	border-radius: 4px;
-	background: var(--pos-surface-variant);
-	font: inherit;
-	font-weight: 700;
 }
 
 .purchase-selector-column,
@@ -1040,10 +969,6 @@ export default {
 		flex: 1 1 auto;
 		width: 100%;
 		margin-inline-start: 0;
-	}
-
-	.purchase-mode-bar__hint {
-		display: none;
 	}
 
 	.purchase-summary-btn {

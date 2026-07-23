@@ -551,6 +551,15 @@ def get_purchase_entitlement(pos_profile=None, company=None, claim_seat=1):
     profile = _resolve_pos_profile(pos_profile)
     resolved_company = company or profile.get("company") or frappe.defaults.get_default("company")
     _assert_pos_write_allowed(profile, company=resolved_company)
+    if not cint(profile.get("posa_allow_purchase_order")):
+        return {
+            "provider": "pos_profile",
+            "active": False,
+            "read_only": True,
+            "reason": _("Purchasing is not enabled for this POS Profile."),
+            "pos_profile": profile.get("name"),
+            "company": resolved_company,
+        }
     return get_purchase_entitlement_status(profile, claim_seat=bool(cint(claim_seat)))
 
 

@@ -674,6 +674,29 @@ class TestPurchaseOrdersApi(unittest.TestCase):
             self.module._resolve_pos_profile = original_resolve
             self.module.frappe.db.get_value = original_get_value
 
+    def test_purchase_entitlement_is_read_only_when_profile_feature_is_disabled(self):
+        profile = AttrDict(
+            {
+                "name": "POS-TEST",
+                "company": "Test Co",
+                "posa_allow_purchase_order": 0,
+            }
+        )
+        original_resolve = self.module._resolve_pos_profile
+        original_status = self.module.get_purchase_entitlement_status
+        self.module._resolve_pos_profile = lambda _profile: profile
+        self.module.get_purchase_entitlement_status = lambda *_args, **_kwargs: (
+            self.fail("The paid entitlement provider must not claim a seat for a disabled profile")
+        )
+        try:
+            result = self.module.get_purchase_entitlement("POS-TEST")
+            self.assertFalse(result["active"])
+            self.assertTrue(result["read_only"])
+            self.assertIn("not enabled", result["reason"])
+        finally:
+            self.module._resolve_pos_profile = original_resolve
+            self.module.get_purchase_entitlement_status = original_status
+
 
 if __name__ == "__main__":
     unittest.main()
