@@ -219,6 +219,15 @@ def _install_dependency_stubs():
     pos_access_module.require_pos_supervisor_or_manager = lambda: "manager@example.com"
     sys.modules["posawesome.posawesome.api.pos_access"] = pos_access_module
 
+    credit_sales_module = types.ModuleType(
+        "posawesome.posawesome.api.credit_sales"
+    )
+    credit_sales_module.CREDIT_SALE_FIELD = "posa_is_credit_sale"
+    credit_sales_module.authorize_credit_sale = (
+        lambda *_args, **_kwargs: None
+    )
+    sys.modules["posawesome.posawesome.api.credit_sales"] = credit_sales_module
+
 
 def _install_package_stubs():
     package_paths = {
@@ -2995,6 +3004,16 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.creation.frappe.get_doc = fake_get_doc
         self.creation.frappe.get_value = fake_get_value
         self.creation.enqueue = fake_enqueue
+        original_worker_health = (
+            self.creation._background_submission_worker_available
+        )
+        self.creation._background_submission_worker_available = lambda: True
+        self.addCleanup(
+            setattr,
+            self.creation,
+            "_background_submission_worker_available",
+            original_worker_health,
+        )
         self.creation._validate_invoice_opening_shift = self.real_validate_invoice_opening_shift
         self.creation.update_invoice = Mock(side_effect=AssertionError("fast background path must not update draft synchronously"))
 
@@ -3030,6 +3049,111 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.assertEqual(enqueued["kwargs"]["opening_shift"], "POS-OPEN-0001")
         self.assertEqual(enqueued["kwargs"]["opening_user"], "test@example.com")
         self.creation.update_invoice.assert_not_called()
+
+    def test_submit_invoice_falls_back_to_sync_when_background_worker_is_missing(self):
+        ledger_doc = FakeDoc(
+            doctype="POS Invoice Submission Ledger",
+            name="ledger-sync-fallback-001",
+            ledger_key="ledger-sync-fallback-001",
+            client_request_id="ledger-sync-fallback-001",
+            company="Test Company",
+            pos_profile="Main POS",
+            document_type="Sales Invoice",
+            state="DRAFT_CREATED",
+            invoice_name="ACC-SINV-SYNC-FALLBACK-0001",
+        )
+        ledger_doc.save = lambda ignore_permissions=False: ledger_doc
+        invoice_doc = FakeDoc(
+            doctype="Sales Invoice",
+            name="ACC-SINV-SYNC-FALLBACK-0001",
+            docstatus=0,
+            pos_profile="Main POS",
+            company="Test Company",
+            currency="USD",
+            customer="CUST-0001",
+            is_return=0,
+            items=[],
+            payments=[],
+            taxes=[],
+            flags=types.SimpleNamespace(ignore_permissions=False),
+            redeem_loyalty_points=0,
+            loyalty_program=None,
+            cost_center=None,
+            write_off_amount=0,
+            rounded_total=10,
+            grand_total=10,
+            conversion_rate=1,
+            remarks="",
+        )
+        invoice_doc.submit = lambda: setattr(invoice_doc, "docstatus", 1)
+
+        self.creation.frappe.db.get_value = lambda *args, **kwargs: 0
+        self.creation.frappe.db.exists = (
+            lambda doctype, name: doctype == "Sales Invoice"
+            and name == invoice_doc.name
+        )
+        self.creation.frappe.get_value = (
+            lambda doctype, *args, **kwargs: 1
+            if doctype == "POS Profile"
+            else 0
+        )
+        self.creation.frappe.get_doc = lambda *args, **kwargs: invoice_doc
+        self.creation._save_draft_with_latest_timestamp = lambda doc: doc
+        self.creation._apply_invoice_gift_card_settlement = (
+            lambda *args, **kwargs: None
+        )
+        self.creation._process_post_submit_payments = (
+            lambda *args, **kwargs: None
+        )
+
+        with (
+            patch.object(
+                self.creation,
+                "_get_submission_ledger",
+                return_value=ledger_doc,
+            ),
+            patch.object(
+                self.creation,
+                "find_invoice_by_client_request_id",
+                return_value=None,
+            ),
+            patch.object(
+                self.creation,
+                "_lock_and_refresh_submission_ledger",
+                return_value=ledger_doc,
+            ),
+            patch.object(
+                self.creation,
+                "_background_submission_worker_available",
+                return_value=False,
+            ),
+            patch.object(self.creation, "enqueue") as enqueue,
+        ):
+            result = self.creation.submit_invoice(
+                json.dumps(
+                    {
+                        "doctype": "Sales Invoice",
+                        "name": invoice_doc.name,
+                        "pos_profile": "Main POS",
+                        "company": "Test Company",
+                        "currency": "USD",
+                        "customer": "CUST-0001",
+                        "items": [],
+                        "payments": [],
+                        "posa_client_request_id": "ledger-sync-fallback-001",
+                    }
+                ),
+                json.dumps(
+                    {"idempotency_key": "ledger-sync-fallback-001"}
+                ),
+                submit_in_background=1,
+                cashier_pin="1234",
+            )
+
+        self.assertEqual(result["docstatus"], 1)
+        self.assertEqual(result["ledger_state"], "POST_SUBMIT_DONE")
+        self.assertEqual(invoice_doc.docstatus, 1)
+        enqueue.assert_not_called()
 
     def test_save_submission_ledger_inserts_named_new_doc(self):
         calls = {"insert": 0, "save": 0}
@@ -3132,6 +3256,107 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.assertEqual(result["name"], "ACC-SINV-REPAIR-0001")
         self.assertEqual(result["ledger_state"], "POST_SUBMIT_DONE")
         self.assertTrue(result["repaired"])
+
+    def test_repair_incomplete_submission_ledger_resumes_linked_draft_with_same_request(self):
+        ledger_doc = FakeDoc(
+            doctype="POS Invoice Submission Ledger",
+            name="ledger-repair-draft-001",
+            ledger_key="ledger-repair-draft-001",
+            client_request_id="ledger-repair-draft-001",
+            company="Test Company",
+            pos_profile="Main POS",
+            document_type="Sales Invoice",
+            invoice_name="ACC-SINV-REPAIR-DRAFT-0001",
+            state="DRAFT_CREATED",
+            request_data=json.dumps(
+                {"idempotency_key": "ledger-repair-draft-001"}
+            ),
+            invoice_payload=json.dumps(
+                {
+                    "doctype": "Sales Invoice",
+                    "name": "ACC-SINV-REPAIR-DRAFT-0001",
+                    "pos_profile": "Main POS",
+                    "company": "Test Company",
+                    "posa_pos_opening_shift": "POS-OPEN-0001",
+                }
+            ),
+        )
+        ledger_doc.save = lambda ignore_permissions=False: ledger_doc
+        invoice_doc = FakeDoc(
+            doctype="Sales Invoice",
+            name="ACC-SINV-REPAIR-DRAFT-0001",
+            docstatus=0,
+            pos_profile="Main POS",
+            company="Test Company",
+            posa_pos_opening_shift="POS-OPEN-0001",
+        )
+
+        def fake_get_value(doctype, filters=None, fieldname=None, **kwargs):
+            if doctype == "POS Invoice Submission Ledger":
+                return ledger_doc.name
+            if (
+                doctype == "POS Opening Shift"
+                and filters == "POS-OPEN-0001"
+                and fieldname == "user"
+            ):
+                return "cashier@example.com"
+            return None
+
+        def fake_get_doc(doctype, name):
+            if doctype == "POS Invoice Submission Ledger":
+                return ledger_doc
+            if doctype == "POS Profile":
+                return AttrDict(name="Main POS", company="Test Company")
+            if doctype == "Sales Invoice":
+                return invoice_doc
+            raise AssertionError(f"unexpected get_doc call: {(doctype, name)}")
+
+        self.creation.frappe.db.get_value = fake_get_value
+        self.creation.frappe.db.exists = (
+            lambda doctype, name: doctype == "Sales Invoice"
+            and name == invoice_doc.name
+        )
+        self.creation.frappe.get_doc = fake_get_doc
+
+        resumed = {
+            "name": invoice_doc.name,
+            "doctype": invoice_doc.doctype,
+            "docstatus": 1,
+            "status": 1,
+            "client_request_id": ledger_doc.client_request_id,
+            "ledger_state": "POST_SUBMIT_DONE",
+        }
+        with (
+            patch.object(
+                self.creation,
+                "_resolve_current_invoice_opening_shift",
+                return_value=FakeDoc(name="POS-OPEN-0001"),
+            ),
+            patch.object(
+                self.creation,
+                "submit_invoice",
+                return_value=resumed,
+            ) as submit_invoice,
+        ):
+            result = self.creation.repair_invoice_submission(
+                client_request_id=ledger_doc.client_request_id,
+                company="Test Company",
+                pos_profile="Main POS",
+                document_type="Sales Invoice",
+            )
+
+        self.assertEqual(result, resumed)
+        submitted_payload = json.loads(submit_invoice.call_args.args[0])
+        submitted_data = json.loads(submit_invoice.call_args.args[1])
+        self.assertEqual(
+            submitted_payload["posa_client_request_id"],
+            ledger_doc.client_request_id,
+        )
+        self.assertEqual(
+            submitted_data["client_request_id"],
+            ledger_doc.client_request_id,
+        )
+        self.assertEqual(submit_invoice.call_args.kwargs["submit_in_background"], 0)
 
     def test_background_submit_updates_existing_submission_ledger(self):
         ledger_doc = FakeDoc(

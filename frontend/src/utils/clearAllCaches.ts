@@ -1,313 +1,341 @@
-const DEFAULT_INDEXED_DB_NAMES = ["posawesome_offline"];
+/**
+ * POS-owned browser maintenance.
+ *
+ * This module deliberately never enumerates and clears an origin wholesale.
+ * Frappe Desk shares the origin with POS Awesome, so every mutable resource
+ * must be explicitly registered here.
+ */
 
-async function delay(ms: number) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+export const POS_STORAGE_OWNERSHIP = Object.freeze({
+	indexedDbNames: ["posawesome_offline"],
+	cachePrefixes: ["posawesome-cache-"],
+	serviceWorkerPaths: ["/sw.js"],
+	localStorageExact: [
+		"networkOnline",
+		"serverOnline",
+		"use_western_numerals",
+	],
+	localStoragePrefixes: [
+		"posa_",
+		"posawesome_",
+		"pos_manual_base_",
+	],
+	sessionStorageExact: ["networkOnline", "serverOnline"],
+	sessionStoragePrefixes: [
+		"posa_",
+		"posawesome_",
+		"pos_audit_archive_",
+	],
+});
+
+export type PosStateInventory = {
+	indexedDb: Record<string, number | null>;
+	localStorageKeys: number;
+	sessionStorageKeys: number;
+	cacheNames: string[];
+	serviceWorkerScopes: string[];
+	operational: {
+		invoiceOutbox: number | null;
+		writeQueue: number | null;
+		legacyQueue: number | null;
+		openingShifts: number | null;
+		intentJournals: number;
+		activeRecoveryPointers: number;
+	};
+};
+
+function registeredKeys(
+	storage: Storage,
+	exact: readonly string[],
+	prefixes: readonly string[],
+) {
+	return Object.keys(storage).filter(
+		(key) =>
+			exact.includes(key) ||
+			prefixes.some((prefix) => key.startsWith(prefix)),
+	);
 }
 
-export async function clearLocalStorage(keys: string[] = []) {
-	if (typeof localStorage === "undefined") return;
+function isOwnedServiceWorker(registration: ServiceWorkerRegistration) {
+	const worker =
+		registration.active ||
+		registration.waiting ||
+		registration.installing;
+	if (!worker?.scriptURL) return false;
 	try {
-		if (keys.length) {
-			keys.forEach((k) => localStorage.removeItem(k));
-		} else {
-			Object.keys(localStorage).forEach((key) =>
-				localStorage.removeItem(key),
-			);
-		}
-		console.log(
-			"[ClearAllCaches] localStorage cleared",
-			keys.length ? keys : "all",
+		const scriptUrl = new URL(worker.scriptURL, window.location.origin);
+		return (
+			scriptUrl.origin === window.location.origin &&
+			POS_STORAGE_OWNERSHIP.serviceWorkerPaths.includes(
+				scriptUrl.pathname,
+			)
 		);
-	} catch (e) {
-		console.error("[ClearAllCaches] Failed to clear localStorage", e);
-		throw e;
+	} catch {
+		return false;
 	}
 }
 
-export async function clearSessionStorage(keys: string[] = []) {
-	if (typeof sessionStorage === "undefined") return;
-	try {
-		if (keys.length) {
-			keys.forEach((k) => sessionStorage.removeItem(k));
-		} else {
-			sessionStorage.clear();
-		}
-		console.log(
-			"[ClearAllCaches] sessionStorage cleared",
-			keys.length ? keys : "all",
-		);
-	} catch (e) {
-		console.error("[ClearAllCaches] Failed to clear sessionStorage", e);
-		throw e;
+async function getOwnedServiceWorkerRegistrations() {
+	if (
+		typeof navigator === "undefined" ||
+		!("serviceWorker" in navigator) ||
+		!navigator.serviceWorker.getRegistrations
+	) {
+		return [];
 	}
+	const registrations = await navigator.serviceWorker.getRegistrations();
+	return Array.from(registrations).filter(isOwnedServiceWorker);
 }
 
-export async function clearIndexedDB(databases: string[] = []) {
-	if (typeof indexedDB === "undefined") return;
-	try {
-		let targets = Array.isArray(databases) ? [...databases] : [];
+async function getOwnedCacheNames() {
+	if (typeof caches === "undefined") return [];
+	const names = await caches.keys();
+	return names.filter((name) =>
+		POS_STORAGE_OWNERSHIP.cachePrefixes.some((prefix) =>
+			name.startsWith(prefix),
+		),
+	);
+}
 
-		if (!targets.length && (indexedDB as any).databases) {
+async function countIndexedDbTables() {
+	const counts: Record<string, number | null> = {};
+	try {
+		const { db } = await import("../offline/db");
+		if (!db.isOpen()) {
+			await db.open();
+		}
+		for (const table of db.tables) {
 			try {
-				const infos = await (indexedDB as any).databases();
-				targets = infos.map((d: any) => d && d.name).filter(Boolean);
-			} catch (enumerationError) {
-				console.warn(
-					"[ClearAllCaches] Failed to enumerate IndexedDB databases",
-					enumerationError,
+				counts[table.name] = await table.count();
+			} catch {
+				counts[table.name] = null;
+			}
+		}
+	} catch {
+		for (const database of POS_STORAGE_OWNERSHIP.indexedDbNames) {
+			counts[database] = null;
+		}
+	}
+	return counts;
+}
+
+async function countOperationalRecords() {
+	const fallback = {
+		invoiceOutbox: null,
+		writeQueue: null,
+		legacyQueue: null,
+		openingShifts: null,
+	};
+	try {
+		const { db } = await import("../offline/db");
+		if (!db.isOpen()) await db.open();
+		const terminalStatuses = new Set(["acknowledged", "synced"]);
+		const [invoiceRows, writeRows, legacyRows, openingShifts] =
+			await Promise.all([
+				db.table("invoice_outbox").toArray(),
+				db.table("write_queue").toArray(),
+				db.table("queue").toArray(),
+				db.table("opening_shifts").count(),
+			]);
+		return {
+			invoiceOutbox: invoiceRows.filter(
+				(row) =>
+					!terminalStatuses.has(
+						String(row?.status || "").toLowerCase(),
+					),
+			).length,
+			writeQueue: writeRows.filter(
+				(row) =>
+					!terminalStatuses.has(
+						String(row?.status || "").toLowerCase(),
+					),
+			).length,
+			legacyQueue: legacyRows.reduce((count, row) => {
+				const entries = Array.isArray(row?.value) ? row.value : [];
+				return (
+					count +
+					entries.filter(
+						(entry) =>
+							!terminalStatuses.has(
+								String(entry?.status || "").toLowerCase(),
+							),
+					).length
+				);
+			}, 0),
+			openingShifts,
+		};
+	} catch {
+		return fallback;
+	}
+}
+
+export async function getPosStateInventory(): Promise<PosStateInventory> {
+	const indexedDb = await countIndexedDbTables();
+	const operationalRecords = await countOperationalRecords();
+	const localKeys =
+		typeof localStorage === "undefined"
+			? []
+			: registeredKeys(
+					localStorage,
+					POS_STORAGE_OWNERSHIP.localStorageExact,
+					POS_STORAGE_OWNERSHIP.localStoragePrefixes,
+				);
+	const sessionKeys =
+		typeof sessionStorage === "undefined"
+			? []
+			: registeredKeys(
+					sessionStorage,
+					POS_STORAGE_OWNERSHIP.sessionStorageExact,
+					POS_STORAGE_OWNERSHIP.sessionStoragePrefixes,
+				);
+
+	return {
+		indexedDb,
+		localStorageKeys: localKeys.length,
+		sessionStorageKeys: sessionKeys.length,
+		cacheNames: await getOwnedCacheNames(),
+		serviceWorkerScopes: (
+			await getOwnedServiceWorkerRegistrations()
+		).map((registration) => registration.scope),
+		operational: {
+			...operationalRecords,
+			intentJournals: localKeys.filter((key) =>
+				key.startsWith("posa_invoice_intent_"),
+			).length,
+			activeRecoveryPointers: localKeys.filter(
+				(key) =>
+					key === "posa_active_invoice_submission_recovery_v1" ||
+					key.startsWith(
+						"posa_invoice_recovery_client_effects_v1::",
+					),
+			).length,
+		},
+	};
+}
+
+export async function repairPosAssets() {
+	const cacheNames = await getOwnedCacheNames();
+	const registrations = await getOwnedServiceWorkerRegistrations();
+
+	await Promise.all(cacheNames.map((name) => caches.delete(name)));
+	await Promise.all(
+		registrations.map(async (registration) => {
+			for (const worker of [
+				registration.active,
+				registration.waiting,
+				registration.installing,
+			]) {
+				try {
+					worker?.postMessage({ type: "CLIENT_FORCE_UNREGISTER" });
+				} catch {
+					// Notification is best-effort; unregister is authoritative.
+				}
+			}
+			const removed = await registration.unregister();
+			if (!removed) {
+				throw new Error(
+					`POS service worker could not be unregistered: ${registration.scope}`,
 				);
 			}
-		}
-		if (!targets.length) {
-			targets = [...DEFAULT_INDEXED_DB_NAMES];
-		}
+		}),
+	);
 
-		targets = Array.from(new Set(targets.filter(Boolean)));
-
-		await Promise.all(
-			targets.map(
-				(dbName) =>
-					new Promise((resolve, reject) => {
-						const req = indexedDB.deleteDatabase(dbName);
-						req.onsuccess = () => resolve(true);
-						req.onblocked = () => resolve(true);
-						req.onerror = () => reject(req.error);
-					}),
-			),
-		);
-		if (targets.length) {
-			console.log("[ClearAllCaches] IndexedDB cleared", targets);
-		}
-	} catch (e) {
-		console.error("[ClearAllCaches] Failed to clear IndexedDB", e);
-		throw e;
-	}
-}
-
-export async function clearCacheAPI(cacheNames: string[] = []) {
-	if (typeof caches === "undefined") return;
-	try {
-		let cacheTargets = cacheNames;
-		if (!cacheTargets.length) {
-			cacheTargets = await caches.keys();
-		}
-		await Promise.all(cacheTargets.map((name) => caches.delete(name)));
-		console.log(
-			"[ClearAllCaches] Cache API cleared",
-			cacheTargets.length ? cacheTargets : "all",
-		);
-	} catch (e) {
-		console.error("[ClearAllCaches] Failed to clear Cache API", e);
-		throw e;
-	}
-}
-
-export async function unregisterServiceWorkers(scopes: string[] = []) {
-	if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
-		return;
-	}
-
-	const requestedScopes = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
-
-	const unregister = async (
-		registration: ServiceWorkerRegistration | null,
-	) => {
-		if (!registration) return;
-		try {
-			const scope = registration.scope;
-			await registration.unregister();
-			if (registration.active) {
-				try {
-					registration.active.postMessage({
-						type: "CLIENT_FORCE_UNREGISTER",
-					});
-				} catch (postMessageError) {
-					console.warn(
-						`[ClearAllCaches] Failed to notify active service worker for scope ${scope}`,
-						postMessageError,
-					);
-				}
-			}
-			if (registration.waiting) {
-				try {
-					registration.waiting.postMessage({
-						type: "CLIENT_FORCE_UNREGISTER",
-					});
-				} catch (postMessageError) {
-					console.warn(
-						`[ClearAllCaches] Failed to notify waiting service worker for scope ${scope}`,
-						postMessageError,
-					);
-				}
-			}
-			if (registration.installing) {
-				try {
-					registration.installing.postMessage({
-						type: "CLIENT_FORCE_UNREGISTER",
-					});
-				} catch (postMessageError) {
-					console.warn(
-						`[ClearAllCaches] Failed to notify installing service worker for scope ${scope}`,
-						postMessageError,
-					);
-				}
-			}
-			return scope;
-		} catch (error) {
-			console.error(
-				"[ClearAllCaches] Failed to unregister service worker",
-				error,
-			);
-			throw error;
-		}
+	return {
+		cacheNames,
+		serviceWorkerScopes: registrations.map(
+			(registration) => registration.scope,
+		),
 	};
+}
 
-	try {
-		let registrations: ServiceWorkerRegistration[] = [];
-		if (navigator.serviceWorker.getRegistrations) {
-			registrations = Array.from(
-				await navigator.serviceWorker.getRegistrations(),
+async function deleteOwnedIndexedDb(databaseName: string) {
+	const { db } = await import("../offline/db");
+	if (databaseName === db.name && db.isOpen()) {
+		db.close();
+	}
+	await new Promise<void>((resolve, reject) => {
+		const request = indexedDB.deleteDatabase(databaseName);
+		request.onsuccess = () => resolve();
+		request.onerror = () =>
+			reject(
+				request.error ||
+					new Error(`Failed to delete ${databaseName}`),
 			);
-		} else if (navigator.serviceWorker.getRegistration) {
-			const single = await navigator.serviceWorker.getRegistration();
-			if (single) {
-				registrations = [single];
-			}
-		}
-
-		if (requestedScopes.length) {
-			registrations = registrations.filter((registration) =>
-				requestedScopes.some((scope) =>
-					registration.scope.includes(scope),
+		request.onblocked = () =>
+			reject(
+				new Error(
+					`Reset was blocked by another POS tab (${databaseName}). Close other POS tabs and retry.`,
 				),
 			);
-			const missingScopes = requestedScopes.filter(
-				(scope) =>
-					!registrations.some((registration) =>
-						registration.scope.includes(scope),
-					),
-			);
-			if (
-				missingScopes.length &&
-				navigator.serviceWorker.getRegistration
-			) {
-				const fetched = await Promise.all(
-					missingScopes.map((scope) =>
-						navigator.serviceWorker
-							.getRegistration(scope)
-							.catch(() => null),
-					),
-				);
-				registrations.push(
-					...(fetched.filter(Boolean) as ServiceWorkerRegistration[]),
-				);
-			}
-		}
-
-		if (!registrations.length) {
-			return;
-		}
-
-		const scopesCleared = (
-			await Promise.all(
-				registrations.map((registration) => unregister(registration)),
-			)
-		).filter(Boolean);
-
-		if (scopesCleared.length) {
-			console.log(
-				"[ClearAllCaches] Service workers unregistered",
-				scopesCleared,
-			);
-		}
-
-		await delay(100);
-	} catch (error) {
-		console.error(
-			"[ClearAllCaches] Failed during service worker cleanup",
-			error,
-		);
-		throw error;
-	}
+	});
 }
 
-type ClearAllCachesOptions = {
+function removeRegisteredStorage(
+	storage: Storage,
+	exact: readonly string[],
+	prefixes: readonly string[],
+) {
+	const keys = registeredKeys(storage, exact, prefixes);
+	keys.forEach((key) => storage.removeItem(key));
+	return keys;
+}
+
+export async function resetLocalPosOwnedState() {
+	const before = await getPosStateInventory();
+	await repairPosAssets();
+	for (const databaseName of POS_STORAGE_OWNERSHIP.indexedDbNames) {
+		await deleteOwnedIndexedDb(databaseName);
+	}
+
+	const localStorageKeys =
+		typeof localStorage === "undefined"
+			? []
+			: removeRegisteredStorage(
+					localStorage,
+					POS_STORAGE_OWNERSHIP.localStorageExact,
+					POS_STORAGE_OWNERSHIP.localStoragePrefixes,
+				);
+	const sessionStorageKeys =
+		typeof sessionStorage === "undefined"
+			? []
+			: removeRegisteredStorage(
+					sessionStorage,
+					POS_STORAGE_OWNERSHIP.sessionStorageExact,
+					POS_STORAGE_OWNERSHIP.sessionStoragePrefixes,
+				);
+
+	return {
+		before,
+		removed: {
+			databases: [...POS_STORAGE_OWNERSHIP.indexedDbNames],
+			localStorageKeys,
+			sessionStorageKeys,
+		},
+	};
+}
+
+/**
+ * Compatibility wrapper for older imports. It is intentionally POS-scoped.
+ */
+export async function clearAllCaches(options: {
 	confirmBeforeClear?: boolean;
 	onSuccess?: () => void;
 	onError?: (_error: unknown) => void;
-	specificKeys?: string[];
-	specificDatabases?: string[];
-	specificCaches?: string[];
-	skipStorage?: string[];
-	skipServiceWorkers?: boolean;
-	serviceWorkerScopes?: string[];
-};
-
-export async function clearAllCaches(options: ClearAllCachesOptions = {}) {
-	const opts: Required<ClearAllCachesOptions> = Object.assign(
-		{
-			confirmBeforeClear: true,
-			onSuccess: () => {},
-			onError: () => {},
-			specificKeys: [],
-			specificDatabases: [],
-			specificCaches: [],
-			skipStorage: [],
-			skipServiceWorkers: false,
-			serviceWorkerScopes: [],
-		},
-		options || {},
-	);
-
+} = {}) {
 	try {
-		if (opts.confirmBeforeClear && typeof window !== "undefined") {
-			const confirmMsg =
-				"Are you sure you want to clear application cache?";
-			if (!window.confirm(confirmMsg)) {
-				return;
-			}
+		if (
+			options.confirmBeforeClear !== false &&
+			typeof window !== "undefined" &&
+			!window.confirm(
+				"Reset POS-owned browser data on this device?",
+			)
+		) {
+			return;
 		}
-
-		if (!opts.skipServiceWorkers) {
-			await unregisterServiceWorkers(opts.serviceWorkerScopes);
-		}
-
-		const tasks: Array<Promise<void>> = [];
-		if (!opts.skipStorage.includes("localStorage")) {
-			tasks.push(clearLocalStorage(opts.specificKeys));
-		}
-		if (!opts.skipStorage.includes("sessionStorage")) {
-			tasks.push(clearSessionStorage(opts.specificKeys));
-		}
-		if (!opts.skipStorage.includes("indexedDB")) {
-			tasks.push(clearIndexedDB(opts.specificDatabases));
-		}
-		if (!opts.skipStorage.includes("caches")) {
-			tasks.push(clearCacheAPI(opts.specificCaches));
-		}
-
-		await Promise.all(tasks);
-		opts.onSuccess();
-	} catch (e) {
-		opts.onError(e);
-		throw e;
+		await resetLocalPosOwnedState();
+		options.onSuccess?.();
+	} catch (error) {
+		options.onError?.(error);
+		throw error;
 	}
-}
-
-if (typeof window !== "undefined") {
-	document.addEventListener("keydown", (e) => {
-		if (e.ctrlKey && e.shiftKey && e.code === "KeyR") {
-			e.preventDefault();
-			clearAllCaches().catch(() => {});
-		}
-	});
-
-	document.addEventListener("DOMContentLoaded", () => {
-		const btn = document.getElementById("clear-cache-btn");
-		if (btn) {
-			btn.addEventListener("click", () =>
-				clearAllCaches().catch(() => {}),
-			);
-		}
-	});
 }

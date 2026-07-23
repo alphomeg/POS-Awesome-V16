@@ -14,17 +14,28 @@ vi.mock("../src/posapp/composables/core/useRtl", () => ({
 }));
 
 vi.mock("../src/offline/index", () => ({
-	forceClearAllCache: vi.fn(async () => undefined),
+	clearDerivedOfflineCaches: vi.fn(async () => undefined),
 	isOffline: vi.fn(() => false),
 }));
 
 vi.mock("../src/utils/clearAllCaches", () => ({
-	clearAllCaches: vi.fn(async () => undefined),
+	getPosStateInventory: vi.fn(async () => ({
+		operational: {
+			invoiceOutbox: 0,
+			writeQueue: 0,
+			legacyQueue: 0,
+			intentJournals: 0,
+			activeRecoveryPointers: 0,
+		},
+		cacheNames: [],
+	})),
+	repairPosAssets: vi.fn(async () => undefined),
+	resetLocalPosOwnedState: vi.fn(async () => undefined),
 }));
 
 import Navbar from "../src/posapp/components/Navbar.vue";
 import { useEmployeeStore } from "../src/posapp/stores/employeeStore";
-import { clearAllCaches } from "../src/utils/clearAllCaches";
+import { repairPosAssets } from "../src/utils/clearAllCaches";
 
 describe("Navbar supervisor access", () => {
 	beforeEach(() => {
@@ -227,7 +238,7 @@ describe("Navbar supervisor access", () => {
 		expect((wrapper.vm as any).settingsPanelOpen).toBe(true);
 	});
 
-	it("shows an error toast instead of a false success toast when cache clearing fails", async () => {
+	it("shows an error toast instead of a false success toast when asset repair fails", async () => {
 		const employeeStore = useEmployeeStore();
 		employeeStore.setCurrentCashier({
 			user: "cashier@example.com",
@@ -235,9 +246,9 @@ describe("Navbar supervisor access", () => {
 			is_supervisor: true,
 		});
 
-		(
-			clearAllCaches as unknown as ReturnType<typeof vi.fn>
-		).mockRejectedValueOnce(new Error("boom"));
+		(repairPosAssets as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error("boom"),
+		);
 
 		const wrapper = shallowMount(Navbar, {
 			props: {
@@ -270,13 +281,13 @@ describe("Navbar supervisor access", () => {
 			},
 		});
 
-		await (wrapper.vm as any).clearCache();
+		await (wrapper.vm as any).repairAppAssets();
 
 		const shownTitles = (wrapper.vm as any).toastStore.history.map(
 			(entry: { title: string }) => entry.title,
 		);
-		expect(shownTitles).toContain("Failed to clear cache");
-		expect(shownTitles).not.toContain("Cache cleared successfully");
+		expect(shownTitles).toContain("App asset repair failed");
+		expect(shownTitles).not.toContain("POS app assets repaired");
 	});
 
 	it("ignores lock actions while terminal locking is disabled", async () => {

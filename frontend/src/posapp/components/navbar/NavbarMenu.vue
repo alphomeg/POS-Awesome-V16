@@ -669,10 +669,6 @@ export default {
 					this.closeMenu();
 					this.showQzTrayDialog = true;
 					break;
-				case "clearCacheAction":
-					this.closeMenu();
-					this.$emit("clear-cache");
-					break;
 				case "checkForUpdatesAction":
 					this.closeMenu();
 					void this.checkForUpdates();
@@ -743,7 +739,6 @@ export default {
 				this.originalWesternNumerals = this.useWesternNumerals;
 				this.showNotification("Settings updated. Reloading...", "success");
 				this.closeLanguageDialog();
-				this.$emit("clear-cache");
 				setTimeout(() => {
 					window.location.reload();
 				}, 200);
@@ -768,8 +763,6 @@ export default {
 
 					this.showNotification("Language changed successfully! Reloading...", "success");
 					this.closeLanguageDialog();
-
-					this.$emit("clear-cache");
 
 					setTimeout(() => {
 						window.location.reload();
@@ -872,7 +865,6 @@ export default {
 		"share-last-invoice",
 		"open-customer-display",
 		"toggle-offline",
-		"clear-cache",
 		"show-about",
 		"toggle-theme",
 		"logout",

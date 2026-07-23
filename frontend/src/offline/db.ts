@@ -267,9 +267,7 @@ export const DERIVED_OFFLINE_CACHE_KEYS = Object.freeze([
 	"price_list_meta_cache",
 	"customer_addresses_cache",
 	"payment_method_currency_cache",
-	"local_stock_cache",
 	"stock_cache_ready",
-	"customer_storage",
 	"items_last_sync",
 	"customers_last_sync",
 	"payment_methods_last_sync",
@@ -309,9 +307,7 @@ const DERIVED_OFFLINE_TABLES_TO_CLEAR = Object.freeze([
 	"item_catalog_state",
 	"item_prices",
 	"item_price_records",
-	"customers",
 	"cache",
-	"local_stock",
 	"coupons",
 	"item_groups",
 	"translations",
@@ -1270,69 +1266,13 @@ export function toggleManualOffline() {
 }
 
 export async function clearAllCache() {
-	try {
-		if (db.isOpen()) {
-			await db.close();
-		}
-		await Dexie.delete("posawesome_offline");
-		await db.open();
-	} catch (e) {
-		console.error("Failed to clear IndexedDB cache", e);
-	}
-
-	if (typeof localStorage !== "undefined") {
-		Object.keys(localStorage).forEach((key) => {
-			if (key.startsWith("posa_")) {
-				localStorage.removeItem(key);
-			}
-		});
-	}
-
-	// Reset memory state
-	memory.offline_invoices = [];
-	memory.offline_customers = [];
-	memory.offline_payments = [];
-	memory.offline_cash_movements = [];
-	memory.invoice_outbox_mode = "off";
-	memory.pos_last_sync_totals = { pending: 0, synced: 0, drafted: 0 };
-	memory.uom_cache = {};
-	memory.offers_cache = [];
-	memory.customer_balance_cache = {};
-	memory.local_stock_cache = {};
-	memory.stock_cache_ready = false;
-	memory.customer_storage = [];
-	memory.items_last_sync = null;
-	memory.customers_last_sync = null;
-	memory.payment_methods_last_sync = null;
-	memory.pos_opening_storage = null;
-	memory.opening_dialog_storage = null;
-	memory.sales_persons_storage = [];
-	memory.price_list_cache = {};
-	memory.item_details_cache = {};
-	memory.tax_template_cache = {};
-	memory.tax_inclusive = false;
-	memory.manual_offline = false;
-	memory.item_groups_cache = [];
-	memory.coupons_cache = {};
-	memory.bootstrap_snapshot = null;
-	memory.bootstrap_snapshot_status = null;
-	memory.bootstrap_limited_mode = false;
+	throw new Error(
+		"Broad POS cache deletion is disabled. Use scoped derived-data, asset-repair, or authorized developer-reset operations.",
+	);
 }
 
 export async function forceClearAllCache() {
-	await clearAllCache();
-	// Extended clearing logic
-	memory.translation_cache = {};
-	memory.pricing_rules_snapshot = [];
-	memory.pricing_rules_context = null;
-	memory.pricing_rules_last_sync = null;
-	memory.pricing_rules_stale_at = null;
-	memory.print_template = "";
-	memory.terms_and_conditions = "";
-	memory.cache_ready = false;
-	memory.bootstrap_snapshot = null;
-	memory.bootstrap_snapshot_status = null;
-	memory.bootstrap_limited_mode = false;
+	return clearAllCache();
 }
 
 export async function clearDerivedOfflineCaches() {
@@ -1342,25 +1282,27 @@ export async function clearDerivedOfflineCaches() {
 			await db.open();
 		}
 
-		await Promise.all(
-			DERIVED_OFFLINE_TABLES_TO_CLEAR.map((tableName) =>
-				db
-					.table(tableName)
-					.clear()
-					.catch((error) => {
-						console.warn(
-							`Failed to clear derived table ${tableName}`,
-							error,
-						);
-					}),
-			),
+		const tableNames = Array.from(
+			new Set([
+				...DERIVED_OFFLINE_TABLES_TO_CLEAR,
+				...DERIVED_OFFLINE_CACHE_KEYS.map(tableForKey),
+				...DERIVED_OFFLINE_METADATA_KEYS.map(tableForKey),
+			]),
 		);
-
-		await Promise.all(
-			[
-				...DERIVED_OFFLINE_CACHE_KEYS,
-				...DERIVED_OFFLINE_METADATA_KEYS,
-			].map((key) => deletePersistedKey(key)),
+		await db.transaction(
+			"rw",
+			tableNames.map((tableName) => db.table(tableName)),
+			async () => {
+				for (const tableName of DERIVED_OFFLINE_TABLES_TO_CLEAR) {
+					await db.table(tableName).clear();
+				}
+				for (const key of [
+					...DERIVED_OFFLINE_CACHE_KEYS,
+					...DERIVED_OFFLINE_METADATA_KEYS,
+				]) {
+					await deletePersistedKey(key);
+				}
+			},
 		);
 	} catch (error) {
 		console.error("Failed to clear derived offline caches", error);
@@ -1405,13 +1347,9 @@ export async function repairDbAfterFailedHealthCheck(error?: unknown) {
 	} catch (reopenError) {
 		console.error("DB reopen failed", reopenError);
 		if (isCorruptionError(reopenError) || isCorruptionError(error)) {
-			try {
-				await Dexie.delete("posawesome_offline");
-				await db.open();
-				return true;
-			} catch (recreateError) {
-				console.error("DB recreate failed", recreateError);
-			}
+			console.error(
+				"POS storage appears corrupt; preserving the database for recovery instead of deleting operational records.",
+			);
 		}
 	}
 	return false;

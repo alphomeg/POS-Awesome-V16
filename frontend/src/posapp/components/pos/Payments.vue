@@ -220,7 +220,7 @@
 
 					<section class="payment-section payment-section--settlement">
 						<div class="payment-section__header">
-							<h3 class="payment-section__title">{{ __("Credit and Output") }}</h3>
+							<h3 class="payment-section__title">{{ __("Adjustments") }}</h3>
 						</div>
 						<PaymentOptions
 							:invoice-doc="invoice_doc"
@@ -326,6 +326,15 @@
 			:format-currency="formatCurrency"
 			:loading="loading"
 			:preferred-mode="cashierSigningPreferredMode"
+			:customer-name="cashierSigningCustomerName"
+			:credit-eligible="cashierSigningCreditEligible"
+			:credit-reason="cashierSigningCreditReason"
+			:credit-context="cashierSigningCreditContext"
+			:credit-context-loading="cashierSigningCreditContextLoading"
+			:initial-credit-sale="is_credit_sale"
+			:initial-received-amount="cashierSigningReceivedAmount"
+			:initial-due-date="invoice_doc?.due_date || ''"
+			:posting-date="invoice_doc?.posting_date || ''"
 			@submit="handleCashierSigningSubmit"
 			@cancel="handleCashierSigningCancel"
 		/>
@@ -506,6 +515,9 @@ const giftCardError = ref("");
 const giftCardRedemptions = ref([]);
 const cashierSigningDialogOpen = ref(false);
 const cashierSigningAmount = ref(0);
+const cashierSigningCreditContext = ref({});
+const cashierSigningCreditContextLoading = ref(false);
+const cashierSigningCreditContextError = ref("");
 const manualRecoveryDialogOpen = ref(false);
 let cashierSigningResolver = null;
 
@@ -868,6 +880,52 @@ const creditSaleAllowed = computed(() => parseBooleanSetting(pos_profile.value?.
 const giftCardAppliedAmount = computed(() =>
 	(Array.isArray(giftCardRedemptions.value) ? giftCardRedemptions.value : []).reduce(
 		(sum, row) => sum + flt(row?.amount || 0, currency_precision.value),
+		0,
+	),
+);
+
+const cashierSigningCustomerName = computed(
+	() =>
+		String(
+			invoice_doc.value?.customer_name ||
+				customer_info.value?.customer_name ||
+				invoice_doc.value?.customer ||
+				"",
+		).trim(),
+);
+
+const cashierSigningCreditBaseReason = computed(() => {
+	const doc = invoice_doc.value;
+	if (!creditSaleAllowed.value) return "PROFILE_DISABLED";
+	if (!doc?.customer) return "CUSTOMER_REQUIRED";
+	if (doc.is_return) return "RETURN_NOT_ALLOWED";
+	if (
+		String(pos_profile.value?.customer || "").trim() &&
+		String(doc.customer).trim() === String(pos_profile.value.customer).trim()
+	) {
+		return "WALK_IN_CUSTOMER";
+	}
+	if (
+		flt(redeemed_customer_credit.value || 0, currency_precision.value) > 0 ||
+		giftCardAppliedAmount.value > 0
+	) {
+		return "INCOMPATIBLE_REDEMPTION";
+	}
+	return "";
+});
+
+const cashierSigningCreditEligible = computed(() => !cashierSigningCreditBaseReason.value);
+const cashierSigningCreditReason = computed(
+	() =>
+		cashierSigningCreditBaseReason.value ||
+		cashierSigningCreditContextError.value ||
+		cashierSigningCreditContext.value?.reason_code ||
+		"",
+);
+const cashierSigningReceivedAmount = computed(() =>
+	(Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : []).reduce(
+		(sum, payment) =>
+			sum + Math.max(flt(payment?.amount || 0, currency_precision.value), 0),
 		0,
 	),
 );
@@ -1917,6 +1975,70 @@ const applySigningPaymentMethod = (modeOfPayment) => {
 	last_payment_change_was_cash.value = isCashLikePayment(selectedPayment);
 };
 
+const applySigningReceivedAmount = (modeOfPayment, amount) => {
+	const mode = String(modeOfPayment || "").trim();
+	const doc = invoice_doc.value;
+	if (!doc || !Array.isArray(doc.payments)) return;
+
+	const normalizedAmount = Math.max(
+		flt(amount || 0, currency_precision.value),
+		0,
+	);
+	const selectedPayment = doc.payments.find(
+		(payment) => String(payment?.mode_of_payment || "").trim() === mode,
+	);
+	doc.payments.forEach((payment) => {
+		const paymentAmount = payment === selectedPayment ? normalizedAmount : 0;
+		payment.amount = paymentAmount;
+		if (payment.base_amount !== undefined) {
+			payment.base_amount = flt(
+				toCompanyCurrency(paymentCurrencyContext(doc), paymentAmount),
+				currency_precision.value,
+			);
+		}
+	});
+	if (selectedPayment && normalizedAmount > 0) {
+		last_payment_change_was_cash.value = isCashLikePayment(selectedPayment);
+	}
+};
+
+let creditContextRequestSequence = 0;
+const loadCashierSigningCreditContext = async () => {
+	const requestSequence = ++creditContextRequestSequence;
+	cashierSigningCreditContext.value = {};
+	cashierSigningCreditContextError.value = cashierSigningCreditBaseReason.value;
+	if (!cashierSigningCreditEligible.value) {
+		cashierSigningCreditContextLoading.value = false;
+		return;
+	}
+
+	cashierSigningCreditContextLoading.value = true;
+	try {
+		const response = await frappe.call({
+			method: "posawesome.posawesome.api.credit_sales.get_credit_sale_context",
+			args: {
+				customer: invoice_doc.value?.customer,
+				company: invoice_doc.value?.company || pos_profile.value?.company,
+				pos_profile: invoice_doc.value?.pos_profile || pos_profile.value?.name,
+				proposed_credit_amount: cashierSigningAmount.value,
+				exclude_invoice: invoice_doc.value?.name || null,
+			},
+		});
+		if (requestSequence !== creditContextRequestSequence) return;
+		cashierSigningCreditContext.value = response?.message || {};
+		cashierSigningCreditContextError.value =
+			cashierSigningCreditContext.value?.reason_code || "";
+	} catch (error) {
+		if (requestSequence !== creditContextRequestSequence) return;
+		cashierSigningCreditContextError.value = "CONTEXT_UNAVAILABLE";
+		console.error("Unable to load credit sale context:", error);
+	} finally {
+		if (requestSequence === creditContextRequestSequence) {
+			cashierSigningCreditContextLoading.value = false;
+		}
+	}
+};
+
 const settleCashierSigning = (result) => {
 	const resolver = cashierSigningResolver;
 	cashierSigningResolver = null;
@@ -1938,20 +2060,43 @@ const requestCashierSigning = () => {
 		);
 	}
 	cashierSigningAmount.value = resolveSigningPaymentAmount();
+	void loadCashierSigningCreditContext();
 	cashierSigningDialogOpen.value = true;
 	return new Promise((resolve) => {
 		cashierSigningResolver = resolve;
 	});
 };
 
-const handleCashierSigningSubmit = (payload) => {
+const handleCashierSigningSubmit = async (payload) => {
 	if (!payload?.cashierPin) {
 		return;
 	}
-	applySigningPaymentMethod(payload.modeOfPayment);
+	const isCreditSale = payload.settlementMode === "credit";
+	if (isCreditSale) {
+		is_credit_sale.value = true;
+		await nextTick();
+		applySigningReceivedAmount(payload.modeOfPayment, payload.receivedAmount);
+		const dueDate =
+			payload.dueDate ||
+			invoice_doc.value?.posting_date ||
+			frappe.datetime?.nowdate?.() ||
+			frappe.datetime?.now_date?.();
+		if (dueDate) {
+			invoice_doc.value.due_date = dueDate;
+			new_credit_due_date.value = dueDate;
+		}
+		credit_change.value = 0;
+	} else {
+		if (is_credit_sale.value) {
+			is_credit_sale.value = false;
+			await nextTick();
+		}
+		applySigningPaymentMethod(payload.modeOfPayment);
+	}
 	settleCashierSigning({
 		cashierPin: payload.cashierPin,
 		modeOfPayment: payload.modeOfPayment,
+		settlementMode: payload.settlementMode,
 	});
 };
 

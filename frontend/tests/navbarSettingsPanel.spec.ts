@@ -14,16 +14,16 @@ describe("NavbarSettingsPanel", () => {
 			actions: [
 				{
 					id: "refresh-offline-data",
-					label: "Refresh Offline Data",
+					label: "Refresh Server Data",
 					subtitle: "Fetch fresh prerequisite data",
 					icon: "mdi-sync",
 					tone: "info",
 				},
 				{
-					id: "clear-cache",
-					label: "Clear Cache",
-					subtitle: "Reset cached browser data",
-					icon: "mdi-broom",
+					id: "repair-app-assets",
+					label: "Repair App Assets",
+					subtitle: "Repair POS-owned assets",
+					icon: "mdi-tools",
 					tone: "warning",
 				},
 			],
@@ -161,6 +161,25 @@ describe("NavbarSettingsPanel", () => {
 		});
 
 		await wrapper.get('[data-test="navbar-settings-panel-close"]').trigger("click");
+
+		expect(onUpdateModelValue).toHaveBeenCalledWith(false);
+	});
+
+	it("supports Escape close and exposes dialog semantics for keyboard users", async () => {
+		const onUpdateModelValue = vi.fn();
+		const wrapper = mountPanel({
+			"onUpdate:modelValue": onUpdateModelValue,
+		});
+
+		const dialog = wrapper.get('[role="dialog"]');
+		expect(dialog.attributes("aria-modal")).toBe("true");
+		expect(
+			wrapper
+				.get('[data-test="navbar-settings-panel-close"]')
+				.attributes("aria-label"),
+		).toBe("Close settings");
+
+		await dialog.trigger("keydown", { key: "Escape" });
 
 		expect(onUpdateModelValue).toHaveBeenCalledWith(false);
 	});

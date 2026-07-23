@@ -1,4 +1,5 @@
 import { buildPosAppRecoveryLocation } from "../../loader-utils";
+import { repairPosAssets } from "../../utils/clearAllCaches";
 
 const POSAPP_ROUTE = "/app/posapp";
 const CHUNK_RELOAD_KEY = "posa_chunk_reload_once";
@@ -88,50 +89,9 @@ async function clearServiceWorkersAndCaches() {
 	}
 
 	try {
-		if (
-			typeof navigator !== "undefined" &&
-			"serviceWorker" in navigator &&
-			typeof navigator.serviceWorker.getRegistrations === "function"
-		) {
-			const registrations = await navigator.serviceWorker.getRegistrations();
-			await Promise.all(
-				registrations.map(async (registration) => {
-					try {
-						registration.active?.postMessage({
-							type: "CLIENT_FORCE_UNREGISTER",
-						});
-					} catch {
-						// Service worker messaging is best-effort before unregister.
-					}
-					try {
-						registration.waiting?.postMessage({
-							type: "CLIENT_FORCE_UNREGISTER",
-						});
-					} catch {
-						// Service worker messaging is best-effort before unregister.
-					}
-					try {
-						registration.installing?.postMessage({
-							type: "CLIENT_FORCE_UNREGISTER",
-						});
-					} catch {
-						// Service worker messaging is best-effort before unregister.
-					}
-					await registration.unregister();
-				}),
-			);
-		}
+		await repairPosAssets();
 	} catch (err) {
-		console.warn("Chunk recovery: failed to cleanup service workers", err);
-	}
-
-	try {
-		if (typeof caches !== "undefined") {
-			const cacheKeys = await caches.keys();
-			await Promise.all(cacheKeys.map((key) => caches.delete(key)));
-		}
-	} catch (err) {
-		console.warn("Chunk recovery: failed to cleanup Cache API", err);
+		console.warn("Chunk recovery: failed scoped asset cleanup", err);
 	}
 
 	try {

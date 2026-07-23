@@ -7,6 +7,11 @@ from erpnext.accounts.doctype.pos_invoice_merge_log.pos_invoice_merge_log import
 )
 from frappe.utils import flt
 
+from posawesome.posawesome.api.credit_sales import (
+    CREDIT_SALE_FIELD,
+    mark_credit_sale_trusted,
+)
+
 
 class CustomPOSInvoiceMergeLog(ERPNextPOSInvoiceMergeLog):
     """Ensure consolidated credit notes keep payment totals within tolerance."""
@@ -16,8 +21,27 @@ class CustomPOSInvoiceMergeLog(ERPNextPOSInvoiceMergeLog):
 
         if getattr(invoice, "is_return", 0):
             self._normalize_return_payments(invoice)
+        else:
+            self._apply_credit_sale_contract(invoice, data)
 
         return invoice
+
+    def _apply_credit_sale_contract(self, invoice, data) -> None:
+        outstanding_sources = [
+            source
+            for source in (data or [])
+            if flt(source.get("outstanding_amount")) > 0.001
+            or flt(source.get(CREDIT_SALE_FIELD)) == 1
+        ]
+        if not outstanding_sources:
+            invoice.set(CREDIT_SALE_FIELD, 0)
+            return
+
+        invoice.set(CREDIT_SALE_FIELD, 1)
+        due_dates = [source.get("due_date") for source in outstanding_sources if source.get("due_date")]
+        if due_dates:
+            invoice.due_date = min(due_dates)
+        mark_credit_sale_trusted(invoice, True)
 
     def _normalize_return_payments(self, invoice) -> None:
         """Clamp aggregated payment totals for consolidated return invoices."""

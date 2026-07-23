@@ -190,6 +190,7 @@ doc_events = {
 
 # Override standard DocTypes with custom classes
 override_doctype_class = {
+    "Sales Invoice": "posawesome.posawesome.overrides.sales_invoice.CustomSalesInvoice",
     "POS Invoice": "posawesome.posawesome.overrides.pos_invoice.CustomPOSInvoice",
     "POS Invoice Merge Log": "posawesome.posawesome.overrides.pos_invoice_merge_log.CustomPOSInvoiceMergeLog",
 }
@@ -386,6 +387,8 @@ fixtures = [
                     "Sales Invoice-posa_return_valid_upto",
                     "Sales Invoice-posa_cashier",
                     "POS Invoice-posa_cashier",
+                    "Sales Invoice-posa_is_credit_sale",
+                    "POS Invoice-posa_is_credit_sale",
                     "User-posa_pos_pin",
                 ),
             ]

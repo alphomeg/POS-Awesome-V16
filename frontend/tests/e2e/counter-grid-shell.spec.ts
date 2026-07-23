@@ -956,8 +956,11 @@ test.describe("Counter Grid shell", () => {
 				page.locator(`[data-test="quick-action-${action}"]`),
 			).toBeVisible();
 		}
+		const activeProfile = await page
+			.locator('[data-test="pos-navbar"]')
+			.getAttribute("data-pos-profile");
 		await expect(page.locator(".menu-profile-card")).toContainText(
-			"POS Awesome - MedPlus",
+			activeProfile || "POS",
 		);
 		await page.keyboard.press("Escape");
 
@@ -972,7 +975,7 @@ test.describe("Counter Grid shell", () => {
 		for (const route of [
 			"POS",
 			"Payments",
-			"Purchase Order",
+			"Purchasing",
 			"Barcode Printing",
 		]) {
 			expect(routes).toContain(route);
@@ -991,23 +994,52 @@ test.describe("Counter Grid shell", () => {
 				'[data-test="settings-panel-action-rebuild-offline-data"]',
 			),
 		).toBeVisible();
+		await expect(
+			settings.locator(
+				'[data-test="settings-panel-action-repair-app-assets"]',
+			),
+		).toBeVisible();
+		const diagnosticsAction = settings.locator(
+			'[data-test="settings-panel-action-open-diagnostics"]',
+		);
+		await diagnosticsAction.focus();
+		await diagnosticsAction.press("Enter");
+		const maintenanceDialog = page.locator(
+			'[data-test="pos-maintenance-dialog"]',
+		);
+		await expect(maintenanceDialog).toBeVisible();
+		await expect(
+			maintenanceDialog.locator(
+				'[data-test="maintenance-submission-mode"]',
+			),
+		).not.toBeEmpty();
+		await page.keyboard.press("Escape");
+		await expect(maintenanceDialog).toBeHidden();
+
+		await page
+			.getByRole("button", { name: "Toggle navigation drawer" })
+			.press("Enter");
+		const settingsLauncher = drawer.locator(
+			'[data-test="drawer-footer-action"]',
+		);
+		await settingsLauncher.focus();
+		await settingsLauncher.press("Enter");
+		await expect(settings).toBeVisible();
 		await settings
 			.locator('[data-test="settings-panel-category-personal"]')
-			.click();
+			.press("Enter");
 		const pinAction = settings.locator(
 			'[data-test="settings-panel-action-manage-cashier-pin"]',
 		);
 		await expect(pinAction).toBeVisible();
-		await pinAction.click();
+		await pinAction.press("Enter");
 		await expect(
 			settings.locator('[data-test="settings-panel-detail-view"]'),
 		).toContainText("Current PIN");
 		await expect(
 			settings.locator('[data-test="settings-panel-detail-view"]'),
 		).toContainText("New PIN");
-		await settings
-			.locator('[data-test="navbar-settings-panel-close"]')
-			.click();
+		await page.keyboard.press("Escape");
 		await expect(settings).toBeHidden();
 	});
 

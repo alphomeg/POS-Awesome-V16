@@ -1,8 +1,28 @@
 import frappe
 from frappe import _, DoesNotExistError
+from frappe.utils import flt
 from erpnext.accounts.doctype.pos_invoice_merge_log.pos_invoice_merge_log import (
     consolidate_pos_invoices,
 )
+
+from posawesome.posawesome.api.credit_sales import CREDIT_SALE_FIELD
+
+
+CREDIT_TOLERANCE = 0.001
+
+
+def _credit_consolidation_key(invoice, source_keys):
+    """Keep paid and credit invoices in separate, due-date-safe merge groups."""
+
+    if invoice.get("is_return"):
+        return source_keys.get(invoice.get("return_against"), "paid")
+    is_credit = (
+        flt(invoice.get(CREDIT_SALE_FIELD)) == 1
+        or flt(invoice.get("outstanding_amount")) > CREDIT_TOLERANCE
+    )
+    if not is_credit:
+        return "paid"
+    return f"credit:{invoice.get('due_date') or invoice.get('posting_date') or ''}"
 
 
 def _set_closing_entry_invoices(closing_shift_doc):
@@ -159,18 +179,25 @@ def consolidate_closing_shift_invoices(closing_shift_doc):
         "create_pos_invoice_instead_of_sales_invoice",
     ):
         pos_invoices = []
+        invoice_fields = [
+            "name as pos_invoice",
+            "customer",
+            "is_return",
+            "return_against",
+            "currency",
+            "posting_date",
+            "posting_time",
+            "due_date",
+            "outstanding_amount",
+        ]
+        if frappe.db.has_column("POS Invoice", CREDIT_SALE_FIELD):
+            invoice_fields.append(CREDIT_SALE_FIELD)
         for d in closing_shift_doc.pos_transactions:
             invoice_details = frappe._dict(
                 frappe.db.get_value(
                     "POS Invoice",
                     d.pos_invoice,
-                    [
-                        "name as pos_invoice",
-                        "customer",
-                        "is_return",
-                        "return_against",
-                        "currency",
-                    ],
+                    invoice_fields,
                     as_dict=True,
                 )
             )
@@ -178,9 +205,28 @@ def consolidate_closing_shift_invoices(closing_shift_doc):
                 pos_invoices.append(invoice_details)
 
         if pos_invoices:
-            invoices_by_currency = {}
+            pos_invoices.sort(
+                key=lambda invoice: (
+                    str(invoice.get("posting_date") or ""),
+                    str(invoice.get("posting_time") or ""),
+                    str(invoice.get("pos_invoice") or ""),
+                )
+            )
+            source_keys = {}
             for invoice in pos_invoices:
-                invoices_by_currency.setdefault(invoice.currency, []).append(invoice)
+                if not invoice.get("is_return"):
+                    source_keys[invoice.pos_invoice] = _credit_consolidation_key(
+                        invoice,
+                        source_keys,
+                    )
 
-            for invoices in invoices_by_currency.values():
+            invoice_groups = {}
+            for invoice in pos_invoices:
+                settlement_key = _credit_consolidation_key(invoice, source_keys)
+                invoice_groups.setdefault(
+                    (invoice.currency, settlement_key),
+                    [],
+                ).append(invoice)
+
+            for invoices in invoice_groups.values():
                 consolidate_pos_invoices(pos_invoices=invoices)

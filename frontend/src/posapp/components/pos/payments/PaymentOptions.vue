@@ -3,15 +3,6 @@
 		<div class="payment-options-layout">
 			<div class="payment-options-toggles">
 				<v-row class="pa-1" align="start" no-gutters>
-					<v-col cols="12" v-if="posProfile.posa_allow_credit_sale && !invoiceDoc.is_return">
-						<v-switch
-							:model-value="isCreditSale"
-							color="primary"
-							:label="$frappe._('Credit Sale?')"
-							class="my-0 pa-1"
-							@update:model-value="$emit('update:isCreditSale', $event)"
-						></v-switch>
-					</v-col>
 					<v-col
 						cols="12"
 						v-if="
@@ -61,46 +52,6 @@
 			</div>
 
 			<div class="payment-options-panel">
-				<div v-if="isCreditSale" class="payment-options-panel__content">
-					<VueDatePicker
-						:model-value="newCreditDueDate"
-						model-type="format"
-						format="dd-MM-yyyy"
-						:min-date="new Date()"
-						auto-apply
-						teleport
-						:placeholder="__('Due Date')"
-						class="sleek-field pos-themed-input"
-						@update:model-value="$emit('update:newCreditDueDate', $event)"
-					/>
-					<v-text-field
-						class="mt-2 sleek-field"
-						density="compact"
-						variant="solo"
-						type="number"
-						min="0"
-						max="365"
-						:model-value="creditDueDays"
-						:label="$frappe._('Days until due')"
-						hide-details
-						@update:model-value="$emit('update:creditDueDays', parseFloat($event))"
-						@change="$emit('apply-due-preset', creditDueDays)"
-					></v-text-field>
-					<div class="payment-options-panel__chips mt-1">
-						<v-chip
-							v-for="d in creditDuePresets"
-							:key="d"
-							size="small"
-							class="ma-1"
-							variant="solo"
-							color="primary"
-							@click="$emit('apply-due-preset', d)"
-						>
-							{{ d }} {{ $frappe._("days") }}
-						</v-chip>
-					</div>
-				</div>
-
 				<div v-if="isWriteOffChange" class="payment-options-panel__content">
 					<v-text-field
 						class="sleek-field"

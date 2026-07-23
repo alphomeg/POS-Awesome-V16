@@ -46,6 +46,10 @@ from posawesome.posawesome.api.cashier_pin_security import (
     CASHIER_PIN_KEYS,
     redact_cashier_pin_request_context,
 )
+from posawesome.posawesome.api.credit_sales import (
+    CREDIT_SALE_FIELD,
+    authorize_credit_sale,
+)
 from posawesome.posawesome.api.terminal_state import validate_assigned_terminal_cashier
 from posawesome.posawesome.api.pos_access import (
     get_authorized_pos_profile,
@@ -684,6 +688,44 @@ def _wait_for_submission_ledger_result(ledger_doc, timeout_seconds=12, interval_
     return None
 
 
+def _background_submission_worker_available():
+    """Return whether the default queue currently has a live worker.
+
+    Background submission is an optimization. A missing Redis connection or
+    worker must degrade to the existing synchronous, idempotent submit path
+    rather than leave a draft ledger that no process can own.
+    """
+
+    try:
+        from frappe.utils.background_jobs import get_queue, get_workers
+
+        return bool(get_workers(get_queue("default")))
+    except Exception:
+        return False
+
+
+def _lock_and_refresh_submission_ledger(ledger_doc):
+    """Serialize takeover of a stalled ledger inside the request transaction."""
+
+    if not ledger_doc:
+        return None
+
+    sql = getattr(getattr(frappe, "db", None), "sql", None)
+    if callable(sql):
+        sql(
+            f"select name from `tab{LEDGER_DOCTYPE}` where name = %s for update",
+            (ledger_doc.get("name"),),
+        )
+    return _get_submission_ledger_by_name(ledger_doc.get("name")) or ledger_doc
+
+
+def _can_resume_draft_ledger_synchronously(ledger_doc, document_type):
+    if not ledger_doc or ledger_doc.get("state") != STATE_DRAFT_CREATED:
+        return False
+    invoice_name = str(ledger_doc.get("invoice_name") or "").strip()
+    return bool(invoice_name and frappe.db.exists(document_type, invoice_name))
+
+
 def _mark_ledger_failed(ledger_doc, error):
     return _update_submission_ledger(
         ledger_doc,
@@ -977,12 +1019,12 @@ def _repair_submitted_invoice_post_submit(ledger_doc, invoice_doc):
             getattr(getattr(frappe, "session", None), "user", None),
             ledger_doc.name,
         )
-        _update_submission_ledger(
-            ledger_doc,
-            STATE_POST_SUBMIT_DONE,
-            invoice_name=invoice_doc.name,
-            error_message="",
-        )
+        # _process_post_submit_payments persists POST_SUBMIT_DONE by ledger
+        # name. Do not save this now-stale Document a second time: Frappe's
+        # modified timestamp guard correctly rejects that duplicate write.
+        ledger_doc.state = STATE_POST_SUBMIT_DONE
+        ledger_doc.invoice_name = invoice_doc.name
+        ledger_doc.error_message = ""
     except Exception as error:
         # Discard any partial financial repair before durably recording only the
         # ledger failure in a fresh transaction.
@@ -1173,22 +1215,6 @@ def _apply_write_off_settings(invoice_doc, data):
 
     invoice_doc.write_off_amount = flt(effective_write_off, precision_write_off)
     invoice_doc.base_write_off_amount = flt(effective_write_off * conversion_rate, precision_base_write_off)
-
-
-def _validate_credit_sale_allowed(invoice_doc, data):
-    if not cint(data.get("is_credit_sale")) or invoice_doc.get("is_return"):
-        return
-
-    if not invoice_doc.pos_profile:
-        frappe.throw(_("Credit Sale is not enabled in POS Profile"))
-
-    allow_credit_sale = frappe.db.get_value(
-        "POS Profile",
-        invoice_doc.pos_profile,
-        "posa_allow_credit_sale",
-    )
-    if not cint(allow_credit_sale):
-        frappe.throw(_("Credit Sale is not enabled in POS Profile"))
 
 
 def _has_docfield(doctype, fieldname):
@@ -1875,6 +1901,10 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
     redact_cashier_pin_request_context()
     data = json.loads(data)
     invoice = json.loads(invoice)
+    # Credit intent is accepted only through data.is_credit_sale. The durable
+    # invoice marker is server-owned and must never be trusted from the client.
+    invoice.pop(CREDIT_SALE_FIELD, None)
+    data.pop(CREDIT_SALE_FIELD, None)
     invoice.pop(TRUSTED_SHIFT_AUDIT_KEY, None)
     data.pop(TRUSTED_SHIFT_AUDIT_KEY, None)
     trusted_shift_audit = getattr(
@@ -2044,6 +2074,10 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         pos_profile,
         "posa_allow_submissions_in_background_job",
     )
+    worker_available = bool(
+        allow_background_submit and _background_submission_worker_available()
+    )
+    background_submission_enabled = bool(submit_in_background and worker_available)
     if ledger_doc:
         ledger_created = False
     else:
@@ -2061,21 +2095,42 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         "posa_owned_submission_ledger",
         None,
     )
+    resume_stalled_draft = False
     if (
         ledger_doc
         and not ledger_created
         and ledger_doc.get("state") != STATE_FAILED
         and ledger_doc.get("name") != owned_ledger_name
     ):
-        concurrent_response = _wait_for_submission_ledger_result(ledger_doc)
-        if concurrent_response:
-            return concurrent_response
-        frappe.throw(_("This invoice request is already being processed. Please try again."))
+        if (
+            submit_in_background
+            and allow_background_submit
+            and not worker_available
+            and _can_resume_draft_ledger_synchronously(ledger_doc, doctype)
+        ):
+            ledger_doc = _lock_and_refresh_submission_ledger(ledger_doc)
+            concurrent_response = _ledger_final_replay_response(ledger_doc)
+            if concurrent_response:
+                return concurrent_response
+            resume_stalled_draft = _can_resume_draft_ledger_synchronously(
+                ledger_doc,
+                doctype,
+            )
+
+        if not resume_stalled_draft:
+            concurrent_response = _wait_for_submission_ledger_result(ledger_doc)
+            if concurrent_response:
+                return concurrent_response
+            frappe.throw(
+                _(
+                    "This invoice request is still being processed. "
+                    "Open Device & Submission Diagnostics to check worker health or resume the same request."
+                )
+            )
 
     invoice_name = invoice.get("name")
     if (
-        submit_in_background
-        and allow_background_submit
+        background_submission_enabled
         and ledger_doc
         and invoice_name
         and frappe.db.exists(doctype, invoice_name)
@@ -2258,8 +2313,13 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
     validate_invoice_item_sale_controls(invoice_doc)
     _validate_invoice_payment_modes(invoice_doc, profile_doc)
 
-    _validate_credit_sale_allowed(invoice_doc, data)
     _apply_write_off_settings(invoice_doc, data)
+    authorize_credit_sale(
+        invoice_doc,
+        data,
+        profile_doc=profile_doc,
+        lock_customer=True,
+    )
 
     invoice_doc.flags.ignore_permissions = True
     frappe.flags.ignore_account_permission = True
@@ -2295,7 +2355,7 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
             ),
         )
 
-    if submit_in_background and allow_background_submit:
+    if background_submission_enabled:
         enqueue(
             method=submit_in_background_job,
             queue="default",
@@ -2341,12 +2401,12 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
             total_cash,
             cash_account,
             payments,
-            bool(allow_background_submit),
+            worker_available,
             getattr(getattr(frappe, "session", None), "user", None),
             ledger_doc.name if ledger_doc else None,
         )
         post_submit_runs_async = bool(
-            allow_background_submit and _has_post_submit_payment_work(data)
+            worker_available and _has_post_submit_payment_work(data)
         )
         if ledger_doc and not post_submit_runs_async:
             ledger_doc.state = STATE_POST_SUBMIT_DONE
@@ -2461,6 +2521,12 @@ def submit_in_background_job(kwargs):
         _apply_tax_contract_before_save(invoice_doc)
 
         _apply_write_off_settings(invoice_doc, data)
+        authorize_credit_sale(
+            invoice_doc,
+            data,
+            profile_doc=profile_doc,
+            lock_customer=True,
+        )
 
         _apply_loyalty_redemption_settings(invoice_doc, invoice_doc.pos_profile)
 
@@ -2703,16 +2769,61 @@ def repair_invoice_submission(
             "idempotent": True,
         }
 
-    return {
-        "name": invoice_doc.name,
-        "status": invoice_doc.docstatus,
-        "docstatus": invoice_doc.docstatus,
-        "doctype": invoice_doc.doctype,
-        "ledger_state": ledger_doc.get("state"),
-        "client_request_id": client_request_id,
-        "repaired": False,
-        "message": _("Linked invoice is still a draft"),
+    invoice_payload = _json_loads(ledger_doc.get("invoice_payload"))
+    request_data = _json_loads(ledger_doc.get("request_data"))
+    if not isinstance(invoice_payload, dict) or not invoice_payload:
+        invoice_payload = invoice_doc.as_dict()
+    if not isinstance(request_data, dict):
+        request_data = {}
+
+    invoice_payload["name"] = invoice_doc.name
+    invoice_payload["doctype"] = invoice_doc.doctype
+    invoice_payload["pos_profile"] = pos_profile
+    invoice_payload["company"] = company
+    invoice_payload["posa_client_request_id"] = client_request_id
+    request_data["idempotency_key"] = client_request_id
+    request_data["client_request_id"] = client_request_id
+
+    opening_shift_name = str(
+        invoice_payload.get("posa_pos_opening_shift")
+        or request_data.get("posa_pos_opening_shift")
+        or invoice_doc.get("posa_pos_opening_shift")
+        or ""
+    ).strip()
+    opening_user = ""
+    if opening_shift_name:
+        opening_user = str(
+            frappe.db.get_value("POS Opening Shift", opening_shift_name, "user")
+            or ""
+        ).strip()
+
+    previous_flags = {
+        key: getattr(frappe.flags, key, None)
+        for key in (
+            "posa_owned_submission_ledger",
+            "posa_background_opening_shift",
+            "posa_background_opening_user",
+            "posa_background_opening_accepted",
+        )
     }
+    try:
+        frappe.flags.posa_owned_submission_ledger = ledger_doc.name
+        if opening_shift_name and opening_user:
+            frappe.flags.posa_background_opening_shift = opening_shift_name
+            frappe.flags.posa_background_opening_user = opening_user
+            frappe.flags.posa_background_opening_accepted = True
+        return submit_invoice(
+            json.dumps(invoice_payload, default=str),
+            json.dumps(request_data, default=str),
+            submit_in_background=0,
+            cashier_pin=None,
+        )
+    finally:
+        for key, previous in previous_flags.items():
+            if previous is not None:
+                setattr(frappe.flags, key, previous)
+            elif hasattr(frappe.flags, key):
+                delattr(frappe.flags, key)
 
 
 @frappe.whitelist()

@@ -6,6 +6,7 @@ from erpnext.controllers.accounts_controller import get_advance_payment_entries_
 from erpnext.setup.utils import get_exchange_rate
 
 MAX_OUTSTANDING_PAGE_LENGTH = 500
+CREDIT_SALE_FIELD = "posa_is_credit_sale"
 
 
 def _resolve_party_inputs(customer=None, party=None, party_type=None):
@@ -31,26 +32,49 @@ def _get_open_sales_invoices(
     if pos_profile:
         filters["pos_profile"] = pos_profile
 
+    fields = [
+        "name",
+        "posting_date",
+        "due_date",
+        "outstanding_amount",
+        "rounded_total",
+        "base_rounded_total",
+        "grand_total",
+        "base_grand_total",
+        "currency",
+        "pos_profile",
+        "customer_name",
+        "conversion_rate",
+        "party_account_currency",
+    ]
+    for fieldname in (
+        CREDIT_SALE_FIELD,
+        "posa_pos_opening_shift",
+        "pos_closing_entry",
+    ):
+        if frappe.db.has_column("Sales Invoice", fieldname):
+            fields.append(fieldname)
+
     return frappe.get_list(
         "Sales Invoice",
         filters=filters,
-        fields=[
-            "name",
-            "posting_date",
-            "due_date",
-            "outstanding_amount",
-            "rounded_total",
-            "base_rounded_total",
-            "grand_total",
-            "base_grand_total",
-            "currency",
-            "pos_profile",
-            "customer_name",
-            "conversion_rate",
-            "party_account_currency",
-        ],
+        fields=fields,
         order_by="posting_date desc, name desc",
     )
+
+
+def _credit_sale_is_collectible(invoice):
+    """Hide current-shift credit sales until the shift has been closed."""
+
+    if not cint(invoice.get(CREDIT_SALE_FIELD)):
+        return True
+    if invoice.get("pos_closing_entry"):
+        return True
+    if not invoice.get("posa_pos_opening_shift"):
+        # Consolidated Sales Invoices are created only during close shift. This
+        # also keeps non-POS credit invoices available to the normal collector.
+        return True
+    return False
 
 
 def _get_open_purchase_invoices(
@@ -193,6 +217,8 @@ def get_outstanding_invoices(
 
         normalized_rows = []
         for invoice in invoice_rows:
+            if party_type == "Customer" and not _credit_sale_is_collectible(invoice):
+                continue
             invoice_outstanding = flt(invoice.get("outstanding_amount"))
             conversion_rate = flt(invoice.get("conversion_rate")) or 1
 
@@ -259,6 +285,11 @@ def get_outstanding_invoices(
                         or customer_name,
                         "party_type": party_type,
                         "conversion_rate": conversion_rate,
+                        "is_credit_sale": (
+                            cint(invoice.get(CREDIT_SALE_FIELD))
+                            if party_type == "Customer"
+                            else 0
+                        ),
                     }
                 )
             )

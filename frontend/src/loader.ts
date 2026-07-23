@@ -12,6 +12,7 @@ import {
 	resolvePosAppCanonicalAliasLocation,
 	resolvePosAppNormalizedPath,
 } from "./loader-utils";
+import { repairPosAssets } from "./utils/clearAllCaches";
 
 const POSAPP_BASE_PATH = "/app/posapp";
 const VERSION_ENDPOINT = "/assets/posawesome/dist/js/version.json";
@@ -255,42 +256,9 @@ async function loadPosAssets(
 
 async function performAssetRecovery() {
 	try {
-		if (
-			typeof navigator !== "undefined" &&
-			navigator.serviceWorker &&
-			typeof navigator.serviceWorker.getRegistrations === "function"
-		) {
-			const registrations =
-				await navigator.serviceWorker.getRegistrations();
-			await Promise.all(
-				registrations.map(async (registration) => {
-					registration.active?.postMessage({
-						type: "CLIENT_FORCE_UNREGISTER",
-					});
-					registration.waiting?.postMessage({
-						type: "CLIENT_FORCE_UNREGISTER",
-					});
-					registration.installing?.postMessage({
-						type: "CLIENT_FORCE_UNREGISTER",
-					});
-					await registration.unregister();
-				}),
-			);
-		}
+		await repairPosAssets();
 	} catch (err) {
-		console.warn(
-			"POS App recovery failed during service worker cleanup",
-			err,
-		);
-	}
-
-	try {
-		if (typeof caches !== "undefined") {
-			const cacheKeys = await caches.keys();
-			await Promise.all(cacheKeys.map((key) => caches.delete(key)));
-		}
-	} catch (err) {
-		console.warn("POS App recovery failed during Cache API cleanup", err);
+		console.warn("POS App recovery failed during scoped asset cleanup", err);
 	}
 
 	try {

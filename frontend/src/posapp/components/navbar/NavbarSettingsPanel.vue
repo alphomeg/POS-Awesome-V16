@@ -5,11 +5,18 @@
 		data-test="navbar-settings-panel"
 		@click.self="emit('update:modelValue', false)"
 	>
-		<section class="navbar-settings-panel pos-themed-card">
+		<section
+			ref="panel"
+			class="navbar-settings-panel pos-themed-card"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="navbar-settings-title"
+			@keydown.capture="handleDialogKeydown"
+		>
 			<div class="navbar-settings-panel__header">
 				<div class="navbar-settings-panel__copy">
 					<div class="navbar-settings-panel__eyebrow">{{ __("Settings") }}</div>
-					<div class="navbar-settings-panel__title">
+					<div id="navbar-settings-title" class="navbar-settings-panel__title">
 						{{ __("POS controls and maintenance") }}
 					</div>
 					<div class="navbar-settings-panel__subtitle">
@@ -19,9 +26,11 @@
 					</div>
 				</div>
 				<button
+					ref="closeButton"
 					type="button"
 					class="navbar-settings-panel__close"
 					data-test="navbar-settings-panel-close"
+					:aria-label="__('Close settings')"
 					@click="emit('update:modelValue', false)"
 				>
 					<span class="mdi mdi-close" aria-hidden="true"></span>
@@ -173,7 +182,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import NavbarCashierPinForm from "./NavbarCashierPinForm.vue";
 
 defineOptions({
@@ -215,6 +224,17 @@ const __ = (text, args = []) => {
 
 const activeSectionId = ref("");
 const activeActionId = ref("");
+const panel = ref(null);
+const closeButton = ref(null);
+let previousFocus = null;
+
+onMounted(() => {
+	document.addEventListener("keydown", handleDocumentKeydown, true);
+});
+
+onBeforeUnmount(() => {
+	document.removeEventListener("keydown", handleDocumentKeydown, true);
+});
 
 const SECTION_META = {
 	"offline-sync": {
@@ -270,6 +290,53 @@ watch(
 	},
 	{ immediate: true, deep: true },
 );
+
+watch(
+	() => props.modelValue,
+	async (open) => {
+		if (open) {
+			previousFocus = document.activeElement;
+			await nextTick();
+			closeButton.value?.focus?.();
+			return;
+		}
+		previousFocus?.focus?.();
+		previousFocus = null;
+	},
+);
+
+function handleDialogKeydown(event) {
+	if (event.key === "Escape" && !event.defaultPrevented) {
+		event.preventDefault();
+		emit("update:modelValue", false);
+		return;
+	}
+	if (event.key !== "Tab") return;
+	const focusable = Array.from(
+		panel.value?.querySelectorAll?.(
+			'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+		) || [],
+	);
+	if (!focusable.length) return;
+	const first = focusable[0];
+	const last = focusable[focusable.length - 1];
+	if (event.shiftKey && document.activeElement === first) {
+		event.preventDefault();
+		last.focus();
+	} else if (!event.shiftKey && document.activeElement === last) {
+		event.preventDefault();
+		first.focus();
+	}
+}
+
+function handleDocumentKeydown(event) {
+	if (!props.modelValue || event.key !== "Escape") {
+		return;
+	}
+	event.preventDefault();
+	event.stopPropagation();
+	emit("update:modelValue", false);
+}
 
 function setActiveSection(sectionId) {
 	activeSectionId.value = sectionId;

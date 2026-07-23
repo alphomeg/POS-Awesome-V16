@@ -1,10 +1,15 @@
 <template>
 	<transition name="offline-status-panel-fade">
 		<v-card
+			ref="panel"
 			v-if="props.modelValue"
 			data-test="offline-status-panel"
 			class="offline-status-panel pos-themed-card"
 			elevation="16"
+			role="dialog"
+			aria-modal="false"
+			:aria-label="__('Offline status and maintenance')"
+			@keydown.esc.prevent="closePanel"
 		>
 			<div class="offline-status-panel__header">
 				<div class="offline-status-panel__copy">
@@ -114,6 +119,7 @@
 
 			<div class="offline-status-panel__actions">
 				<button
+					ref="firstAction"
 					type="button"
 					data-test="offline-status-action-connectivity"
 					@click="$emit('toggle-offline')"
@@ -125,7 +131,7 @@
 					data-test="offline-status-action-refresh"
 					@click="$emit('refresh-offline-data')"
 				>
-					{{ __("Refresh Offline Data") }}
+					{{ __("Refresh Server Data") }}
 				</button>
 				<button
 					type="button"
@@ -136,10 +142,10 @@
 				</button>
 				<button
 					type="button"
-					data-test="offline-status-action-clear-cache"
-					@click="$emit('clear-cache')"
+					data-test="offline-status-action-repair-assets"
+					@click="$emit('repair-assets')"
 				>
-					{{ __("Clear Cache") }}
+					{{ __("Repair App Assets") }}
 				</button>
 				<button
 					type="button"
@@ -154,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useOfflineSyncStore } from "../../stores/offlineSyncStore";
@@ -167,12 +173,12 @@ const props = defineProps<{
 	modelValue: boolean;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
 	(e: "update:modelValue", value: boolean): void;
 	(e: "toggle-offline"): void;
 	(e: "refresh-offline-data"): void;
 	(e: "rebuild-offline-data"): void;
-	(e: "clear-cache"): void;
+	(e: "repair-assets"): void;
 	(e: "open-diagnostics"): void;
 }>();
 
@@ -180,6 +186,9 @@ defineEmits<{
 const __ = (window as any).__ || ((text: string) => text);
 
 const offlineSyncStore = useOfflineSyncStore();
+const panel = ref<HTMLElement | null>(null);
+const firstAction = ref<HTMLButtonElement | null>(null);
+let previousFocus: HTMLElement | null = null;
 const {
 	summary,
 	bootstrapWarning,
@@ -206,6 +215,24 @@ const chipColor = computed(() => {
 });
 
 const cacheUsageLabel = computed(() => `${summary.value.cacheUsage || 0}%`);
+
+watch(
+	() => props.modelValue,
+	async (open) => {
+		if (open) {
+			previousFocus = document.activeElement as HTMLElement | null;
+			await nextTick();
+			firstAction.value?.focus();
+			return;
+		}
+		previousFocus?.focus?.();
+		previousFocus = null;
+	},
+);
+
+function closePanel() {
+	emit("update:modelValue", false);
+}
 </script>
 
 <style scoped>

@@ -2,6 +2,7 @@
 
 from erpnext.accounts.doctype.pos_invoice.pos_invoice import POSInvoice as ERPNextPOSInvoice
 
+from posawesome.posawesome.api.credit_sales import is_trusted_credit_sale
 from posawesome.posawesome.api.invoice import validate_shift
 
 
@@ -24,3 +25,18 @@ class CustomPOSInvoice(ERPNextPOSInvoice):
 
         # No POS Awesome shift - use ERPNext's validation
         super().validate_pos_opening_entry()
+
+    def validate_mode_of_payment(self):
+        if is_trusted_credit_sale(self):
+            return
+        super().validate_mode_of_payment()
+
+    def validate_full_payment(self):
+        if is_trusted_credit_sale(self):
+            return
+        super().validate_full_payment()
+
+    def validate_pos_paid_amount(self):
+        if is_trusted_credit_sale(self):
+            return
+        super().validate_pos_paid_amount()

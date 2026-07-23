@@ -176,13 +176,13 @@ describe("OfflineStatusPanel", () => {
 			"Timed out while refreshing exchange rates.",
 		);
 		expect(wrapper.get('[data-test="offline-status-action-refresh"]').text()).toContain(
-			"Refresh Offline Data",
+			"Refresh Server Data",
 		);
 		expect(wrapper.get('[data-test="offline-status-action-rebuild"]').text()).toContain(
 			"Rebuild Offline Data",
 		);
-		expect(wrapper.get('[data-test="offline-status-action-clear-cache"]').text()).toContain(
-			"Clear Cache",
+		expect(wrapper.get('[data-test="offline-status-action-repair-assets"]').text()).toContain(
+			"Repair App Assets",
 		);
 		expect(wrapper.get('[data-test="offline-status-action-diagnostics"]').text()).toContain(
 			"View Data Diagnostics",
@@ -208,7 +208,7 @@ describe("OfflineStatusPanel", () => {
 					toggleCount: ref(0),
 					refreshCount: ref(0),
 					rebuildCount: ref(0),
-					clearCacheCount: ref(0),
+					repairAssetsCount: ref(0),
 					diagnosticCount: ref(0),
 				};
 			},
@@ -218,7 +218,7 @@ describe("OfflineStatusPanel", () => {
 					@toggle-offline="toggleCount += 1"
 					@refresh-offline-data="refreshCount += 1"
 					@rebuild-offline-data="rebuildCount += 1"
-					@clear-cache="clearCacheCount += 1"
+					@repair-assets="repairAssetsCount += 1"
 					@open-diagnostics="diagnosticCount += 1"
 				/>
 			`,
@@ -243,13 +243,13 @@ describe("OfflineStatusPanel", () => {
 		await wrapper.get('[data-test="offline-status-action-connectivity"]').trigger("click");
 		await wrapper.get('[data-test="offline-status-action-refresh"]').trigger("click");
 		await wrapper.get('[data-test="offline-status-action-rebuild"]').trigger("click");
-		await wrapper.get('[data-test="offline-status-action-clear-cache"]').trigger("click");
+		await wrapper.get('[data-test="offline-status-action-repair-assets"]').trigger("click");
 		await wrapper.get('[data-test="offline-status-action-diagnostics"]').trigger("click");
 
 		expect((wrapper.vm as any).toggleCount).toBe(1);
 		expect((wrapper.vm as any).refreshCount).toBe(1);
 		expect((wrapper.vm as any).rebuildCount).toBe(1);
-		expect((wrapper.vm as any).clearCacheCount).toBe(1);
+		expect((wrapper.vm as any).repairAssetsCount).toBe(1);
 		expect((wrapper.vm as any).diagnosticCount).toBe(1);
 	});
 });

@@ -35,7 +35,7 @@
 						@toggle-offline="toggleManualOfflineFromPanel"
 						@refresh-offline-data="handleRefreshOfflineDataAction"
 						@rebuild-offline-data="handleRebuildOfflineDataAction"
-						@clear-cache="handleClearCacheAction"
+						@repair-assets="handleRepairAssetsAction"
 						@open-diagnostics="handleOpenOfflineDiagnosticsAction"
 					/>
 				</div>
@@ -84,7 +84,6 @@
 					@lock-pos="lockPosScreen"
 					@share-last-invoice="$emit('share-last-invoice')"
 					@open-customer-display="$emit('open-customer-display')"
-					@clear-cache="clearCache"
 					@show-about="showAboutDialog = true"
 					@toggle-theme="toggleTheme"
 					@logout="logOut"
@@ -110,6 +109,16 @@
 			:current-cashier="currentCashier"
 			:current-cashier-display="currentCashierDisplay"
 			@select-action="handleSettingsPanelAction"
+		/>
+		<PosMaintenanceDialog
+			v-model="maintenanceDialogOpen"
+			:loading="maintenanceLoading"
+			:health="operationalHealth"
+			:inventory="posStateInventory"
+			@refresh="loadMaintenanceDiagnostics"
+			@repair-assets="repairAppAssets"
+			@reset-local-pos="resetLocalPos"
+			@resume-submission="resumeInvoiceSubmission"
 		/>
 
 		<!-- Use the modular AboutDialog component -->
@@ -158,6 +167,7 @@ import NavbarAppBar from "./navbar/NavbarAppBar.vue";
 import NavbarDrawer from "./navbar/NavbarDrawer.vue";
 import NavbarMenu from "./navbar/NavbarMenu.vue";
 import NavbarSettingsPanel from "./navbar/NavbarSettingsPanel.vue";
+import PosMaintenanceDialog from "./navbar/PosMaintenanceDialog.vue";
 import NotificationBell from "./navbar/NotificationBell.vue";
 import OfflineStatusPanel from "./navbar/OfflineStatusPanel.vue";
 import StatusIndicator from "./navbar/StatusIndicator.vue";
@@ -167,9 +177,12 @@ import OfflineInvoices from "./OfflineInvoices.vue";
 import EmployeeSwitchDialog from "./pos/employee/EmployeeSwitchDialog.vue";
 import posLogo from "./pos/pos.png";
 import { POS_BRAND_NAME } from "../config/branding";
-import { forceClearAllCache } from "../../offline/index";
-import { clearAllCaches } from "../../utils/clearAllCaches";
 import { isOffline } from "../../offline/index";
+import {
+	getPosStateInventory,
+	repairPosAssets,
+	resetLocalPosOwnedState,
+} from "../../utils/clearAllCaches";
 import { useRtl } from "../composables/core/useRtl";
 
 const ServerUsageGadget = defineAsyncComponent(() => import("./navbar/ServerUsageGadget.vue"));
@@ -251,6 +264,7 @@ export default {
 		NavbarDrawer,
 		NavbarMenu,
 		NavbarSettingsPanel,
+		PosMaintenanceDialog,
 		NotificationBell,
 		OfflineStatusPanel,
 		StatusIndicator,
@@ -339,6 +353,10 @@ export default {
 			showAboutDialog: false,
 			showOfflineInvoices: false,
 			settingsPanelOpen: false,
+			maintenanceDialogOpen: false,
+			maintenanceLoading: false,
+			operationalHealth: null,
+			posStateInventory: null,
 			lastSyncTotalsSnapshot: { pending: 0, synced: 0, drafted: 0 },
 			syncNotificationPrimed: false,
 			employeeSwitchHandler: null,
@@ -423,7 +441,7 @@ export default {
 			const offlineActions = [
 				{
 					id: "refresh-offline-data",
-					label: this.__("Refresh Offline Data"),
+					label: this.__("Refresh Server Data"),
 					subtitle: this.__("Fetch the latest offline prerequisite updates"),
 					icon: "mdi-sync",
 					tone: "info",
@@ -436,10 +454,17 @@ export default {
 					tone: "warning",
 				},
 				{
-					id: "clear-cache",
-					label: this.__("Clear Cache"),
-					subtitle: this.__("Remove cached data and reload the POS app"),
-					icon: "mdi-broom",
+					id: "repair-app-assets",
+					label: this.__("Repair App Assets"),
+					subtitle: this.__("Replace only POS-owned code caches and service workers"),
+					icon: "mdi-tools",
+					tone: "warning",
+				},
+				{
+					id: "clear-derived-data",
+					label: this.__("Clear Derived Data"),
+					subtitle: this.__("Request a safe rebuild without clearing the serving data first"),
+					icon: "mdi-database-refresh-outline",
 					tone: "warning",
 				},
 				{
@@ -854,6 +879,7 @@ export default {
 			this.closeOfflineStatusPanel();
 			this.refreshCacheUsage();
 			this.settingsPanelOpen = true;
+			void this.loadMaintenanceDiagnostics({ quiet: true });
 		},
 		closeSettingsPanel() {
 			this.settingsPanelOpen = false;
@@ -894,15 +920,13 @@ export default {
 			this.closeOfflineStatusPanel();
 			this.$emit("rebuild-offline-data");
 		},
-		handleClearCacheAction() {
+		handleRepairAssetsAction() {
 			this.closeOfflineStatusPanel();
-			this.refreshCacheUsage();
-			return this.clearCache();
+			return this.repairAppAssets();
 		},
 		handleOpenOfflineDiagnosticsAction() {
 			this.closeOfflineStatusPanel();
-			this.refreshCacheUsage();
-			this.$emit("open-offline-diagnostics");
+			this.openMaintenanceDialog();
 		},
 		handleSettingsPanelAction(actionId) {
 			switch (actionId) {
@@ -915,15 +939,17 @@ export default {
 					this.closeSettingsPanel();
 					this.$emit("rebuild-offline-data");
 					break;
-				case "clear-cache":
+				case "repair-app-assets":
 					this.closeSettingsPanel();
-					this.refreshCacheUsage();
-					void this.clearCache();
+					void this.repairAppAssets();
+					break;
+				case "clear-derived-data":
+					this.closeSettingsPanel();
+					void this.clearDerivedData();
 					break;
 				case "open-diagnostics":
 					this.closeSettingsPanel();
-					this.refreshCacheUsage();
-					this.$emit("open-offline-diagnostics");
+					this.openMaintenanceDialog();
 					break;
 				case "open-customer-display":
 					this.closeSettingsPanel();
@@ -1003,52 +1029,184 @@ export default {
 				}
 			}
 		},
-		async clearCache() {
-			if (this.clearingCache) {
-				return;
+		openMaintenanceDialog() {
+			this.closeOfflineStatusPanel();
+			this.settingsPanelOpen = false;
+			this.maintenanceDialogOpen = true;
+			void this.loadMaintenanceDiagnostics();
+		},
+		async loadMaintenanceDiagnostics(options = {}) {
+			if (!this.posProfileName || this.maintenanceLoading) return;
+			this.maintenanceLoading = true;
+			try {
+				const [healthResponse, inventory] = await Promise.all([
+					frappe.call({
+						method:
+							"posawesome.posawesome.api.pos_maintenance.get_pos_operational_health",
+						args: { pos_profile: this.posProfileName },
+					}),
+					getPosStateInventory(),
+				]);
+				this.operationalHealth = healthResponse?.message || null;
+				this.posStateInventory = inventory;
+			} catch (error) {
+				console.error("Failed to load POS maintenance diagnostics", error);
+				if (!options.quiet) {
+					this.toastStore.show({
+						color: "error",
+						title: this.__("Unable to load POS diagnostics"),
+					});
+				}
+			} finally {
+				this.maintenanceLoading = false;
 			}
+		},
+		async repairAppAssets() {
 			if (isOffline()) {
 				this.toastStore.show({
 					color: "warning",
-					title: this.__("Cannot clear cache while offline"),
+					title: this.__("Reconnect before repairing app assets"),
 				});
 				return;
 			}
-			let shouldReload = false;
 			try {
-				this.clearingCache = true;
 				this.toastStore.show({
 					color: "info",
-					title: this.__("Clearing local cache..."),
+					title: this.__("Repairing POS app assets..."),
 				});
-				let westernPref = null;
-				if (typeof localStorage !== "undefined") {
-					westernPref = localStorage.getItem("use_western_numerals");
-				}
-				try {
-					await forceClearAllCache();
-					await clearAllCaches({ confirmBeforeClear: false });
-				} finally {
-					if (westernPref !== null && typeof localStorage !== "undefined") {
-						localStorage.setItem("use_western_numerals", westernPref);
-					}
-				}
+				await repairPosAssets();
 				this.toastStore.show({
 					color: "success",
-					title: this.__("Cache cleared successfully"),
+					title: this.__("POS app assets repaired"),
 				});
-				shouldReload = true;
-			} catch (e) {
-				console.error("Failed to clear cache", e);
+				window.setTimeout(() => window.location.reload(), 400);
+			} catch (error) {
+				console.error("Failed to repair POS app assets", error);
 				this.toastStore.show({
 					color: "error",
-					title: this.__("Failed to clear cache"),
+					title: this.__("App asset repair failed"),
 				});
-			} finally {
-				this.clearingCache = false;
-				if (shouldReload) {
-					setTimeout(() => location.reload(), 1000);
+			}
+		},
+		async clearDerivedData() {
+			if (isOffline()) {
+				this.toastStore.show({
+					color: "warning",
+					title: this.__("Reconnect before rebuilding derived data"),
+				});
+				return;
+			}
+			if (
+				!window.confirm(
+					this.__(
+						"Rebuild replaceable POS data now? Pending sales and opening-shift recovery will be preserved.",
+					),
+				)
+			) {
+				return;
+			}
+			try {
+				this.$emit("rebuild-offline-data");
+				this.toastStore.show({
+					color: "info",
+					title: this.__("Derived POS data rebuild requested"),
+				});
+			} catch (error) {
+				console.error("Failed to clear derived POS data", error);
+				this.toastStore.show({
+					color: "error",
+					title: this.__("Derived-data rebuild could not start"),
+				});
+			}
+		},
+		async resetLocalPos() {
+			await this.loadMaintenanceDiagnostics();
+			const operational = this.posStateInventory?.operational || {};
+			const unresolved =
+				Number(operational.invoiceOutbox || 0) +
+				Number(operational.writeQueue || 0) +
+				Number(operational.legacyQueue || 0) +
+				Number(operational.intentJournals || 0) +
+				Number(operational.activeRecoveryPointers || 0);
+			if (unresolved > 0) {
+				this.toastStore.show({
+					color: "warning",
+					title: this.__("Local reset blocked"),
+					detail: this.__(
+						"This device has {0} durable POS recovery records. Reconcile them before resetting.",
+						[unresolved],
+					),
+				});
+				return;
+			}
+			const phrase = window.prompt(
+				this.__(
+					"Type RESET LOCAL POS to remove POS-owned browser data on this device. ERPNext documents are not deleted.",
+				),
+			);
+			if (phrase !== "RESET LOCAL POS") return;
+
+			const auditArgs = {
+				pos_profile: this.posProfileName,
+				inventory: JSON.stringify(this.posStateInventory || {}),
+			};
+			try {
+				await frappe.call({
+					method:
+						"posawesome.posawesome.api.pos_maintenance.record_developer_reset",
+					args: { ...auditArgs, phase: "started" },
+				});
+				await resetLocalPosOwnedState();
+				await frappe.call({
+					method:
+						"posawesome.posawesome.api.pos_maintenance.record_developer_reset",
+					args: { ...auditArgs, phase: "completed" },
+				});
+				window.location.reload();
+			} catch (error) {
+				console.error("Failed to reset local POS state", error);
+				try {
+					await frappe.call({
+						method:
+							"posawesome.posawesome.api.pos_maintenance.record_developer_reset",
+						args: { ...auditArgs, phase: "failed" },
+					});
+				} catch {
+					// The original reset failure remains the operator-facing error.
 				}
+				this.toastStore.show({
+					color: "error",
+					title: this.__("Local POS reset failed"),
+				});
+			}
+		},
+		async resumeInvoiceSubmission(submission) {
+			if (!submission?.client_request_id) return;
+			try {
+				const response = await frappe.call({
+					method:
+						"posawesome.posawesome.api.invoice_processing.creation.repair_invoice_submission",
+					args: {
+						client_request_id: submission.client_request_id,
+						company:
+							this.posProfile?.company ||
+							this.operationalHealth?.company,
+						pos_profile: this.posProfileName,
+						document_type: submission.document_type,
+					},
+				});
+				this.toastStore.show({
+					color: "success",
+					title: this.__("Submission reconciled"),
+					detail: response?.message?.name || submission.invoice_name || "",
+				});
+				await this.loadMaintenanceDiagnostics();
+			} catch (error) {
+				console.error("Failed to resume invoice submission", error);
+				this.toastStore.show({
+					color: "error",
+					title: this.__("Submission recovery failed"),
+				});
 			}
 		},
 		toggleTheme() {

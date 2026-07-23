@@ -1890,7 +1890,7 @@
 		"collapsible_depends_on": null,
 		"columns": 0,
 		"default": "0",
-		"depends_on": "posa_allow_partial_payment",
+		"depends_on": null,
 		"description": null,
 		"docstatus": 0,
 		"doctype": "Custom Field",
@@ -8708,6 +8708,32 @@
 		"read_only": 1,
 		"insert_after": "posa_pos_opening_shift",
 		"name": "POS Invoice-posa_cashier"
+	},
+	{
+		"doctype": "Custom Field",
+		"dt": "Sales Invoice",
+		"fieldname": "posa_is_credit_sale",
+		"fieldtype": "Check",
+		"label": "POS Credit Sale",
+		"description": "Server-authorized POS sale that intentionally retained an outstanding balance.",
+		"in_standard_filter": 1,
+		"no_copy": 1,
+		"read_only": 1,
+		"insert_after": "posa_cashier",
+		"name": "Sales Invoice-posa_is_credit_sale"
+	},
+	{
+		"doctype": "Custom Field",
+		"dt": "POS Invoice",
+		"fieldname": "posa_is_credit_sale",
+		"fieldtype": "Check",
+		"label": "POS Credit Sale",
+		"description": "Server-authorized POS sale that intentionally retained an outstanding balance.",
+		"in_standard_filter": 1,
+		"no_copy": 1,
+		"read_only": 1,
+		"insert_after": "posa_cashier",
+		"name": "POS Invoice-posa_is_credit_sale"
 	},
 	{
 		"doctype": "Custom Field",
