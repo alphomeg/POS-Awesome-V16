@@ -1,6 +1,7 @@
 """Custom POS Invoice class that integrates POS Awesome shift logic."""
 
 from erpnext.accounts.doctype.pos_invoice.pos_invoice import POSInvoice as ERPNextPOSInvoice
+from frappe.utils import cint
 
 from posawesome.posawesome.api.credit_sales import is_trusted_credit_sale
 from posawesome.posawesome.api.invoice import validate_shift
@@ -25,6 +26,26 @@ class CustomPOSInvoice(ERPNextPOSInvoice):
 
         # No POS Awesome shift - use ERPNext's validation
         super().validate_pos_opening_entry()
+
+    def validate_stock_availablility(self):
+        """Keep normal POS stock controls, except for importer-owned history.
+
+        RetailMind's old-POS importer posts historical POS Invoices with
+        ``update_stock=0`` because current inventory is established separately by
+        the deterministic opening Stock Reconciliation. ERPNext validates every
+        POS Invoice against today's on-hand quantity even when it has no stock
+        impact, which incorrectly rejects legitimate historical lines such as
+        zero-balance service or delivery-charge items. The import-run marker keeps
+        this exception tightly scoped: live POS invoices continue to use ERPNext's
+        normal warehouse stock validation.
+        """
+
+        if getattr(self, "retailmind_legacy_import_run", None) and not cint(
+            getattr(self, "update_stock", 0)
+        ):
+            return
+
+        return super().validate_stock_availablility()
 
     def validate_mode_of_payment(self):
         if is_trusted_credit_sale(self):
