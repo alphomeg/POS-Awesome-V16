@@ -10,6 +10,7 @@ import invoiceSource from "../src/posapp/components/pos/Invoice.vue?raw";
 import invoiceActionsSource from "../src/posapp/components/pos/invoice_utils/actions.ts?raw";
 import paymentsSource from "../src/posapp/components/pos/Payments.vue?raw";
 import posShellSource from "../src/posapp/components/pos/shell/Pos.vue?raw";
+import uiStoreSource from "../src/posapp/stores/uiStore.ts?raw";
 import itemAdditionSource from "../src/posapp/composables/pos/items/useItemAddition.ts?raw";
 
 const BoxStub = defineComponent({
@@ -205,6 +206,20 @@ describe("ambiguous payment submission recovery UX", () => {
 		);
 		expect(itemAdditionSource).toMatch(
 			/async function addItemMeasured[\s\S]{0,140}checkoutMutationLocked[\s\S]{0,30}return/,
+		);
+	});
+
+	it("keeps the shortcut host mounted but hides its payment surface while cashier signing is open", () => {
+		expect(uiStoreSource).toContain("const cashierSigningOpen = ref(false)");
+		expect(uiStoreSource).toContain("const setCashierSigningOpen = (open: boolean)");
+		expect(posShellSource).toMatch(
+			/'payment-shortcut-host--locked':[\s\S]{0,180}!cashierSigningOpen/,
+		);
+		expect(paymentsSource).toMatch(
+			/requestCashierSigning = \(\)[\s\S]{0,900}setCashierSigningOpen\?\.\(true\)/,
+		);
+		expect(paymentsSource).toMatch(
+			/settleCashierSigning = \(result\)[\s\S]{0,220}setCashierSigningOpen\?\.\(false\)/,
 		);
 	});
 

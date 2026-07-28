@@ -2043,6 +2043,7 @@ const settleCashierSigning = (result) => {
 	const resolver = cashierSigningResolver;
 	cashierSigningResolver = null;
 	cashierSigningDialogOpen.value = false;
+	uiStore.setCashierSigningOpen?.(false);
 	resolver?.(result);
 };
 
@@ -2061,6 +2062,7 @@ const requestCashierSigning = () => {
 	}
 	cashierSigningAmount.value = resolveSigningPaymentAmount();
 	void loadCashierSigningCreditContext();
+	uiStore.setCashierSigningOpen?.(true);
 	cashierSigningDialogOpen.value = true;
 	return new Promise((resolve) => {
 		cashierSigningResolver = resolve;
@@ -2660,6 +2662,7 @@ onBeforeUnmount(() => {
 	// dispatched request to the durable recovery lock instead of stranding the
 	// signing promise or the process-local lock.
 	settleCashierSigning(null);
+	uiStore.setCashierSigningOpen?.(false);
 	if (submissionInFlight.value) {
 		if (getActiveInvoiceSubmissionRecovery()) {
 			uiStore.setCheckoutRecoveryLocked?.(true);

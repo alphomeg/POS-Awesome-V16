@@ -22,10 +22,14 @@
 			class="payment-shortcut-host"
 			:class="{
 				'payment-shortcut-host--locked':
-					checkoutMutationLocked && checkoutPaymentHostOwner === 'shortcut',
+					checkoutMutationLocked &&
+					checkoutPaymentHostOwner === 'shortcut' &&
+					!cashierSigningOpen,
 			}"
 			:aria-hidden="
-				checkoutMutationLocked && checkoutPaymentHostOwner === 'shortcut' ? 'false' : 'true'
+				checkoutMutationLocked && checkoutPaymentHostOwner === 'shortcut' && !cashierSigningOpen
+					? 'false'
+					: 'true'
 			"
 		>
 			<Payments
@@ -402,6 +406,7 @@ export default {
 			posProfile,
 			paymentDialogOpen,
 			paymentShortcutHostOpen,
+			cashierSigningOpen,
 			checkoutMutationLocked,
 			checkoutPaymentHostOwner,
 		} =

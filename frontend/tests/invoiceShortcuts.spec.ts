@@ -57,19 +57,22 @@ describe("invoiceShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
-	it("queues Alt+X with the entered amount without printing", async () => {
+	it.each([
+		["x", "KeyX", false],
+		["p", "KeyP", true],
+	])("queues Alt+%s through the signing-only shortcut host", async (key, code, print) => {
 		const vm = {
 			...createVm(),
 			show_payment: vi.fn(async () => {}),
 		};
-		const event = createAltEvent("x", "KeyX");
+		const event = createAltEvent(key, code);
 
 		await (invoiceShortcuts as any).handleInvoiceShortcut.call(vm, event);
 
 		expect(vm.eventBus.emit).toHaveBeenCalledWith(
 			"queue_submit_payment_shortcut",
 			{
-				print: false,
+				print,
 				amount: 125,
 			},
 		);

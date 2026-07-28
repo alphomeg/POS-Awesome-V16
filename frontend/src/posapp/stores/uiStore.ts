@@ -49,6 +49,9 @@ export const useUIStore = defineStore("ui", () => {
 	const activeView = ref<string>("items"); // 'items', 'payment', 'offers', 'coupons'
 	const paymentDialogOpen = ref(false);
 	const paymentShortcutHostOpen = ref(false);
+	// The shortcut payment host must stay mounted for recovery, but its full
+	// payment surface must not appear behind the cashier-signature dialog.
+	const cashierSigningOpen = ref(false);
 	// Checkout mutations remain blocked across responsive remounts. The in-flight
 	// owner is process-local; recovery ownership is restored from the durable
 	// browser pointer by the POS shell/payment composable.
@@ -137,6 +140,10 @@ export const useUIStore = defineStore("ui", () => {
 			return;
 		}
 		paymentShortcutHostOpen.value = false;
+	};
+
+	const setCashierSigningOpen = (open: boolean) => {
+		cashierSigningOpen.value = Boolean(open);
 	};
 
 	const openInvoiceManagement = (
@@ -365,6 +372,7 @@ export const useUIStore = defineStore("ui", () => {
 		activeView,
 		paymentDialogOpen,
 		paymentShortcutHostOpen,
+		cashierSigningOpen,
 		checkoutSubmissionInFlight,
 		checkoutRecoveryLocked,
 		checkoutPaymentHostOwner,
@@ -378,6 +386,7 @@ export const useUIStore = defineStore("ui", () => {
 		closePaymentDialog,
 		openPaymentShortcutHost,
 		closePaymentShortcutHost,
+		setCashierSigningOpen,
 		setCheckoutSubmissionInFlight,
 		setCheckoutRecoveryLocked,
 		setCheckoutPaymentHostOwner,
