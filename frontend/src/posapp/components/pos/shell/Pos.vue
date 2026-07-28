@@ -18,7 +18,7 @@
 			@register="handleRegisterPosData"
 		></OpeningDialog>
 		<div
-			v-if="paymentShortcutHostOpen"
+			v-show="paymentShortcutHostOpen"
 			class="payment-shortcut-host"
 			:class="{
 				'payment-shortcut-host--locked':

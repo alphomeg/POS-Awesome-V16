@@ -40,6 +40,7 @@ const VTextFieldStub = defineComponent({
 	props: {
 		modelValue: { type: [String, Number], default: "" },
 		disabled: { type: Boolean, default: false },
+		errorMessages: { type: [String, Array], default: "" },
 	},
 	emits: ["update:modelValue", "keydown"],
 	setup(props, { emit, attrs }) {
@@ -148,5 +149,21 @@ describe("CashierSaleSigningDialog", () => {
 			settlementMode: "credit",
 			receivedAmount: 250,
 		}));
+	});
+
+	it("keeps an authoritative PIN rejection inside the signing dialog", async () => {
+		const wrapper = mountDialog();
+		const pinField = wrapper.findComponent(VTextFieldStub);
+		await pinField.setValue("9999");
+		await wrapper.setProps({
+			errorMessage: "Invalid cashier PIN. Try again.",
+		});
+
+		expect(wrapper.get('[data-testid="cashier-sale-signing-dialog"]').exists()).toBe(true);
+		expect(wrapper.props("modelValue")).toBe(true);
+		expect(pinField.props("modelValue")).toBe("9999");
+		expect(pinField.props("errorMessages")).toBe(
+			"Invalid cashier PIN. Try again.",
+		);
 	});
 });

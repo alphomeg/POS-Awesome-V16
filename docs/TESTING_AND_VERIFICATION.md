@@ -82,6 +82,13 @@ Check:
 - Mobile inline and Alt+X/Alt+P shortcut submission retain the exact Payments
   owner through cashier signing, resize, dispatch, and recovery; ownerless
   startup recovery opens a visible persistent dialog
+- Alt/Option+X and Alt/Option+P expose the pre-warmed signing dialog within the
+  1.5-second live-browser budget while cart preparation continues behind it
+- A wrong per-sale PIN remains inline in cashier signing, leaves the payment
+  surface hidden, creates no submission-recovery banner, and can be followed
+  by a valid PIN that submits the same cart exactly once
+- Canceling signing aborts late shortcut-preparation publication and an
+  immediate second shortcut opens a fresh signing attempt
 - A deferred live request locks Cancel, Escape/scrim, shortcuts, navigation,
   payment inputs, and cart edits before its response arrives
 - A matching or empty restored cart may settle; a non-empty cart with another

@@ -1,10 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+	cleanupProvisionedTerminalCashier,
+	ensureAuthoritativeTerminalUnlock,
+	getProvisionedTerminalCashier,
+} from "./helpers/terminalAuth";
+
 const ENABLED = process.env.POSA_CASHIER_SIGNING_E2E === "1";
 const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
-const EXPECTED_PROFILE = process.env.POSA_SIGNING_E2E_PROFILE || "";
-const EXPECTED_CASHIER = process.env.POSA_SIGNING_E2E_CASHIER || "";
-const CASHIER_PIN = process.env.POSA_E2E_CASHIER_PIN || "";
 const SUBMISSION_TRIGGER = process.env.POSA_SIGNING_E2E_TRIGGER || "pay";
 const KNOWN_ITEM_CODES = ["02017", "02016", "02249", "A3106", "22203"];
 
@@ -39,11 +42,7 @@ function isBenignConsoleError(message: string) {
 	);
 }
 
-async function waitForPos(page: Page) {
-	await page.goto(POS_PATH, { waitUntil: "domcontentloaded" });
-	if (/\/login/.test(page.url())) {
-		throw new Error("Cashier-signing E2E requires POSA_SMOKE_SID.");
-	}
+async function waitForPos(page: Page, expectedProfile: string) {
 	await expect(page.locator(".main-section").first()).toBeVisible({
 		timeout: 90_000,
 	});
@@ -51,7 +50,7 @@ async function waitForPos(page: Page) {
 		timeout: 90_000,
 	});
 	const navbar = page.locator('[data-test="pos-navbar"]');
-	await expect(navbar).toHaveAttribute("data-pos-profile", EXPECTED_PROFILE, {
+	await expect(navbar).toHaveAttribute("data-pos-profile", expectedProfile, {
 		timeout: 90_000,
 	});
 }
@@ -87,9 +86,28 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 	page,
 }) => {
 	test.setTimeout(4 * 60_000);
-	if (!EXPECTED_PROFILE || !EXPECTED_CASHIER || !CASHIER_PIN) {
+	await page.setViewportSize({ width: 1366, height: 768 });
+	await page.goto(POS_PATH, { waitUntil: "domcontentloaded" });
+	if (/\/login/.test(page.url())) {
+		throw new Error("Cashier-signing E2E requires POSA_SMOKE_SID.");
+	}
+	await ensureAuthoritativeTerminalUnlock(page);
+	const provisioned = getProvisionedTerminalCashier(page);
+	const expectedProfile =
+		process.env.POSA_SIGNING_E2E_PROFILE?.trim() ||
+		provisioned?.profileName ||
+		"";
+	const expectedCashier =
+		process.env.POSA_SIGNING_E2E_CASHIER?.trim() ||
+		provisioned?.user ||
+		"";
+	const cashierPin =
+		process.env.POSA_E2E_CASHIER_PIN?.trim() ||
+		provisioned?.pin ||
+		"";
+	if (!expectedProfile || !expectedCashier || !cashierPin) {
 		throw new Error(
-			"POSA_SIGNING_E2E_PROFILE, POSA_SIGNING_E2E_CASHIER, and POSA_E2E_CASHIER_PIN are required.",
+			"Configure signing credentials or run with POSA_E2E_PROVISION_CASHIER=1.",
 		);
 	}
 
@@ -106,12 +124,11 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 			globalErrors.push(`console.error: ${text}`);
 	});
 
-	await page.setViewportSize({ width: 1366, height: 768 });
-	await waitForPos(page);
+	await waitForPos(page, expectedProfile);
 	const profile = await callFrappe<Record<string, any>>(
 		page,
 		"frappe.client.get",
-		{ doctype: "POS Profile", name: EXPECTED_PROFILE },
+		{ doctype: "POS Profile", name: expectedProfile },
 	);
 	const invoiceDoctype = Number(
 		profile.create_pos_invoice_instead_of_sales_invoice || 0,
@@ -138,8 +155,14 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 	const itemCode = await addKnownItem(page);
 	const signingDialog = page.getByTestId("cashier-sale-signing-dialog");
 	if (SUBMISSION_TRIGGER === "shortcuts") {
+		const printShortcutStartedAt = Date.now();
 		await page.keyboard.press("Alt+P");
 		await expect(signingDialog).toBeVisible({ timeout: 30_000 });
+		const printShortcutLatencyMs = Date.now() - printShortcutStartedAt;
+		console.log(
+			`[cashier-signing] Alt+P dialog latency: ${printShortcutLatencyMs}ms`,
+		);
+		expect(printShortcutLatencyMs).toBeLessThan(1_500);
 		await expect(page.getByTestId("payment-root")).toBeHidden();
 		await expect(page.locator("[role='dialog']:visible")).toHaveCount(1);
 		await expect(
@@ -149,8 +172,14 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		await expect(signingDialog).toBeHidden({ timeout: 15_000 });
 		await expect(page.getByTestId(`cart-row-${itemCode}`).first()).toBeVisible();
 
+		const submitShortcutStartedAt = Date.now();
 		await page.keyboard.press("Alt+X");
 		await expect(signingDialog).toBeVisible({ timeout: 30_000 });
+		const submitShortcutLatencyMs = Date.now() - submitShortcutStartedAt;
+		console.log(
+			`[cashier-signing] Alt+X dialog latency: ${submitShortcutLatencyMs}ms`,
+		);
+		expect(submitShortcutLatencyMs).toBeLessThan(1_500);
 		await expect(page.getByTestId("payment-root")).toBeHidden();
 		await expect(page.locator("[role='dialog']:visible")).toHaveCount(1);
 		await expect(
@@ -184,7 +213,21 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		.getByTestId("cashier-sale-pin-input")
 		.locator("input");
 	await expect(pinInput).toBeFocused();
-	await pinInput.fill(CASHIER_PIN);
+	await pinInput.fill("000000000000");
+	await pinInput.press("Enter");
+	await expect(signingDialog).toBeVisible();
+	await expect(
+		signingDialog.getByText("Invalid cashier PIN. Try again."),
+	).toBeVisible();
+	await expect(page.getByTestId("submission-recovery-banner")).toHaveCount(0);
+	await expect(page.getByTestId("payment-root")).toBeHidden();
+	expect(
+		await page.evaluate(
+			() => (window as any).__cashierSigningResponses.length,
+		),
+	).toBe(0);
+
+	await pinInput.fill(cashierPin);
 	await pinInput.press("ArrowDown");
 	await expect(paymentMethods.nth(1)).toHaveAttribute("aria-checked", "true");
 	await pinInput.press("ArrowUp");
@@ -223,8 +266,8 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		)
 		.toBe(1);
 
-	expect(submittedInvoice.pos_profile).toBe(EXPECTED_PROFILE);
-	expect(submittedInvoice.posa_cashier).toBe(EXPECTED_CASHIER);
+	expect(submittedInvoice.pos_profile).toBe(expectedProfile);
+	expect(submittedInvoice.posa_cashier).toBe(expectedCashier);
 	expect(submittedInvoice.posa_client_request_id).toBe(response.requestId);
 	const positivePayments = (submittedInvoice.payments || []).filter(
 		(payment: any) => Number(payment.amount || 0) > 0,
@@ -239,16 +282,20 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 			doctype: invoiceDoctype,
 			filters: JSON.stringify({ name: response.invoice }),
 			fields: JSON.stringify(["name", "posa_cashier"]),
-			pos_profile: EXPECTED_PROFILE,
+			pos_profile: expectedProfile,
 			limit_page_length: 1,
 		},
 	);
 	expect(history).toHaveLength(1);
-	expect(history[0].posa_cashier).toBe(EXPECTED_CASHIER);
+	expect(history[0].posa_cashier).toBe(expectedCashier);
 	expect(history[0].posa_cashier_name).toBeTruthy();
 	await expect(signingDialog).toBeHidden({ timeout: 30_000 });
 	await expect(page.getByTestId("counter-grid-item-entry")).toBeFocused({
 		timeout: 30_000,
 	});
 	expect(globalErrors, globalErrors.join("\n")).toHaveLength(0);
+});
+
+test.afterEach(async ({ page }) => {
+	await cleanupProvisionedTerminalCashier(page);
 });

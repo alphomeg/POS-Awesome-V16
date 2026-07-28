@@ -218,6 +218,9 @@ describe("ambiguous payment submission recovery UX", () => {
 		expect(posShellSource).toContain(
 			":class=\"{ 'payment-dialog--cashier-signing': cashierSigningOpen }\"",
 		);
+		expect(posShellSource).toMatch(
+			/<div[\s\S]{0,80}v-show="paymentShortcutHostOpen"[\s\S]{0,700}<Payments[\s\S]{0,120}host-owner="shortcut"/,
+		);
 		expect(posShellSource).toContain('v-show="!cashierSigningOpen"');
 		expect(posShellSource).toMatch(
 			/:deep\(\.payment-dialog--cashier-signing\)\s*\{[\s\S]{0,80}display:\s*none\s*!important/,
@@ -234,6 +237,11 @@ describe("ambiguous payment submission recovery UX", () => {
 	});
 
 	it("returns an authoritatively rejected cashier PIN to a fresh signing prompt", () => {
+		expect(paymentsSource).toContain("validateCashierSignature");
+		expect(paymentsSource).toContain('cashierSigningPinError.value = __("Invalid cashier PIN. Try again.")');
+		expect(paymentsSource).toMatch(
+			/await validateCashierSignature\([\s\S]{0,1600}settleCashierSigning\(/,
+		);
 		expect(paymentsSource).toContain("const isCashierPinRejection = (error)");
 		expect(paymentsSource).toContain('"CASHIER_PIN_REJECTED"');
 		expect(paymentsSource).toMatch(
@@ -246,6 +254,15 @@ describe("ambiguous payment submission recovery UX", () => {
 		expect(paymentsSource).toContain("releaseCashierSignedSubmissionRecovery");
 		expect(paymentsSource).toMatch(
 			/releaseCashierSignedSubmissionRecovery\(\)[\s\S]{0,180}submitInvoiceWrapper\(false\)/,
+		);
+	});
+
+	it("does not add an artificial timer before a shortcut requests signing", () => {
+		expect(paymentsSource).toMatch(
+			/queueShortcutSubmit = \(payload = \{\}\)[\s\S]{0,500}nextTick\(\(\) =>/,
+		);
+		expect(paymentsSource).not.toMatch(
+			/queueShortcutSubmit = \(payload = \{\}\)[\s\S]{0,700}setTimeout/,
 		);
 	});
 

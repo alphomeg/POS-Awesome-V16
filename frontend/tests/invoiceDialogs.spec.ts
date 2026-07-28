@@ -16,6 +16,7 @@ const createPaymentContext = () => ({
 	invoice_doc: {},
 	process_invoice: vi.fn(async () => ({
 		doctype: "Sales Invoice",
+		name: "ACC-SINV-DRAFT-001",
 		grand_total: 10,
 		rounded_total: 10,
 		total: 10,
@@ -59,6 +60,7 @@ describe("invoice payment dialogs", () => {
 
 		await show_payment(context);
 
+		expect(context.reload_current_invoice_from_backend).toHaveBeenCalledTimes(1);
 		expect(context.uiStore.setActiveView).toHaveBeenCalledWith("payment");
 		expect(context.eventBus.emit).toHaveBeenCalledWith("set_compact_panel", "selector");
 		expect(context.eventBus.emit).toHaveBeenCalledWith("show_payment", "true");
@@ -136,8 +138,47 @@ describe("invoice payment dialogs", () => {
 
 		await show_payment(context, { shortcutOnly: true });
 
+		expect(context.reload_current_invoice_from_backend).not.toHaveBeenCalled();
 		expect(context.uiStore.openPaymentShortcutHost).toHaveBeenCalledTimes(1);
 		expect(context.uiStore.openPaymentDialog).not.toHaveBeenCalled();
 		expect(context.uiStore.setActiveView).not.toHaveBeenCalledWith("payment");
+	});
+
+	it("does not reopen an already-mounted shortcut host", async () => {
+		const context = createPaymentContext();
+
+		await show_payment(context, {
+			shortcutOnly: true,
+			hostAlreadyOpen: true,
+		});
+
+		expect(context.uiStore.openPaymentShortcutHost).not.toHaveBeenCalled();
+		expect(context.eventBus.emit).toHaveBeenCalledWith(
+			"send_invoice_doc_payment",
+			expect.objectContaining({ name: "ACC-SINV-DRAFT-001" }),
+		);
+	});
+
+	it("does not publish prepared payment state after shortcut cancellation", async () => {
+		const context = createPaymentContext();
+		const controller = new AbortController();
+		context.validate = vi.fn(async () => {
+			controller.abort();
+			return true;
+		});
+
+		await expect(
+			show_payment(context, {
+				shortcutOnly: true,
+				hostAlreadyOpen: true,
+				signal: controller.signal,
+			}),
+		).resolves.toBeNull();
+
+		expect(context.process_invoice).not.toHaveBeenCalled();
+		expect(context.eventBus.emit).not.toHaveBeenCalledWith(
+			"show_payment",
+			"true",
+		);
 	});
 });

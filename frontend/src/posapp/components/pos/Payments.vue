@@ -336,7 +336,8 @@
 			:amount="cashierSigningAmount"
 			:currency="invoice_doc?.currency || pos_profile?.currency || ''"
 			:format-currency="formatCurrency"
-			:loading="loading"
+			:loading="loading || cashierSigningPinValidating"
+			:error-message="cashierSigningPinError"
 			:preferred-mode="cashierSigningPreferredMode"
 			:customer-name="cashierSigningCustomerName"
 			:credit-eligible="cashierSigningCreditEligible"
@@ -348,6 +349,7 @@
 			:initial-due-date="invoice_doc?.due_date || ''"
 			:posting-date="invoice_doc?.posting_date || ''"
 			@submit="handleCashierSigningSubmit"
+			@pin-change="cashierSigningPinError = ''"
 			@cancel="handleCashierSigningCancel"
 		/>
 		<ManualSubmissionRecoveryDialog
@@ -423,6 +425,7 @@ import { parseBooleanSetting } from "../../utils/stock";
 import { toCompanyCurrency } from "../../utils/erpnextCurrency";
 import { focusFirstKeyboardTarget } from "../../utils/keyboardNavigation";
 import { getActiveInvoiceSubmissionRecovery } from "../../composables/pos/payments/recoveryState";
+import { validateCashierSignature } from "../../services/cashierSignatureService";
 
 // Components
 import PaymentSummary from "./payments/PaymentSummary.vue";
@@ -530,8 +533,12 @@ const cashierSigningAmount = ref(0);
 const cashierSigningCreditContext = ref({});
 const cashierSigningCreditContextLoading = ref(false);
 const cashierSigningCreditContextError = ref("");
+const cashierSigningPinValidating = ref(false);
+const cashierSigningPinError = ref("");
 const manualRecoveryDialogOpen = ref(false);
 let cashierSigningResolver = null;
+let shortcutPreparation = null;
+let shortcutPreparationAbortController = null;
 
 // Computed Properties
 const invoice_doc = computed({
@@ -2056,6 +2063,8 @@ const loadCashierSigningCreditContext = async () => {
 const settleCashierSigning = (result) => {
 	const resolver = cashierSigningResolver;
 	cashierSigningResolver = null;
+	cashierSigningPinValidating.value = false;
+	cashierSigningPinError.value = "";
 	cashierSigningDialogOpen.value = false;
 	uiStore.setCashierSigningOpen?.(false);
 	resolver?.(result);
@@ -2075,6 +2084,7 @@ const requestCashierSigning = () => {
 		);
 	}
 	cashierSigningAmount.value = resolveSigningPaymentAmount();
+	cashierSigningPinError.value = "";
 	void loadCashierSigningCreditContext();
 	uiStore.setCashierSigningOpen?.(true);
 	cashierSigningDialogOpen.value = true;
@@ -2083,10 +2093,29 @@ const requestCashierSigning = () => {
 	});
 };
 
-const handleCashierSigningSubmit = async (payload) => {
-	if (!payload?.cashierPin) {
-		return;
+const abortShortcutPreparation = () => {
+	shortcutPreparationAbortController?.abort?.();
+	shortcutPreparationAbortController = null;
+	shortcutPreparation = null;
+};
+
+const awaitShortcutPreparation = async () => {
+	const preparation = shortcutPreparation;
+	if (!preparation) return true;
+	try {
+		return Boolean(await preparation);
+	} catch (error) {
+		console.error("Unable to prepare cashier-signed shortcut sale:", error);
+		return false;
+	} finally {
+		if (shortcutPreparation === preparation) {
+			shortcutPreparation = null;
+			shortcutPreparationAbortController = null;
+		}
 	}
+};
+
+const applyCashierSigningSettlement = async (payload) => {
 	const isCreditSale = payload.settlementMode === "credit";
 	if (isCreditSale) {
 		is_credit_sale.value = true;
@@ -2109,14 +2138,63 @@ const handleCashierSigningSubmit = async (payload) => {
 		}
 		applySigningPaymentMethod(payload.modeOfPayment);
 	}
+};
+
+const handleCashierSigningSubmit = async (payload) => {
+	if (!payload?.cashierPin || cashierSigningPinValidating.value) {
+		return;
+	}
+	const profileName = String(
+		invoice_doc.value?.pos_profile || pos_profile.value?.name || "",
+	).trim();
+	if (!profileName) {
+		cashierSigningPinError.value = __(
+			"Unable to verify the cashier PIN because the POS Profile is unavailable.",
+		);
+		return;
+	}
+
+	cashierSigningPinValidating.value = true;
+	cashierSigningPinError.value = "";
+	try {
+		const validation = await validateCashierSignature(
+			profileName,
+			payload.cashierPin,
+		);
+		if (!validation?.valid) {
+			cashierSigningPinError.value = __("Invalid cashier PIN. Try again.");
+			return;
+		}
+	} catch (error) {
+		cashierSigningPinError.value = isCashierPinRejection(error)
+			? __("Invalid cashier PIN. Try again.")
+			: __(
+					"Unable to verify the cashier PIN. Check the connection and try again.",
+				);
+		return;
+	} finally {
+		cashierSigningPinValidating.value = false;
+	}
+
+	cashierSigningPinValidating.value = true;
+	const preparationReady = await awaitShortcutPreparation();
+	if (!preparationReady) {
+		cashierSigningPinValidating.value = false;
+		settleCashierSigning(null);
+		if (paymentShortcutHostOpen.value) {
+			back_to_invoice();
+		}
+		return;
+	}
+	await applyCashierSigningSettlement(payload);
+	cashierSigningPinValidating.value = false;
 	settleCashierSigning({
-		cashierPin: payload.cashierPin,
-		modeOfPayment: payload.modeOfPayment,
-		settlementMode: payload.settlementMode,
+		...payload,
 	});
 };
 
 const handleCashierSigningCancel = () => {
+	abortShortcutPreparation();
 	settleCashierSigning(null);
 	if (paymentShortcutHostOpen.value) {
 		back_to_invoice();
@@ -2209,6 +2287,10 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 	try {
 		const signingRequired = requiresCashierSigning();
 		let cashierSignature = await requestCashierSigning();
+		if (!signingRequired && !(await awaitShortcutPreparation())) {
+			closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
+			return;
+		}
 		while (true) {
 			if (signingRequired && !cashierSignature) {
 				closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
@@ -2282,15 +2364,33 @@ const handlePaymentShortcut = (event) => {
 };
 
 const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
-	if (!paymentVisible.value || checkoutMutationLocked.value || loading.value) return;
+	const preparationInProgress = Boolean(shortcutPreparation);
+	if (
+		(!paymentVisible.value && !preparationInProgress) ||
+		checkoutMutationLocked.value ||
+		loading.value
+	) {
+		return;
+	}
 	const submitShortcut = () => {
-		nextTick(() => {
-			submit(null, false, print);
-		});
+		submit(null, false, print);
 	};
 
 	if (amount !== null) {
 		const shortcutAmount = Number(amount);
+		if (preparationInProgress) {
+			void shortcutPreparation.then((prepared) => {
+				if (!prepared || !Number.isFinite(shortcutAmount)) return;
+				applyPreferredPaymentAmount(
+					invoice_doc.value,
+					shortcutAmount,
+					currency_precision.value,
+					isCashLikePayment,
+				);
+			});
+			submitShortcut();
+			return;
+		}
 		if (!invoice_doc.value?.is_return && Number.isFinite(shortcutAmount) && shortcutAmount === 0) {
 			if (!enableShortcutCreditSale()) {
 				return;
@@ -2322,20 +2422,24 @@ const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
 };
 
 const queueShortcutSubmit = (payload = {}) => {
+	if (payload?.hostOwner && payload.hostOwner !== props.hostOwner) {
+		return;
+	}
 	if (checkoutMutationLocked.value) {
 		return;
 	}
+	shortcutPreparation = payload?.preparation || null;
+	shortcutPreparationAbortController =
+		payload?.preparationAbortController || null;
 	queuedShortcutSubmit.value = payload;
 	if (isPaymentOpen.value) {
 		nextTick(() => {
-			setTimeout(() => {
-				if (!queuedShortcutSubmit.value) {
-					return;
-				}
-				const pendingPayload = queuedShortcutSubmit.value;
-				queuedShortcutSubmit.value = null;
-				handleSubmitPaymentShortcut(pendingPayload || {});
-			}, 150);
+			if (!queuedShortcutSubmit.value) {
+				return;
+			}
+			const pendingPayload = queuedShortcutSubmit.value;
+			queuedShortcutSubmit.value = null;
+			handleSubmitPaymentShortcut(pendingPayload || {});
 		});
 	}
 };
@@ -2713,6 +2817,7 @@ onBeforeUnmount(() => {
 	// dispatched request to the durable recovery lock instead of stranding the
 	// signing promise or the process-local lock.
 	settleCashierSigning(null);
+	abortShortcutPreparation();
 	uiStore.setCashierSigningOpen?.(false);
 	if (submissionInFlight.value) {
 		if (getActiveInvoiceSubmissionRecovery()) {

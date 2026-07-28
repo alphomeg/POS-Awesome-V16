@@ -15,7 +15,11 @@ const showCompactPanel = (context: any, panel: "selector" | "invoice") => {
 
 export async function show_payment(
 	context: any,
-	options: { shortcutOnly?: boolean } = {},
+	options: {
+		shortcutOnly?: boolean;
+		hostAlreadyOpen?: boolean;
+		signal?: AbortSignal;
+	} = {},
 ) {
 	if (context._suppressClosePaymentsTimer) {
 		clearTimeout(context._suppressClosePaymentsTimer);
@@ -24,6 +28,7 @@ export async function show_payment(
 	context._suppressClosePayments = true;
 
 	try {
+		if (options.signal?.aborted) return null;
 		if (!context.customer) {
 			context.toastStore.show({
 				title: __(`Select a customer`),
@@ -42,11 +47,10 @@ export async function show_payment(
 
 		const isValid = context.validate ? await context.validate() : true;
 
-		if (!isValid) {
-			return;
-		}
+		if (!isValid || options.signal?.aborted) return null;
 
 		if (context.ensure_auto_batch_selection) await context.ensure_auto_batch_selection();
+		if (options.signal?.aborted) return null;
 
 		// Capture the transient refundable cap before process_invoice()/backend
 		// reload, which return a doc stripped of non-DocType fields. It is
@@ -75,15 +79,22 @@ export async function show_payment(
 		}
 
 		if (!invoice_doc) {
-			return;
+			return null;
 		}
+		if (options.signal?.aborted) return null;
 
-		if (!isOffline() && invoice_doc.name) {
+		// update_invoice already returns the authoritative saved draft. The
+		// editable payment screen keeps its defensive reload because users can
+		// continue changing payment details there; the signing-only shortcut
+		// would otherwise pay for an immediate duplicate server round-trip
+		// before it can show the cashier dialog.
+		if (!options.shortcutOnly && !isOffline() && invoice_doc.name) {
 			const refreshed = await context.reload_current_invoice_from_backend();
 			if (refreshed) {
 				invoice_doc = refreshed;
 			}
 		}
+		if (options.signal?.aborted) return null;
 
 		invoice_doc.currency = context.selected_currency || context.pos_profile.currency;
 		invoice_doc.conversion_rate = context.conversion_rate || 1;
@@ -140,7 +151,11 @@ export async function show_payment(
 		const useDesktopPaymentDialog =
 			typeof window !== "undefined" && window.innerWidth >= 992;
 
-		if (options.shortcutOnly && context.uiStore?.openPaymentShortcutHost) {
+		if (
+			options.shortcutOnly &&
+			!options.hostAlreadyOpen &&
+			context.uiStore?.openPaymentShortcutHost
+		) {
 			context.uiStore.openPaymentShortcutHost();
 		} else if (useDesktopPaymentDialog && context.uiStore?.openPaymentDialog) {
 			context.uiStore.openPaymentDialog();
@@ -155,6 +170,7 @@ export async function show_payment(
 			await context.$nextTick();
 		}
 		await new Promise((resolve) => setTimeout(resolve, 0));
+		if (options.signal?.aborted) return null;
 
 		// Re-attach the refundable cap stripped by the backend save/reload so the
 		// payment screen can default an unpaid-invoice return to a credit note.
@@ -164,13 +180,16 @@ export async function show_payment(
 
 		context.eventBus.emit("show_payment", "true");
 		context.eventBus.emit("send_invoice_doc_payment", invoice_doc);
+		return invoice_doc;
 	} catch (error: any) {
+		if (options.signal?.aborted) return null;
 		console.error("Error in show_payment:", error);
 		context.toastStore.show({
 			title: __("Error processing payment"),
 			color: "error",
 			message: error.message,
 		});
+		return null;
 	} finally {
 		context._suppressClosePaymentsTimer = setTimeout(() => {
 			context._suppressClosePayments = false;

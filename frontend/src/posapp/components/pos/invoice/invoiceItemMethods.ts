@@ -318,7 +318,11 @@ const invoiceItemMethods: Record<string, unknown> &
 	},
 
 	// Dialogs
-	show_payment(options?: { shortcutOnly?: boolean }) {
+	show_payment(options?: {
+		shortcutOnly?: boolean;
+		hostAlreadyOpen?: boolean;
+		signal?: AbortSignal;
+	}) {
 		return Dialogs.show_payment(this, options);
 	},
 	get_draft_invoices(source = "invoice") {

@@ -53,6 +53,7 @@ def _install_frappe_stub():
     frappe_module.local = types.SimpleNamespace(request_ip="192.0.2.10")
     frappe_module.request = types.SimpleNamespace(remote_addr="192.0.2.10")
     frappe_module.PermissionError = PermissionError
+    frappe_module.ValidationError = ValueError
     frappe_module._dict = lambda value=None, **kwargs: types.SimpleNamespace(**(value or {}), **kwargs)
     frappe_module.get_all = lambda *args, **kwargs: []
     frappe_module.get_doc = lambda *args, **kwargs: None
@@ -398,6 +399,35 @@ class TestEmployeesApi(unittest.TestCase):
 
         with self.assertRaisesRegex(Exception, "more than one cashier"):
             self.employees.resolve_cashier_by_pin("Main POS", "1234")
+
+    def test_sale_signature_preflight_returns_no_cashier_identity(self):
+        self.employees.resolve_cashier_by_pin = Mock(
+            return_value={
+                "user": "cashier@example.com",
+                "full_name": "Cashier",
+                "enabled": 1,
+                "is_supervisor": False,
+            }
+        )
+
+        result = self.employees.validate_cashier_signature("Main POS", "1234")
+
+        self.assertEqual(result, {"valid": True})
+        self.employees.resolve_cashier_by_pin.assert_called_once_with(
+            pos_profile="Main POS",
+            pin="1234",
+        )
+
+    def test_sale_signature_preflight_returns_definite_invalid_result(self):
+        self.employees.resolve_cashier_by_pin = Mock(
+            side_effect=self.employees.frappe.ValidationError(
+                "Invalid cashier PIN."
+            )
+        )
+
+        result = self.employees.validate_cashier_signature("Main POS", "0000")
+
+        self.assertEqual(result, {"valid": False})
 
     def test_cashier_pin_request_context_is_redacted_recursively(self):
         request_form = {

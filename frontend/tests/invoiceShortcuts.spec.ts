@@ -21,6 +21,7 @@ const createVm = () => ({
 		triggerItemSearchFocus: vi.fn(),
 		selectTopItem: vi.fn(),
 		toggleItemSettings: vi.fn(),
+		openPaymentShortcutHost: vi.fn(),
 	},
 	$refs: {
 		itemsTable: { focusItemField: vi.fn() },
@@ -33,6 +34,7 @@ const createVm = () => ({
 	focusItemSearchField: vi.fn(),
 	getShortcutPaymentAmount: vi.fn(() => 125),
 	confirmPaymentSubmission: vi.fn(async () => 150),
+	$nextTick: vi.fn(async () => {}),
 });
 
 describe("invoiceShortcuts", () => {
@@ -71,13 +73,55 @@ describe("invoiceShortcuts", () => {
 
 		expect(vm.eventBus.emit).toHaveBeenCalledWith(
 			"queue_submit_payment_shortcut",
-			{
+			expect.objectContaining({
 				print,
 				amount: 125,
-			},
+				hostOwner: "shortcut",
+				preparation: expect.any(Promise),
+				preparationAbortController: expect.any(AbortController),
+			}),
 		);
 		expect(vm.confirmPaymentSubmission).not.toHaveBeenCalled();
-		expect(vm.show_payment).toHaveBeenCalledWith({ shortcutOnly: true });
+		expect(vm.uiStore.openPaymentShortcutHost).toHaveBeenCalledTimes(1);
+		expect(vm.show_payment).toHaveBeenCalledWith(
+			expect.objectContaining({
+				shortcutOnly: true,
+				hostAlreadyOpen: true,
+				signal: expect.any(AbortSignal),
+			}),
+		);
+	});
+
+	it("opens and queues the cashier dialog without waiting for cart preparation", async () => {
+		let releaseFlush: (() => void) | undefined;
+		const flushPending = new Promise<void>((resolve) => {
+			releaseFlush = resolve;
+		});
+		const vm = {
+			...createVm(),
+			flushBackgroundUpdates: vi.fn(() => flushPending),
+			show_payment: vi.fn(async () => ({ name: "ACC-SINV-DRAFT-001" })),
+		};
+		const event = createAltEvent("x", "KeyX");
+
+		const shortcut = (invoiceShortcuts as any).handleInvoiceShortcut.call(
+			vm,
+			event,
+		);
+		await vi.waitFor(() => {
+			expect(vm.eventBus.emit).toHaveBeenCalledWith(
+				"queue_submit_payment_shortcut",
+				expect.objectContaining({ hostOwner: "shortcut" }),
+			);
+		});
+		expect(vm.uiStore.openPaymentShortcutHost).toHaveBeenCalledTimes(1);
+		expect(vm.show_payment).not.toHaveBeenCalled();
+
+		await shortcut;
+		releaseFlush?.();
+		await vi.waitFor(() => {
+			expect(vm.show_payment).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it("uses F4 to open the employee switch flow", async () => {
@@ -564,7 +608,7 @@ describe("invoiceShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
-	it("switches compact layout to payments before queueing submit and print", async () => {
+	it("opens the signing host before queueing submit and print", async () => {
 		const vm = {
 			...createVm(),
 			show_payment: vi.fn(async () => {}),
@@ -582,20 +626,20 @@ describe("invoiceShortcuts", () => {
 		);
 		expect(vm.eventBus.emit).toHaveBeenCalledWith(
 			"queue_submit_payment_shortcut",
-			{
+			expect.objectContaining({
 				print: true,
 				amount: 125,
-			},
+				hostOwner: "shortcut",
+			}),
 		);
 		expect(vm.confirmPaymentSubmission).not.toHaveBeenCalled();
+		expect(vm.uiStore.openPaymentShortcutHost).toHaveBeenCalledTimes(1);
 		expect(vm.show_payment).toHaveBeenCalledTimes(1);
-		expect(vm.show_payment).toHaveBeenCalledWith({ shortcutOnly: true });
-		expect(vm.show_payment.mock.invocationCallOrder[0]).toBeLessThan(
-			vm.eventBus.emit.mock.invocationCallOrder.find(
-				(_: number, index: number) =>
-					vm.eventBus.emit.mock.calls[index]?.[0] ===
-					"queue_submit_payment_shortcut",
-			) ?? Number.MAX_SAFE_INTEGER,
+		expect(vm.show_payment).toHaveBeenCalledWith(
+			expect.objectContaining({
+				shortcutOnly: true,
+				hostAlreadyOpen: true,
+			}),
 		);
 		expect(event.defaultPrevented).toBe(true);
 	});

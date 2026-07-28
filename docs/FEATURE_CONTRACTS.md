@@ -309,9 +309,19 @@ Rules:
 - A per-sale cashier PIN is a transient authorization credential, never part
   of the synchronous journal or IndexedDB outbox. A PIN-authorized invoice
   must never be replayed automatically without a fresh cashier authorization.
-  An explicit invalid/missing-PIN validation response releases the recovery
-  lock and returns to cashier signing; an ambiguous signed request keeps its
-  original request ID and offers a controlled retry with a fresh PIN.
+  Validate the PIN through the bounded terminal endpoint while the cashier
+  signing dialog remains open, before invoice dispatch or recovery intent
+  creation. A definite rejection is inline form feedback and cannot expose the
+  payment surface, create a recovery banner, or invoke Frappe's global
+  exception UI. Final invoice submission must still revalidate the transient
+  PIN authoritatively. An ambiguous signed request keeps its original request
+  ID and offers a controlled retry with a fresh PIN.
+- Keep the signing-only Alt/Option+X and Alt/Option+P host mounted but hidden so
+  a keypress does not pay component-mount cost. Open signing immediately and
+  prepare the draft concurrently; do not close signing or dispatch the invoice
+  until both preparation and PIN validation succeed. Cancellation aborts
+  publication of any late preparation result and must release the keyboard
+  guard immediately.
 - Legacy compatibility responses obey the same exact request/type/status rule.
   A returned but invalid acknowledgement remains unresolved and must not be
   converted into a successful draft fallback.

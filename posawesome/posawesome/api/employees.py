@@ -451,6 +451,25 @@ def resolve_cashier_by_pin(pos_profile=None, pin=None):
 
 
 @frappe.whitelist()
+def validate_cashier_signature(pos_profile=None, pin=None):
+    """Validate a transient sale-signing PIN before dispatching an invoice.
+
+    The endpoint deliberately returns no cashier identity and does not activate
+    terminal state. Final invoice submission still performs its own
+    authoritative PIN check; this preflight only keeps definite PIN mistakes
+    inside the signing dialog and out of idempotent submission recovery.
+    """
+    try:
+        resolve_cashier_by_pin(pos_profile=pos_profile, pin=pin)
+    except frappe.ValidationError:
+        # A normal PIN rejection is form feedback, not a failed invoice request.
+        # Returning a definite result also prevents Frappe's global exception UI
+        # from competing with the cashier-signing dialog.
+        return {"valid": False}
+    return {"valid": True}
+
+
+@frappe.whitelist()
 def get_terminal_state(pos_profile=None):
     return get_authorized_terminal_state(pos_profile)
 

@@ -167,7 +167,7 @@
 					class="cashier-sale-signing-card__pin"
 					data-testid="cashier-sale-pin-input"
 					:disabled="loading"
-					:error-messages="pinError"
+					:error-messages="displayedPinError"
 					:append-inner-icon="showPin ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
 					@click:append-inner="showPin = !showPin"
 					@keydown.enter.prevent="submit"
@@ -259,9 +259,10 @@ const props = defineProps({
 	initialReceivedAmount: { type: Number, default: 0 },
 	initialDueDate: { type: String, default: "" },
 	postingDate: { type: String, default: "" },
+	errorMessage: { type: String, default: "" },
 });
 
-const emit = defineEmits(["update:modelValue", "submit", "cancel"]);
+const emit = defineEmits(["update:modelValue", "submit", "cancel", "pin-change"]);
 const __ = window.__ || ((value) => value);
 const cashierPin = ref("");
 const selectedMode = ref("");
@@ -272,6 +273,9 @@ const pinError = ref("");
 const receivedAmountError = ref("");
 const pinInput = ref(null);
 const showPin = ref(false);
+const displayedPinError = computed(
+	() => props.errorMessage || pinError.value,
+);
 
 const absoluteAmount = computed(() => Math.abs(Number(props.amount) || 0));
 const receivedAmount = computed(() => {
@@ -418,6 +422,11 @@ const focusPinInput = () => {
 	const input = pinInput.value?.$el?.querySelector?.("input");
 	input?.focus?.();
 };
+const focusAndSelectPinInput = () => {
+	const input = pinInput.value?.$el?.querySelector?.("input");
+	input?.focus?.();
+	input?.select?.();
+};
 const cancel = () => {
 	emit("cancel");
 	emit("update:modelValue", false);
@@ -472,6 +481,17 @@ watch(
 );
 watch(() => props.preferredMode, selectPreferredMode);
 watch(normalizedPayments, selectPreferredMode);
+watch(cashierPin, () => {
+	pinError.value = "";
+	emit("pin-change");
+});
+watch(
+	() => props.errorMessage,
+	(errorMessage) => {
+		if (!errorMessage) return;
+		nextTick(focusAndSelectPinInput);
+	},
+);
 watch(
 	() => props.creditEligible,
 	(eligible) => {

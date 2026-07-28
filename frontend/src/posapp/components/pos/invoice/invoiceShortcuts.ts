@@ -151,6 +151,7 @@ interface InvoiceShortcutsVm {
 		triggerItemSearchFocus: () => void;
 		selectTopItem: () => void;
 		toggleItemSettings: () => void;
+		openPaymentShortcutHost?: () => void;
 	};
 	$refs: {
 		actionToolbar?: {
@@ -219,7 +220,12 @@ interface InvoiceShortcutsVm {
 	focusCustomerSearchField?: () => void;
 	get_draft_orders?: () => void;
 	open_returns?: () => void;
-	show_payment?: (_options?: { shortcutOnly?: boolean }) => Promise<void> | void;
+	show_payment?: (_options?: {
+		shortcutOnly?: boolean;
+		hostAlreadyOpen?: boolean;
+		signal?: AbortSignal;
+	}) => Promise<unknown> | unknown;
+	$nextTick?: () => Promise<void>;
 	focusAdditionalDiscountField?: () => void;
 	remove_item?: (_item: Record<string, unknown>) => void;
 	get_draft_invoices?: () => void;
@@ -576,14 +582,28 @@ const invoiceShortcuts: Record<string, unknown> & ThisType<InvoiceShortcutsVm> =
 				try {
 					const shouldPrint = isPrintShortcut;
 					const paymentAmount = this.getShortcutPaymentAmount();
-					await this.flushBackgroundUpdates?.();
-					this.triggerBackgroundFlush?.flush?.();
-					this.schedulePricingRuleApplication?.flush?.();
 					showCompactPanel(this.eventBus, "selector");
-					await this.show_payment?.({ shortcutOnly: true });
+					this.uiStore.openPaymentShortcutHost?.();
+					const preparationAbortController = new AbortController();
+					const preparation = (async () => {
+						await this.flushBackgroundUpdates?.();
+						this.schedulePricingRuleApplication?.flush?.();
+						return await this.show_payment?.({
+							shortcutOnly: true,
+							hostAlreadyOpen: true,
+							signal: preparationAbortController.signal,
+						});
+					})();
+					await this.$nextTick?.();
 					this.eventBus.emit("queue_submit_payment_shortcut", {
 						print: shouldPrint,
 						amount: paymentAmount,
+						hostOwner: "shortcut",
+						preparation,
+						preparationAbortController,
+					});
+					void preparation.catch((error) => {
+						console.error("Unable to prepare shortcut payment:", error);
 					});
 				} finally {
 					this.shortcutSubmitInFlight = false;
