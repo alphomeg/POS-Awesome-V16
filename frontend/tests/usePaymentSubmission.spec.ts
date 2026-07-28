@@ -3866,7 +3866,7 @@ describe("usePaymentSubmission", () => {
 		);
 	});
 
-	it("passes cashier PIN as a transient service argument without persisting it", async () => {
+	it("passes cashier PIN transiently and disables automatic outbox replay", async () => {
 		const offlineModule = await import("../src/offline/index");
 		const invoiceService = (
 			await import("../src/posapp/services/invoiceService")
@@ -3943,18 +3943,117 @@ describe("usePaymentSubmission", () => {
 			expect.any(Object),
 			"2468",
 		);
-		expect(offlineModule.persistInvoiceIntentJournal).toHaveBeenCalled();
-		expect(offlineModule.enqueueInvoiceOutboxEntry).toHaveBeenCalled();
-		const persistedPayload = JSON.stringify(
-			(offlineModule.persistInvoiceIntentJournal as any).mock.calls[0][0],
+		expect(offlineModule.persistInvoiceIntentJournal).not.toHaveBeenCalled();
+		expect(offlineModule.enqueueInvoiceOutboxEntry).not.toHaveBeenCalled();
+		expect(getActiveInvoiceSubmissionRecovery()).toBeNull();
+	});
+
+	it("releases a cashier-signed sale after an authoritative PIN rejection without enqueueing a replay", async () => {
+		const invoiceService = (
+			await import("../src/posapp/services/invoiceService")
+		).default;
+		const offlineModule = await import("../src/offline/index");
+		(invoiceService.submitInvoice as any).mockRejectedValue(
+			new ApiEnvelopeError({
+				ok: false,
+				data: null,
+				error: {
+					code: "CASHIER_PIN_REJECTED",
+					message: "Invalid cashier PIN.",
+					retryable: false,
+				},
+				requestId: "req-cashier-pin-1",
+				serverTime: null,
+			}),
 		);
-		const outboxPayload = JSON.stringify(
-			(offlineModule.enqueueInvoiceOutboxEntry as any).mock.calls[0][0],
+		const toastStore = { show: vi.fn() };
+		const invoiceDoc = ref<any>({
+			name: "ACC-SINV-CASHIER-PIN",
+			doctype: "Sales Invoice",
+			is_return: 0,
+			customer: "Walk In",
+			company: "Test Company",
+			currency: "USD",
+			conversion_rate: 1,
+			items: [{ item_code: "ITEM-1", qty: 1 }],
+			payments: [{ mode_of_payment: "Cash", amount: 100, type: "Cash" }],
+			rounded_total: 100,
+			grand_total: 100,
+		});
+		const {
+			submitInvoice,
+			submissionRecoveryLocked,
+			releaseCashierSignedSubmissionRecovery,
+		} = usePaymentSubmission({
+			invoiceDoc,
+			posProfile: ref({
+				name: "Main POS",
+				company: "Test Company",
+				currency: "USD",
+				create_pos_invoice_instead_of_sales_invoice: 0,
+			}),
+			stockSettings: ref({}),
+			invoiceType: ref("Invoice"),
+			formatFloat: (value) => Number(value || 0),
+			stores: {
+				toastStore,
+				uiStore: {
+					setLastInvoice: vi.fn(),
+					setLastStockAdjustment: vi.fn(),
+				},
+				customersStore: { setSelectedCustomer: vi.fn() },
+				invoiceStore: { invoiceDoc: invoiceDoc.value },
+			},
+			isCashback: ref(false),
+			paidChange: ref(0),
+			creditChange: ref(0),
+			redeemedCustomerCredit: ref(0),
+			customerCreditDict: ref([]),
+			diff_payment: ref(0),
+		});
+
+		await expect(
+			submitInvoice(false, {}, {
+				cashierSignature: { cashierPin: "0000", modeOfPayment: "Cash" },
+			}),
+		).rejects.toThrow("Invalid cashier PIN.");
+
+		expect(offlineModule.persistInvoiceIntentJournal).not.toHaveBeenCalled();
+		expect(offlineModule.enqueueInvoiceOutboxEntry).not.toHaveBeenCalled();
+		expect(offlineModule.removeInvoiceOutboxEntry).not.toHaveBeenCalled();
+		expect(getActiveInvoiceSubmissionRecovery()).toBeNull();
+		expect(submissionRecoveryLocked.value).toBe(false);
+		expect(toastStore.show).toHaveBeenCalledWith(
+			expect.objectContaining({ title: "Cashier PIN not accepted" }),
 		);
-		expect(persistedPayload).not.toContain("2468");
-		expect(persistedPayload).not.toContain("cashier_pin");
-		expect(outboxPayload).not.toContain("2468");
-		expect(outboxPayload).not.toContain("cashier_pin");
+
+		(invoiceService.submitInvoice as any).mockRejectedValue(
+			new ApiEnvelopeError({
+				ok: false,
+				data: null,
+				error: {
+					code: "HTTP_ERROR",
+					message: "Service Unavailable",
+					retryable: true,
+				},
+				requestId: "req-cashier-pin-ambiguous-1",
+				serverTime: null,
+			}),
+		);
+		const ambiguousResult = await submitInvoice(false, {}, {
+			cashierSignature: { cashierPin: "2468", modeOfPayment: "Cash" },
+		});
+		expect(ambiguousResult).toMatchObject({
+			confirmationPending: true,
+			manualReview: true,
+			automaticRecoveryAvailable: false,
+		});
+		expect(offlineModule.persistInvoiceIntentJournal).not.toHaveBeenCalled();
+		expect(offlineModule.enqueueInvoiceOutboxEntry).not.toHaveBeenCalled();
+		expect(submissionRecoveryLocked.value).toBe(true);
+		expect(releaseCashierSignedSubmissionRecovery()).toBe(true);
+		expect(getActiveInvoiceSubmissionRecovery()).toBeNull();
+		expect(submissionRecoveryLocked.value).toBe(false);
 	});
 
 	it("cleans durable intent after authoritative validation and business failures", async () => {

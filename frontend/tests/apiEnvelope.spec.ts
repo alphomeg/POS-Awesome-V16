@@ -119,6 +119,39 @@ describe("api envelope handling", () => {
 		});
 	});
 
+	it("normalizes a raw Frappe cashier PIN validation response without exposing its traceback", async () => {
+		(frappe.call as any).mockImplementation(({ error }: any) => {
+			error({
+				status: 417,
+				statusText: "Expectation Failed",
+				responseText: JSON.stringify({
+					exception:
+						"frappe.exceptions.ValidationError: Invalid cashier PIN.",
+					exc_type: "ValidationError",
+					exc: "Traceback (most recent call last): secret internal stack",
+					_server_messages: JSON.stringify([
+						JSON.stringify({
+							message: "Invalid cashier PIN.",
+							indicator: "red",
+						}),
+					]),
+				}),
+			});
+		});
+
+		const result = await api.callEnvelope("pos.test.cashier_pin_error");
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				code: "CASHIER_PIN_REJECTED",
+				message: "Invalid cashier PIN.",
+				retryable: false,
+			},
+		});
+		expect(JSON.stringify(result)).not.toContain("Traceback");
+	});
+
 	it("normalizes business-rule responses into non-retryable envelopes", async () => {
 		(frappe.call as any).mockImplementation(({ callback }: any) => {
 			callback({

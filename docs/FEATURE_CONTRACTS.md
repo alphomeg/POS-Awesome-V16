@@ -306,6 +306,12 @@ Rules:
 - A post-dispatch `HTTP_ERROR`, including an unstructured HTTP 400 or 409, is
   ambiguous regardless of its retryable flag. Only an explicit structured
   validation or business-rule envelope is a definite direct rejection.
+- A per-sale cashier PIN is a transient authorization credential, never part
+  of the synchronous journal or IndexedDB outbox. A PIN-authorized invoice
+  must never be replayed automatically without a fresh cashier authorization.
+  An explicit invalid/missing-PIN validation response releases the recovery
+  lock and returns to cashier signing; an ambiguous signed request keeps its
+  original request ID and offers a controlled retry with a fresh PIN.
 - Legacy compatibility responses obey the same exact request/type/status rule.
   A returned but invalid acknowledgement remains unresolved and must not be
   converted into a successful draft fallback.

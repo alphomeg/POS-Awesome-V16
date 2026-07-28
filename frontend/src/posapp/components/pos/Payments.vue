@@ -48,6 +48,18 @@
 			<v-btn
 				v-if="
 					submissionRecovery.phase === 'manual_review' &&
+					submissionRecoveryCanReauthorizeCashier
+				"
+				color="warning"
+				variant="flat"
+				data-testid="cashier-signing-retry"
+				@click="retryCashierSignedSubmission"
+			>
+				{{ __("Retry with Cashier PIN") }}
+			</v-btn>
+			<v-btn
+				v-if="
+					submissionRecovery.phase === 'manual_review' &&
 					submissionRecoveryCanResolveManually &&
 					Boolean(currentCashier?.is_supervisor)
 				"
@@ -803,12 +815,14 @@ const {
 	submissionRecoveryChecking,
 	submissionRecoveryCanCheckStatus,
 	submissionRecoveryCanResolveManually,
+	submissionRecoveryCanReauthorizeCashier,
 	submissionRecoveryDocumentType,
 	resumePendingSubmissionRecovery,
 	manuallyReconcilePendingSubmission,
 	resolveManualOnlySubmissionRecovery,
 	stopSubmissionRecoveryMonitor,
 	resetSubmissionRecovery,
+	releaseCashierSignedSubmissionRecovery,
 } = usePaymentSubmission({
 	invoiceDoc: computed(() => invoiceStore.invoiceDoc),
 	posProfile: pos_profile,
@@ -2165,6 +2179,24 @@ const handleManualRecoveryResolution = async (resolution) => {
 	}
 };
 
+const isCashierPinRejection = (error) =>
+	String(error?.code || error?.envelope?.error?.code || "").trim() ===
+	"CASHIER_PIN_REJECTED";
+
+const retryCashierSignedSubmission = async () => {
+	if (!submissionRecoveryCanReauthorizeCashier.value) {
+		return;
+	}
+	// The request identity stays on the cart. Clearing this credentialless
+	// recovery lock only permits a fresh, explicit cashier authorization for
+	// that same idempotent request; it never creates a replacement sale.
+	if (!releaseCashierSignedSubmissionRecovery()) {
+		return;
+	}
+	await nextTick();
+	await submitInvoiceWrapper(false);
+};
+
 const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {}) => {
 	if (checkoutMutationLocked.value) {
 		return;
@@ -2175,16 +2207,35 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 	uiStore.setCheckoutSubmissionInFlight?.(true);
 	let closeShortcutAfterUnlock = false;
 	try {
-		const cashierSignature = await requestCashierSigning();
-		if (requiresCashierSigning() && !cashierSignature) {
-			closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
-			return;
+		const signingRequired = requiresCashierSigning();
+		let cashierSignature = await requestCashierSigning();
+		while (true) {
+			if (signingRequired && !cashierSignature) {
+				closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
+				return;
+			}
+			loading.value = true;
+			try {
+				await validateSubmission(options.paymentReceived || false);
+				await submitInvoice(
+					print,
+					buildSubmissionCallbacks(print, callbackOverrides),
+					{ cashierSignature },
+				);
+				return;
+			} catch (error) {
+				if (signingRequired && isCashierPinRejection(error)) {
+					// The server authoritatively rejected this PIN. The cart remains
+					// editable and the next submit must obtain a fresh transient PIN.
+					loading.value = false;
+					cashierSignature = await requestCashierSigning();
+					continue;
+				}
+				throw error;
+			} finally {
+				loading.value = false;
+			}
 		}
-		loading.value = true;
-		await validateSubmission(options.paymentReceived || false);
-		await submitInvoice(print, buildSubmissionCallbacks(print, callbackOverrides), {
-			cashierSignature,
-		});
 	} catch (error) {
 		console.error("Submission failed propagate:", error);
 		restorePaymentLinesAfterFailedSubmit();

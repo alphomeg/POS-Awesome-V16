@@ -187,7 +187,7 @@ describe("ambiguous payment submission recovery UX", () => {
 			/<Payments[\s\S]{0,100}host-owner="inline"[\s\S]{0,160}submission-recovery-lock-change/,
 		);
 		expect(paymentsSource).toMatch(
-			/<div[\s\S]{0,180}submission-recovery-banner[\s\S]{0,1200}<v-card[\s\S]{0,100}:inert="checkoutMutationLocked \|\| undefined"/,
+			/<div[\s\S]{0,180}submission-recovery-banner[\s\S]{0,1800}<v-card[\s\S]{0,100}:inert="checkoutMutationLocked \|\| undefined"/,
 		);
 		expect(posShellSource).toMatch(
 			/setSelectorView = \(view\)[\s\S]{0,100}checkoutMutationLocked\.value[\s\S]{0,40}return/,
@@ -230,6 +230,22 @@ describe("ambiguous payment submission recovery UX", () => {
 		);
 		expect(paymentsSource).toMatch(
 			/settleCashierSigning = \(result\)[\s\S]{0,220}setCashierSigningOpen\?\.\(false\)/,
+		);
+	});
+
+	it("returns an authoritatively rejected cashier PIN to a fresh signing prompt", () => {
+		expect(paymentsSource).toContain("const isCashierPinRejection = (error)");
+		expect(paymentsSource).toContain('"CASHIER_PIN_REJECTED"');
+		expect(paymentsSource).toMatch(
+			/isCashierPinRejection\(error\)[\s\S]{0,320}cashierSignature = await requestCashierSigning\(\)/,
+		);
+		expect(paymentsSource).toMatch(
+			/requestCashierSigning\(\)[\s\S]{0,1000}while \(true\)/,
+		);
+		expect(paymentsSource).toContain('data-testid="cashier-signing-retry"');
+		expect(paymentsSource).toContain("releaseCashierSignedSubmissionRecovery");
+		expect(paymentsSource).toMatch(
+			/releaseCashierSignedSubmissionRecovery\(\)[\s\S]{0,180}submitInvoiceWrapper\(false\)/,
 		);
 	});
 

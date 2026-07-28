@@ -205,9 +205,17 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			submissionRecoveryLocked.value &&
 			activeRecoveryMode === "manual_only" &&
 			!recoveryScopeBlocked.value &&
-			["Sales Order", "Quotation"].includes(
-				submissionRecoveryDocumentType.value || "",
-			),
+				["Sales Order", "Quotation"].includes(
+					submissionRecoveryDocumentType.value || "",
+				),
+	);
+	const submissionRecoveryCanReauthorizeCashier = computed(
+		() =>
+			submissionRecoveryLocked.value &&
+				activeRecoveryMode === "manual_only" &&
+				["Sales Invoice", "POS Invoice"].includes(
+					submissionRecoveryDocumentType.value || "",
+				),
 	);
 	const settledRecoveryRequestIds = new Set<string>();
 	let activeRecoveryCallbacks: SubmissionCallbacks = {};
@@ -243,6 +251,30 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		activeRecoveryMode = "invoice_outbox";
 		recoveryScopeBlocked.value = false;
 		lastRecoveryToastSignature = "";
+	};
+
+	const releaseCashierSignedSubmissionRecovery = () => {
+		if (!submissionRecoveryCanReauthorizeCashier.value) {
+			return false;
+		}
+		const requestId = String(submissionRecovery.value.requestId || "").trim();
+		if (!requestId || !clearActiveInvoiceSubmissionRecovery(requestId)) {
+			return false;
+		}
+		clearInvoiceRecoveryClientEffects(requestId);
+		stopSubmissionRecoveryMonitor();
+		submissionRecovery.value = {
+			phase: "idle",
+			requestId: null,
+			invoiceName: null,
+			detail: null,
+		};
+		activeRecoveryCallbacks = {};
+		activeRecoveryPrint = false;
+		activeRecoveryMode = "invoice_outbox";
+		recoveryScopeBlocked.value = false;
+		lastRecoveryToastSignature = "";
+		return true;
 	};
 
 	const showRecoveryToast = (
@@ -1696,6 +1728,14 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			};
 		}
 
+		if (code === "CASHIER_PIN_REJECTED") {
+			return {
+				title: __("Cashier PIN not accepted"),
+				detail: message,
+				color: "error",
+			};
+		}
+
 		return {
 			title: __("Error submitting invoice: ") + message,
 			detail,
@@ -2403,6 +2443,16 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		const cashierPin = String(
 			submitOptions.cashierSignature?.cashierPin || "",
 		).trim();
+		// A cashier PIN is deliberately transient: it cannot be placed in the
+		// browser journal or IndexedDB outbox. Therefore a PIN-authorized direct
+		// submission cannot be replayed automatically after an ambiguous result.
+		// Keep its durable pointer in manual-review mode instead; a cashier must
+		// re-authorize any controlled retry with a fresh PIN.
+		const requiresTransientCashierAuthorization =
+			requiresCashierSignature && Boolean(cashierPin);
+		const supportsAutomaticInvoiceOutboxRecovery =
+			supportsInvoiceOutboxRecovery &&
+			!requiresTransientCashierAuthorization;
 
 		if (isOffline()) {
 			throw new Error(
@@ -2435,7 +2485,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			activeRecoveryPrint = Boolean(
 				getActiveInvoiceSubmissionRecovery()?.printRequested ?? print,
 			);
-			activeRecoveryMode = supportsInvoiceOutboxRecovery
+			activeRecoveryMode = supportsAutomaticInvoiceOutboxRecovery
 				? "invoice_outbox"
 				: "manual_only";
 			const detail =
@@ -2529,7 +2579,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		try {
 			await validateStockBeforeOnlineSubmission(doc, profile, type);
 			intent = { data, invoice: submissionDoc };
-			if (supportsInvoiceOutboxRecovery) {
+			if (supportsAutomaticInvoiceOutboxRecovery) {
 				persistInvoiceIntentJournal(intent);
 				durableIntent = true;
 			}
@@ -2538,7 +2588,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 					requestId: submissionDoc.posa_client_request_id,
 					invoiceName: submissionDoc.name || doc?.name || null,
 					documentType: resolvedSubmissionDoctype,
-					recoveryMode: supportsInvoiceOutboxRecovery
+					recoveryMode: supportsAutomaticInvoiceOutboxRecovery
 						? "invoice_outbox"
 						: "manual_only",
 					posProfile:
@@ -2578,7 +2628,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				failClosedError.posaRecoveryPersistenceFailed = true;
 				throw failClosedError;
 			}
-			if (supportsInvoiceOutboxRecovery) {
+			if (supportsAutomaticInvoiceOutboxRecovery) {
 				outboxPersistPromise = enqueueInvoiceOutboxEntry(intent).catch(
 					(error) => {
 						console.warn(
@@ -2692,7 +2742,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				err.posaAmbiguousSubmission = true;
 				throw err;
 			}
-			if (wasSubmitted && supportsInvoiceOutboxRecovery) {
+			if (wasSubmitted && supportsAutomaticInvoiceOutboxRecovery) {
 				try {
 					await finalizeDirectSubmittedOutbox({
 						name: responseInvoiceName,
@@ -3040,7 +3090,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 					submissionDoc.posa_client_request_id,
 					callbacks,
 				);
-				if (supportsInvoiceOutboxRecovery) {
+				if (supportsAutomaticInvoiceOutboxRecovery) {
 					void outboxPersistPromise.then(async () => {
 						if (!intent) {
 							return;
@@ -3180,12 +3230,14 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		submissionRecoveryChecking,
 		submissionRecoveryCanCheckStatus,
 		submissionRecoveryCanResolveManually,
+		submissionRecoveryCanReauthorizeCashier,
 		submissionRecoveryDocumentType,
 		refreshSubmissionRecoveryStatus,
 		resumePendingSubmissionRecovery,
 		manuallyReconcilePendingSubmission,
 		resolveManualOnlySubmissionRecovery,
-		stopSubmissionRecoveryMonitor,
-		resetSubmissionRecovery,
+	stopSubmissionRecoveryMonitor,
+	resetSubmissionRecovery,
+	releaseCashierSignedSubmissionRecovery,
 	};
 }

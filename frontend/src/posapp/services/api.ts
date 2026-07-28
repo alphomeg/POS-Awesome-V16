@@ -267,15 +267,57 @@ function normalizeBusinessFailure<T>(
 	});
 }
 
-function normalizeAuthoritativeTransportBusinessFailure<T>(
-	error: any,
-	requestId: string,
-): ApiEnvelope<T> | null {
-	const response =
+function parseTransportResponsePayload(error: any): any {
+	const structuredResponse =
 		error?.responseJSON ??
 		error?.xhr?.responseJSON ??
 		error?.response?.data ??
 		null;
+	if (structuredResponse && typeof structuredResponse === "object") {
+		return structuredResponse;
+	}
+
+	const rawResponse =
+		error?.responseText ?? error?.xhr?.responseText ?? null;
+	if (typeof rawResponse !== "string" || !rawResponse.trim()) {
+		return null;
+	}
+
+	try {
+		const parsed = JSON.parse(rawResponse);
+		return parsed && typeof parsed === "object" ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function isFrappeValidationFailure(response: any) {
+	const exceptionType = String(
+		response?.exc_type || response?.exception || "",
+	).toLowerCase();
+	return (
+		exceptionType.includes("validationerror") ||
+		exceptionType.includes("permissionerror") ||
+		Boolean(response?._server_messages || response?.server_messages)
+	);
+}
+
+function classifyFrappeValidationCode(message: string) {
+	const normalized = message.toLowerCase();
+	if (
+		normalized.includes("invalid cashier pin") ||
+		normalized.includes("cashier pin is required")
+	) {
+		return "CASHIER_PIN_REJECTED";
+	}
+	return "VALIDATION_ERROR";
+}
+
+function normalizeAuthoritativeTransportBusinessFailure<T>(
+	error: any,
+	requestId: string,
+): ApiEnvelope<T> | null {
+	const response = parseTransportResponsePayload(error);
 	if (!response || typeof response !== "object") {
 		return null;
 	}
@@ -294,6 +336,20 @@ function normalizeAuthoritativeTransportBusinessFailure<T>(
 		) {
 			return envelope;
 		}
+	}
+
+	if (isFrappeValidationFailure(response)) {
+		const message = normalizeMessage(
+			extractServerMessage(response) ||
+				response?.message ||
+				response?.exception,
+			"Request failed",
+		);
+		return errorEnvelope<T>(requestId, getServerTime(response), {
+			code: classifyFrappeValidationCode(message),
+			message,
+			retryable: false,
+		});
 	}
 
 	return null;
