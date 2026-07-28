@@ -7,10 +7,13 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import frappe
 from erpnext.setup.utils import get_exchange_rate
-from frappe.query_builder import DocType
-from frappe.query_builder.functions import Sum
 from frappe.utils import cint, flt, nowdate
 from frappe.utils.caching import redis_cache
+
+from posawesome.posawesome.api.item_processing.stock import (
+    _get_available_qty_map,
+    _get_stock_warehouses,
+)
 
 
 def _resolve_cache_ttl(ttl: Optional[int]) -> int:
@@ -134,30 +137,17 @@ def get_item_prices(
 
 
 def _fetch_bin_qty(warehouse: str, item_codes: Tuple[str, ...]):
-    """Return stock quantities for each item, expanding warehouse groups."""
+    """Return POS-aware stock quantities, expanding warehouse groups."""
 
     if not item_codes or not warehouse:
         return []
 
-    if frappe.db.get_value("Warehouse", warehouse, "is_group"):
-        warehouses = frappe.db.get_descendants("Warehouse", warehouse) or []
-        if not warehouses:
-            return []
-        bin_doctype = DocType("Bin")
-        return (
-            frappe.qb.from_(bin_doctype)
-            .select(bin_doctype.item_code, Sum(bin_doctype.actual_qty).as_("actual_qty"))
-            .where(bin_doctype.warehouse.isin(warehouses))
-            .where(bin_doctype.item_code.isin(item_codes))
-            .groupby(bin_doctype.item_code)
-            .run(as_dict=True)
-        )
-
-    return frappe.get_all(
-        "Bin",
-        fields=["item_code", "actual_qty"],
-        filters={"warehouse": warehouse, "item_code": ["in", item_codes]},
-    )
+    warehouses = _get_stock_warehouses(warehouse)
+    quantities = _get_available_qty_map(item_codes, warehouses)
+    return [
+        frappe._dict(item_code=item_code, actual_qty=quantities.get(item_code, 0.0))
+        for item_code in item_codes
+    ]
 
 
 def get_bin_qty(warehouse: Optional[str], item_codes: Sequence[str], ttl: Optional[int] = None):
@@ -625,9 +615,7 @@ class ItemDetailAggregator:
 
         if not price_list:
             return self.pos_profile.get("currency")
-        return frappe.db.get_value("Price List", price_list, "currency") or self.pos_profile.get(
-            "currency"
-        )
+        return frappe.db.get_value("Price List", price_list, "currency") or self.pos_profile.get("currency")
 
     def _resolve_buying_price_list(self) -> Optional[str]:
         """Resolve the buying/trade price list used as POS loss floor."""
@@ -676,14 +664,17 @@ class ItemDetailAggregator:
         price_rows = []
         if self.price_list:
             if use_cache:
-                price_rows = get_item_prices(
-                    self.price_list,
-                    self.price_list_currency or self.pos_profile.get("currency"),
-                    item_codes_tuple,
-                    self.customer,
-                    today=self.today,
-                    ttl=self.cache_ttl,
-                ) or []
+                price_rows = (
+                    get_item_prices(
+                        self.price_list,
+                        self.price_list_currency or self.pos_profile.get("currency"),
+                        item_codes_tuple,
+                        self.customer,
+                        today=self.today,
+                        ttl=self.cache_ttl,
+                    )
+                    or []
+                )
             else:
                 price_rows = _fetch_item_prices(
                     self.price_list,
@@ -698,14 +689,17 @@ class ItemDetailAggregator:
         buying_price_rows = []
         if buying_price_list:
             if use_cache:
-                buying_price_rows = get_item_prices(
-                    buying_price_list,
-                    buying_price_currency or self.pos_profile.get("currency"),
-                    item_codes_tuple,
-                    None,
-                    today=self.today,
-                    ttl=self.cache_ttl,
-                ) or []
+                buying_price_rows = (
+                    get_item_prices(
+                        buying_price_list,
+                        buying_price_currency or self.pos_profile.get("currency"),
+                        item_codes_tuple,
+                        None,
+                        today=self.today,
+                        ttl=self.cache_ttl,
+                    )
+                    or []
+                )
             else:
                 buying_price_rows = _fetch_item_prices(
                     buying_price_list,
@@ -741,7 +735,9 @@ class ItemDetailAggregator:
 
         if use_cache:
             batch_rows = get_batches(self.warehouse, _normalize_codes(batch_items), ttl=self.cache_ttl) or []
-            serial_rows = get_serials(self.warehouse, _normalize_codes(serial_items), ttl=self.cache_ttl) or []
+            serial_rows = (
+                get_serials(self.warehouse, _normalize_codes(serial_items), ttl=self.cache_ttl) or []
+            )
         else:
             batch_rows = _fetch_batches(self.warehouse, _normalize_codes(batch_items))
             serial_rows = _fetch_serials(self.warehouse, _normalize_codes(serial_items))
@@ -765,11 +761,13 @@ class ItemDetailAggregator:
 
         barcode_map: Dict[str, List[Dict[str, object]]] = {}
         for row in barcode_rows:
-            barcode_map.setdefault(row.parent, []).append({
-                "barcode": row.barcode,
-                "barcode_type": getattr(row, "barcode_type", ""),
-                "uom": row.uom,
-            })
+            barcode_map.setdefault(row.parent, []).append(
+                {
+                    "barcode": row.barcode,
+                    "barcode_type": getattr(row, "barcode_type", ""),
+                    "uom": row.uom,
+                }
+            )
 
         batch_map: Dict[str, List[Dict[str, object]]] = {}
         for row in batch_rows:

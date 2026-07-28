@@ -66,6 +66,10 @@ def _install_stubs():
     details.get_items_details = lambda *args, **kwargs: []
     sys.modules["posawesome.posawesome.api.item_processing.details"] = details
 
+    stock = types.ModuleType("posawesome.posawesome.api.item_processing.stock")
+    stock._get_available_qty_map = lambda item_codes, _warehouses: {item_code: 1 for item_code in item_codes}
+    sys.modules["posawesome.posawesome.api.item_processing.stock"] = stock
+
 
 def _load_module():
     module_name = "test_item_search_serialization_target"
@@ -302,9 +306,7 @@ class TestItemSearchSerialization(unittest.TestCase):
     def test_hot_item_search_fills_sales_ranking_with_active_fallback(self):
         calls = []
 
-        self.module._get_hot_sales_item_codes = lambda *args, **kwargs: [
-            "ITEM-HOT"
-        ]
+        self.module._get_hot_sales_item_codes = lambda *args, **kwargs: ["ITEM-HOT"]
         self.module._enrich_hot_items = lambda _profile, rows, *args, **kwargs: rows
 
         def fake_get_all(doctype, **kwargs):
@@ -350,6 +352,9 @@ class TestItemSearchSerialization(unittest.TestCase):
             "ITEM-HOT-ZERO",
         ]
         self.module._enrich_hot_items = lambda _profile, rows, *args, **kwargs: rows
+        self.module._get_available_qty_map = lambda item_codes, _warehouses: {
+            item_code: 0 if item_code.endswith("-ZERO") else 1 for item_code in item_codes
+        }
         self.module.frappe.db.get_value = lambda *args, **kwargs: {
             "is_group": 0,
             "lft": 1,
@@ -359,7 +364,7 @@ class TestItemSearchSerialization(unittest.TestCase):
         def fake_sql(_query, params, **kwargs):
             sql_calls.append(params)
             if params.get("candidate_codes"):
-                return [{"item_code": "ITEM-HOT-IN"}]
+                return [{"item_code": item_code} for item_code in params["candidate_codes"]]
             return [{"item_code": "ITEM-FALLBACK-IN"}]
 
         def fake_get_all(doctype, **kwargs):

@@ -12,6 +12,7 @@ STUBBED_MODULE_NAMES = (
     "frappe.utils",
     "frappe.utils.caching",
     "erpnext.setup.utils",
+    "posawesome.posawesome.api.item_processing.stock",
 )
 
 
@@ -72,6 +73,13 @@ def _install_stubs():
     erpnext_utils = types.ModuleType("erpnext.setup.utils")
     erpnext_utils.get_exchange_rate = lambda *args, **kwargs: 1
     sys.modules["erpnext.setup.utils"] = erpnext_utils
+
+    stock_module = types.ModuleType("posawesome.posawesome.api.item_processing.stock")
+    stock_module._get_stock_warehouses = lambda warehouse: [warehouse]
+    stock_module._get_available_qty_map = lambda item_codes, _warehouses: {
+        item_code: 0 for item_code in item_codes
+    }
+    sys.modules["posawesome.posawesome.api.item_processing.stock"] = stock_module
 
 
 def _load_module():

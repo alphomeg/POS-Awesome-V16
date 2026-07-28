@@ -8,7 +8,7 @@ import frappe
 from frappe import _, as_json
 from frappe.query_builder import DocType, Order
 from frappe.query_builder.functions import Max, Sum
-from frappe.utils import add_days, cint, cstr, get_datetime, nowdate
+from frappe.utils import add_days, cint, cstr, flt, get_datetime, nowdate
 from frappe.utils.caching import redis_cache
 
 from posawesome.posawesome.api.item_fetchers import ItemDetailAggregator
@@ -22,6 +22,7 @@ from posawesome.posawesome.api.utils import (
 )
 from posawesome.posawesome.api.item_processing.barcode import search_serial_or_batch_or_barcode_number
 from posawesome.posawesome.api.item_processing.details import get_items_details
+from posawesome.posawesome.api.item_processing.stock import _get_available_qty_map
 from posawesome.posawesome.api.item_sale_controls import installed_item_search_fields
 
 INTERACTIVE_SEARCH_RESULT_LIMIT = 100
@@ -165,8 +166,7 @@ def _build_search_plan(
                     ["item_code", "like", f"%{base_search_term}%"],
                 ]
                 or_filters.extend(
-                    [field, "like", f"%{base_search_term}%"]
-                    for field in installed_item_search_fields()
+                    [field, "like", f"%{base_search_term}%"] for field in installed_item_search_fields()
                 )
                 item_code_for_search = base_search_term
 
@@ -195,9 +195,7 @@ def _build_search_plan(
 
     if limit is not None:
         limit_page_length = (
-            min(limit, INTERACTIVE_SEARCH_RESULT_LIMIT)
-            if use_limit_search and raw_search_value
-            else limit
+            min(limit, INTERACTIVE_SEARCH_RESULT_LIMIT) if use_limit_search and raw_search_value else limit
         )
         if offset and not start_after and start_after_item_code is None:
             limit_start = offset
@@ -482,14 +480,9 @@ def _run_item_query(
             )
             if exact_rows:
                 seen_codes = {cstr(row.get("item_code")) for row in exact_rows}
-                items_data = (
-                    exact_rows
-                    + [
-                        row
-                        for row in items_data
-                        if cstr(row.get("item_code")) not in seen_codes
-                    ]
-                )
+                items_data = exact_rows + [
+                    row for row in items_data if cstr(row.get("item_code")) not in seen_codes
+                ]
 
         if not items_data:
             break
@@ -712,7 +705,10 @@ def _get_positive_stock_item_codes(
         params,
         as_dict=True,
     )
-    return [row.get("item_code") for row in rows if row.get("item_code")]
+    item_codes = [row.get("item_code") for row in rows if row.get("item_code")]
+    availability = _get_available_qty_map(item_codes, warehouses)
+    positive_codes = [item_code for item_code in item_codes if flt(availability.get(item_code)) > 0]
+    return positive_codes[:limit] if limit else positive_codes
 
 
 def _filter_positive_stock_item_codes(

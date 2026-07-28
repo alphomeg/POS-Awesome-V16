@@ -52,6 +52,7 @@ def _install_invoice_api_stubs():
     )
 
     frappe_utils_module.add_days = lambda date, days: date
+    frappe_utils_module.cint = lambda value=0: int(value or 0)
     frappe_utils_module.flt = lambda value, precision=None: float(value or 0)
     frappe_utils_module.get_url_to_form = lambda doctype, name: f"/app/{doctype}/{name}"
     frappe_module.utils = frappe_utils_module
@@ -68,9 +69,7 @@ def _install_invoice_api_stubs():
     sys.modules["frappe.model.mapper"] = frappe_mapper_module
     sys.modules["posawesome.posawesome.api.utilities"] = utilities_module
     sys.modules["posawesome.posawesome.api.payments"] = payments_module
-    sys.modules[
-        "posawesome.posawesome.doctype.delivery_charges.delivery_charges"
-    ] = delivery_charges_module
+    sys.modules["posawesome.posawesome.doctype.delivery_charges.delivery_charges"] = delivery_charges_module
     sys.modules["posawesome.posawesome.doctype.pos_coupon.pos_coupon"] = pos_coupon_module
 
     return state
@@ -96,7 +95,14 @@ class TestInvoiceCancelHooks(unittest.TestCase):
         hooks = HOOKS_PATH.read_text()
 
         self.assertIn('"POS Invoice": {', hooks)
-        self.assertIn('"on_cancel": "posawesome.posawesome.api.invoice.on_cancel"', hooks)
+        self.assertIn(
+            '"posawesome.posawesome.api.invoice.on_cancel"',
+            hooks,
+        )
+        self.assertIn(
+            '"posawesome.posawesome.stock_realtime.publish_pos_invoice_stock_change"',
+            hooks,
+        )
 
     def test_cancel_hook_deletes_matching_submission_ledger_entries(self):
         state = _install_invoice_api_stubs()

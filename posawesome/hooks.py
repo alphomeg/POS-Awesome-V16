@@ -117,8 +117,16 @@ doc_events = {
     "POS Invoice": {
         "validate": "posawesome.posawesome.api.invoice.validate",
         "before_submit": "posawesome.posawesome.api.invoice.before_submit",
+        "on_submit": [
+            "posawesome.posawesome.stock_realtime.publish_pos_invoice_stock_change",
+            "posawesome.posawesome.api.item_fetchers.clear_stock_caches",
+        ],
         "before_cancel": "posawesome.posawesome.api.invoice.before_cancel",
-        "on_cancel": "posawesome.posawesome.api.invoice.on_cancel",
+        "on_cancel": [
+            "posawesome.posawesome.api.invoice.on_cancel",
+            "posawesome.posawesome.stock_realtime.publish_pos_invoice_stock_change",
+            "posawesome.posawesome.api.item_fetchers.clear_stock_caches",
+        ],
     },
     "Customer": {
         "validate": "posawesome.posawesome.api.customer.validate",

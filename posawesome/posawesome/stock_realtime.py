@@ -26,10 +26,27 @@ def publish_bin_stock_change(doc, method=None):
     if not has_changed:
         return
 
-    entry = _build_stock_entry(doc)
+    entry = _build_stock_entry(doc, source_doctype="Bin")
     if not entry:
         return
 
+    _queue_stock_entry(entry)
+
+
+def publish_pos_invoice_stock_change(doc, method=None):
+    """Broadcast reservation changes made by a POS Invoice submit or cancel."""
+
+    if not doc:
+        return
+
+    for table_name in ("items", "packed_items"):
+        for row in doc.get(table_name) or []:
+            entry = _build_stock_entry(row, source_doctype="POS Invoice")
+            if entry:
+                _queue_stock_entry(entry)
+
+
+def _queue_stock_entry(entry):
     queue = getattr(frappe.flags, "_posa_stock_change_queue", None)
     if queue is None:
         queue = {}
@@ -44,7 +61,7 @@ def publish_bin_stock_change(doc, method=None):
     frappe.db.after_commit.add(_flush_stock_change_queue)
 
 
-def _build_stock_entry(doc):
+def _build_stock_entry(doc, source_doctype=None):
     item_code = str(doc.get("item_code") or "").strip()
     warehouse = str(doc.get("warehouse") or "").strip()
     if not item_code or not warehouse:
@@ -56,6 +73,7 @@ def _build_stock_entry(doc):
         "warehouse": warehouse,
         "company": company,
         "actual_qty": flt(doc.get("actual_qty")),
+        "source_doctype": source_doctype,
     }
 
 
@@ -67,12 +85,30 @@ def _flush_stock_change_queue():
     if not queue:
         return
 
+    from posawesome.posawesome.api.item_processing.stock import (
+        get_stock_availability,
+    )
+
     items = list(queue.values())
+    try:
+        for row in items:
+            row["actual_qty"] = get_stock_availability(
+                row["item_code"],
+                row["warehouse"],
+            )
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "POSAwesome realtime stock availability refresh failed",
+        )
+        return
+
+    source_doctypes = sorted({row.pop("source_doctype", None) for row in items if row.get("source_doctype")})
     payload = {
         "items": items,
         "item_codes": sorted({row["item_code"] for row in items}),
         "warehouses": sorted({row["warehouse"] for row in items}),
         "companies": sorted({row["company"] for row in items if row.get("company")}),
-        "source_doctype": "Bin",
+        "source_doctype": (source_doctypes[0] if len(source_doctypes) == 1 else "Stock Availability"),
     }
     frappe.publish_realtime(STOCK_CHANGE_EVENT, payload)
