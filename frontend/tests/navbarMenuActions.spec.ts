@@ -121,6 +121,7 @@ describe("NavbarMenu action surfaces", () => {
 		expect(actionIds).not.toContain("clear-cache");
 		expect(actionIds).not.toContain("toggle-offline");
 		expect(actionIds).not.toContain("system-status");
+		expect(actionIds).not.toContain("check-for-updates");
 	});
 
 	it("emits share-last-invoice from the quick action below print last invoice", async () => {

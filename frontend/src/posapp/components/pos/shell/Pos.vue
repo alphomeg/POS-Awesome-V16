@@ -47,6 +47,7 @@
 			max-width="1480"
 			scrim="rgba(15, 23, 42, 0.55)"
 			class="payment-dialog"
+			:class="{ 'payment-dialog--cashier-signing': cashierSigningOpen }"
 			:content-class="
 				counterGridActive ? 'counter-grid-overlay-content counter-grid-payment-content' : undefined
 			"
@@ -184,6 +185,7 @@
 				class="pos dynamic-col dynamic-col--selector"
 			>
 				<Payments
+					v-show="!cashierSigningOpen"
 					host-owner="inline"
 					@submission-recovery-lock-change="handlePaymentSubmissionRecoveryLockChange"
 				></Payments>
@@ -1011,6 +1013,7 @@ export default {
 			activeView,
 			paymentDialogOpen,
 			paymentShortcutHostOpen,
+			cashierSigningOpen,
 			checkoutMutationLocked,
 			checkoutPaymentHostOwner,
 			isPhone,
@@ -1148,6 +1151,17 @@ export default {
 .payment-dialog :deep(.v-overlay__content) {
 	max-height: calc(100vh - 24px);
 	max-height: calc(100dvh - 24px);
+}
+
+/*
+ * Cashier signing is rendered by its own top-level Vuetify dialog.  Keep the
+ * original payment host mounted so its locked checkout state and recovery
+ * ownership survive, but hide every payment presentation until signing
+ * settles.  This covers Pay-button/dialog and responsive inline flows in
+ * addition to the shortcut host below.
+ */
+:deep(.payment-dialog--cashier-signing) {
+	display: none !important;
 }
 
 .payment-shortcut-host {

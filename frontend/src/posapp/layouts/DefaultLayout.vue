@@ -1,7 +1,6 @@
 <template>
 	<v-app class="container1 posapp pos-theme-root" :class="rtlClasses">
 		<AppLoadingOverlay :visible="globalLoading" />
-		<UpdatePrompt />
 		<v-main class="main-content">
 			<ClosingDialog />
 			<Navbar
@@ -88,7 +87,6 @@ import Navbar from "../components/Navbar.vue";
 import WorkspaceModeSwitch from "../components/navigation/WorkspaceModeSwitch.vue";
 import ClosingDialog from "../components/pos/shell/ClosingDialog.vue";
 import AppLoadingOverlay from "../components/ui/LoadingOverlay.vue";
-import UpdatePrompt from "../components/ui/UpdatePrompt.vue";
 import { useLoading } from "../composables/core/useLoading.js";
 import { usePosShift } from "../composables/pos/shared/usePosShift";
 import { loadingState, initLoadingSources, setSourceProgress, markSourceLoaded } from "../utils/loading.js";
@@ -96,7 +94,6 @@ import { useCustomersStore } from "../stores/customersStore.js";
 import { useSyncStore } from "../stores/syncStore.js";
 import { useToastStore } from "../stores/toastStore.js";
 import { useUIStore } from "../stores/uiStore.js";
-import { useUpdateStore } from "../stores/updateStore.js";
 import { useItemsStore } from "../stores/itemsStore.js";
 import { usePricingRulesStore } from "../stores/pricingRulesStore";
 import { useOfflineSyncStore } from "../stores/offlineSyncStore";
@@ -151,7 +148,6 @@ import {
 import { useRtl } from "../composables/core/useRtl";
 import { useBootSync } from "../composables/runtime/useBootSync";
 import { useNetworkLifecycle } from "../composables/runtime/useNetworkLifecycle";
-import { useUpdateChecks } from "../composables/runtime/useUpdateChecks";
 import { useCustomerReadiness } from "../composables/runtime/useCustomerReadiness";
 import { useQueueMetrics } from "../composables/runtime/useQueueMetrics";
 import { ensureItemsReady } from "../modules/items/itemLoadingCoordinator";
@@ -227,7 +223,6 @@ const itemsStore = useItemsStore();
 const offlineSyncStore = useOfflineSyncStore();
 const toastStore = useToastStore();
 const uiStore = useUIStore();
-const updateStore = useUpdateStore();
 const pricingRulesStore = usePricingRulesStore();
 
 // UI Store State
@@ -323,11 +318,6 @@ const bootSync = useBootSync({
 	offlineSyncRuntime,
 	evaluateBootstrapSnapshot,
 	getLastRunSummary: () => syncCoordinator.getLastRunSummary(),
-});
-
-const updateChecks = useUpdateChecks({
-	updateStore,
-	buildVersion: BUILD_VERSION,
 });
 
 const networkLifecycle = useNetworkLifecycle({
@@ -940,11 +930,9 @@ onMounted(() => {
 	customerReadiness.start();
 	setupEventListeners();
 	handleRefreshCacheUsage();
-	updateChecks.start();
 });
 
 onBeforeUnmount(() => {
-	updateChecks.stop();
 	if (removeBootstrapSnapshotListener) {
 		removeBootstrapSnapshotListener();
 		removeBootstrapSnapshotListener = null;

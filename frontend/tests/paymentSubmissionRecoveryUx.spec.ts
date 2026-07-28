@@ -209,9 +209,19 @@ describe("ambiguous payment submission recovery UX", () => {
 		);
 	});
 
-	it("keeps the shortcut host mounted but hides its payment surface while cashier signing is open", () => {
+	it("keeps payment hosts mounted but hides every payment surface while cashier signing is open", () => {
 		expect(uiStoreSource).toContain("const cashierSigningOpen = ref(false)");
 		expect(uiStoreSource).toContain("const setCashierSigningOpen = (open: boolean)");
+		expect(posShellSource).toMatch(
+			/return\s*\{[\s\S]{0,1400}cashierSigningOpen/,
+		);
+		expect(posShellSource).toContain(
+			":class=\"{ 'payment-dialog--cashier-signing': cashierSigningOpen }\"",
+		);
+		expect(posShellSource).toContain('v-show="!cashierSigningOpen"');
+		expect(posShellSource).toMatch(
+			/:deep\(\.payment-dialog--cashier-signing\)\s*\{[\s\S]{0,80}display:\s*none\s*!important/,
+		);
 		expect(posShellSource).toMatch(
 			/'payment-shortcut-host--locked':[\s\S]{0,180}!cashierSigningOpen/,
 		);

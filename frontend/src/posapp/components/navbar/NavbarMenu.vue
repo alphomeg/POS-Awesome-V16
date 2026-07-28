@@ -307,7 +307,6 @@ const FALLBACK_LANGUAGES = [
 ];
 
 import { useLastInvoicePrinting } from "../../composables/core/useLastInvoicePrinting";
-import { useUpdateStore } from "../../stores/updateStore";
 import { useEmployeeStore } from "../../stores/employeeStore";
 import { storeToRefs } from "pinia";
 import QzTrayDialog from "./QzTrayDialog.vue";
@@ -326,10 +325,9 @@ export default {
 	},
 	setup() {
 		const { printLastInvoice } = useLastInvoicePrinting();
-		const updateStore = useUpdateStore();
 		const employeeStore = useEmployeeStore();
 		const { currentCashier, currentCashierDisplay } = storeToRefs(employeeStore);
-		return { printLastInvoice, updateStore, employeeStore, currentCashier, currentCashierDisplay };
+		return { printLastInvoice, employeeStore, currentCashier, currentCashierDisplay };
 	},
 	data() {
 		return {
@@ -514,17 +512,8 @@ export default {
 				{
 					id: "tools",
 					title: __("Tools"),
-					description: __("Updates and app info that stay out of the cashier flow."),
+					description: __("App information that stays out of the cashier flow."),
 					actions: [
-						{
-							id: "check-for-updates",
-							label: __("Check for Updates"),
-							subtitle: __("Check for new commits"),
-							icon: "mdi-update",
-							tone: "info",
-							handler: "checkForUpdatesAction",
-							disabled: this.manualOffline || !this.networkOnline || !this.serverOnline,
-						},
 						{
 							id: "about",
 							label: __("About"),
@@ -668,10 +657,6 @@ export default {
 				case "openQzTraySetup":
 					this.closeMenu();
 					this.showQzTrayDialog = true;
-					break;
-				case "checkForUpdatesAction":
-					this.closeMenu();
-					void this.checkForUpdates();
 					break;
 				case "showAboutAction":
 					this.closeMenu();
@@ -832,22 +817,6 @@ export default {
 			return Boolean(value);
 		},
 
-		async checkForUpdates() {
-			try {
-				await this.updateStore.checkForUpdates(true);
-				if (this.updateStore.isUpdateReady) {
-					this.updateStore.clearDismissed();
-					this.updateStore.resetSnooze();
-				} else {
-					this.showNotification("You are up to date", "success");
-				}
-			} catch (error) {
-				this.showNotification(
-					`Failed to check for updates: ${error?.message || "Unknown error"}`,
-					"error",
-				);
-			}
-		},
 
 		__(text) {
 			if (window.__) {

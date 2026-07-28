@@ -9,6 +9,13 @@ const repoFile = (...segments: string[]) =>
 	readFileSync(path.resolve(testsDir, "..", ...segments), "utf8");
 
 describe("build reconciliation placement", () => {
+	it("does not mount or poll the upstream Git update prompt", () => {
+		const source = repoFile("src", "posapp", "layouts", "DefaultLayout.vue");
+
+		expect(source).not.toContain("<UpdatePrompt");
+		expect(source).not.toContain("useUpdateChecks");
+	});
+
 	it("keeps build reconciliation out of the lazy-loaded DefaultLayout chunk", () => {
 		const source = repoFile("src", "posapp", "layouts", "DefaultLayout.vue");
 
