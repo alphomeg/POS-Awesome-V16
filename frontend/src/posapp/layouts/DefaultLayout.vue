@@ -251,6 +251,19 @@ const fastCounterStartupReady = computed(() => {
 // Lift only the global online startup overlay here. Offline capability warnings
 // still wait for itemsLoaded and the background sync to settle below.
 const itemsStartupReady = computed(() => itemsLoaded.value || fastCounterStartupReady.value);
+const onlineCustomerStartupReady = computed(() => {
+	if (manualOffline.value || !networkOnline.value || !serverOnline.value || !posProfile.value?.name) {
+		return false;
+	}
+
+	// A confirmed online register can resolve customer details from the server
+	// while its IndexedDB catalogue reconciles in the background. Requiring the
+	// bulk cache flag here can strand the blocking overlay after a profile/cache
+	// reconciliation even though the selected walk-in customer and server are
+	// already usable.
+	return Boolean(selectedCustomer.value || posProfile.value.customer);
+});
+const customersStartupReady = computed(() => customersLoaded.value || onlineCustomerStartupReady.value);
 const supportedOfflineSyncResources = filterSupportedOfflineSyncResources(getSyncResourceDefinitions());
 const syncCoordinator = setSyncCoordinator(
 	new SyncCoordinator({
@@ -904,7 +917,7 @@ watch(
 );
 
 watch(
-	customersLoaded,
+	customersStartupReady,
 	(loaded) => {
 		if (loaded) {
 			markSourceLoaded("customers");

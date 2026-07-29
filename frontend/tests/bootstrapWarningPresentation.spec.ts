@@ -37,6 +37,11 @@ describe("DefaultLayout bootstrap warning presentation", () => {
 		expect(source).toMatch(
 			/watch\(\s*itemsStartupReady,[\s\S]{0,160}markSourceLoaded\("items"\)/,
 		);
+		expect(source).toContain("const onlineCustomerStartupReady = computed");
+		expect(source).toContain("const customersStartupReady = computed");
+		expect(source).toMatch(
+			/watch\(\s*customersStartupReady,[\s\S]{0,180}markSourceLoaded\("customers"\)/,
+		);
 		expect(source).toMatch(
 			/itemsStartupSyncSettled:\s*Boolean\(areItemsLoaded\)\s*&&\s*!areItemsSyncing/,
 		);
