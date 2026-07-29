@@ -238,13 +238,18 @@ const {
 	hotItemsLoaded,
 	fastCounterEnabled,
 } = storeToRefs(itemsStore);
-const fastCounterStartupReady = computed(
-	() => fastCounterEnabled.value && hotItemsLoaded.value && hotItems.value.length > 0,
-);
-// Fast Counter can search its hot catalogue and fall back to the server before
-// the complete offline snapshot finishes.  Lift only the global online startup
-// overlay here; offline capability warnings still wait for itemsLoaded and the
-// background sync to settle below.
+const fastCounterStartupReady = computed(() => {
+	if (!fastCounterEnabled.value || manualOffline.value) {
+		return false;
+	}
+	const hotCatalogReady = hotItemsLoaded.value && hotItems.value.length > 0;
+	// An online Fast Counter can use the server search fallback while the large
+	// hot/offline catalogues continue warming. Do not make the cashier wait for
+	// thousands of item rows once reachability has been confirmed.
+	return hotCatalogReady || (networkOnline.value && serverOnline.value);
+});
+// Lift only the global online startup overlay here. Offline capability warnings
+// still wait for itemsLoaded and the background sync to settle below.
 const itemsStartupReady = computed(() => itemsLoaded.value || fastCounterStartupReady.value);
 const supportedOfflineSyncResources = filterSupportedOfflineSyncResources(getSyncResourceDefinitions());
 const syncCoordinator = setSyncCoordinator(

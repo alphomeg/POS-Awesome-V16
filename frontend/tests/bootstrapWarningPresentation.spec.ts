@@ -27,6 +27,12 @@ describe("DefaultLayout bootstrap warning presentation", () => {
 		expect(source).toContain("continuing the online POS bootstrap");
 		expect(source).toContain("initialBootstrapSyncSettled");
 		expect(source).toContain("const fastCounterStartupReady = computed");
+		expect(source).toContain(
+			"hotCatalogReady || (networkOnline.value && serverOnline.value)",
+		);
+		expect(source).toContain(
+			"if (!fastCounterEnabled.value || manualOffline.value)",
+		);
 		expect(source).toContain("const itemsStartupReady = computed");
 		expect(source).toMatch(
 			/watch\(\s*itemsStartupReady,[\s\S]{0,160}markSourceLoaded\("items"\)/,

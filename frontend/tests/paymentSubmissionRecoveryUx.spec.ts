@@ -203,7 +203,7 @@ describe("ambiguous payment submission recovery UX", () => {
 		);
 	});
 
-	it("keeps payment hosts mounted but closes every payment presentation while cashier signing is open", () => {
+	it("keeps payment hosts mounted but hides every payment surface while cashier signing is open", () => {
 		expect(uiStoreSource).toContain(
 			"const cashierSigningOpen = ref(false)",
 		);
@@ -213,14 +213,14 @@ describe("ambiguous payment submission recovery UX", () => {
 		expect(posShellSource).toMatch(
 			/return\s*\{[\s\S]{0,1400}cashierSigningOpen/,
 		);
-		expect(posShellSource).toContain(
-			':model-value="paymentDialogOpen && !cashierSigningOpen"',
-		);
+		expect(posShellSource).toContain(':model-value="paymentDialogOpen"');
 		expect(posShellSource).toContain('v-if="paymentDialogOpen"');
 		expect(posShellSource).toMatch(
-			/<div[\s\S]{0,80}v-show="paymentShortcutHostOpen"[\s\S]{0,700}<Payments[\s\S]{0,120}host-owner="shortcut"/,
+			/<div[\s\S]{0,120}v-show="paymentShortcutHostOpen && !cashierSigningOpen"[\s\S]{0,700}<Payments[\s\S]{0,120}host-owner="shortcut"/,
 		);
-		expect(posShellSource).toContain('v-show="!cashierSigningOpen"');
+		expect(
+			posShellSource.match(/v-show="!cashierSigningOpen"/g),
+		).toHaveLength(2);
 		expect(posShellSource).not.toContain("payment-dialog--cashier-signing");
 		expect(posShellSource).toMatch(
 			/'payment-shortcut-host--locked':[\s\S]{0,180}!cashierSigningOpen/,

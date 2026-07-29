@@ -18,7 +18,7 @@
 			@register="handleRegisterPosData"
 		></OpeningDialog>
 		<div
-			v-show="paymentShortcutHostOpen"
+			v-show="paymentShortcutHostOpen && !cashierSigningOpen"
 			class="payment-shortcut-host"
 			:class="{
 				'payment-shortcut-host--locked':
@@ -38,7 +38,7 @@
 		</div>
 		<v-dialog
 			v-if="usePaymentDialog"
-			:model-value="paymentDialogOpen && !cashierSigningOpen"
+			:model-value="paymentDialogOpen"
 			:persistent="checkoutMutationLocked"
 			:retain-focus="false"
 			width="96vw"
@@ -54,6 +54,7 @@
 		>
 			<Payments
 				v-if="paymentDialogOpen"
+				v-show="!cashierSigningOpen"
 				ref="paymentPanel"
 				dialog-mode
 				host-owner="dialog"
