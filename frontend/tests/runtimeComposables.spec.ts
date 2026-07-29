@@ -81,6 +81,27 @@ describe("runtime composable lifecycle ownership", () => {
 		);
 	});
 
+	it("probes the local server once when the lifecycle starts online", () => {
+		const checkNetworkConnectivity = vi.fn(async () => undefined);
+		const runtime = useNetworkLifecycle({
+			networkOnline: ref(true),
+			serverOnline: ref(false),
+			serverConnecting: ref(false),
+			internetReachable: ref(false),
+			isManualOffline: () => false,
+			checkNetworkConnectivity,
+		});
+
+		runtime.start();
+		runtime.start();
+		runtime.stop();
+
+		expect(checkNetworkConnectivity).toHaveBeenCalledTimes(1);
+		expect(checkNetworkConnectivity).toHaveBeenCalledWith({
+			forceImmediate: true,
+		});
+	});
+
 	it("stops customer readiness watcher on unmount", async () => {
 		const profile = ref<any>({ name: "P1", modified: "1" });
 		const ensureCustomersReady = vi.fn(async () => true);

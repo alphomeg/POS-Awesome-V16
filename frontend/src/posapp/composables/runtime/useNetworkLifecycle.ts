@@ -169,6 +169,17 @@ export function useNetworkLifecycle(options: UseNetworkLifecycleOptions) {
 			(window as any).serverOnline = true;
 			void options.onConnectivityRecovered?.();
 		});
+
+		// The realtime socket may already be connected before this layout owns
+		// its listeners, so its initial "connect" event is not a reliable
+		// readiness signal. Confirm the local server once at startup instead of
+		// leaving online Fast Counter blocked until a later reconnect/visibility
+		// event happens.
+		if (navigator.onLine && !options.isManualOffline()) {
+			void networkProxy.checkNetworkConnectivity({
+				forceImmediate: true,
+			});
+		}
 	}
 
 	function stop() {
