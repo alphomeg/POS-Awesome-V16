@@ -136,18 +136,14 @@ describe("ambiguous payment submission recovery UX", () => {
 		expect(posShellSource).toMatch(
 			/Boolean\(\s*getActiveInvoiceSubmissionRecovery\(\),?\s*\)/,
 		);
-		expect(posShellSource).toContain(
-			"shouldUsePaymentDialog({",
-		);
+		expect(posShellSource).toContain("shouldUsePaymentDialog({");
 		expect(posShellSource).toContain(
 			'uiStore.setCheckoutPaymentHostOwner("dialog")',
 		);
 		expect(posShellSource).toContain('host-owner="inline"');
 		expect(posShellSource).toContain('host-owner="dialog"');
 		expect(posShellSource).toContain('host-owner="shortcut"');
-		expect(posShellSource).toContain(
-			"'payment-shortcut-host--locked':",
-		);
+		expect(posShellSource).toContain("'payment-shortcut-host--locked':");
 		expect(posShellSource).toMatch(
 			/\.payment-shortcut-host--locked\s*\{[\s\S]{0,120}display:\s*block/,
 		);
@@ -171,9 +167,7 @@ describe("ambiguous payment submission recovery UX", () => {
 		expect(paymentsSource).toContain(
 			"uiStore.setCheckoutSubmissionInFlight?.(false)",
 		);
-		expect(posShellSource).toContain(
-			"ensureLockedPaymentHostVisible()",
-		);
+		expect(posShellSource).toContain("ensureLockedPaymentHostVisible()");
 		expect(posShellSource).not.toMatch(
 			/watch\(\s*checkoutMutationLocked[\s\S]{0,260}closePaymentShortcutHost\(\)/,
 		);
@@ -209,22 +203,25 @@ describe("ambiguous payment submission recovery UX", () => {
 		);
 	});
 
-	it("keeps payment hosts mounted but hides every payment surface while cashier signing is open", () => {
-		expect(uiStoreSource).toContain("const cashierSigningOpen = ref(false)");
-		expect(uiStoreSource).toContain("const setCashierSigningOpen = (open: boolean)");
+	it("keeps payment hosts mounted but closes every payment presentation while cashier signing is open", () => {
+		expect(uiStoreSource).toContain(
+			"const cashierSigningOpen = ref(false)",
+		);
+		expect(uiStoreSource).toContain(
+			"const setCashierSigningOpen = (open: boolean)",
+		);
 		expect(posShellSource).toMatch(
 			/return\s*\{[\s\S]{0,1400}cashierSigningOpen/,
 		);
 		expect(posShellSource).toContain(
-			":class=\"{ 'payment-dialog--cashier-signing': cashierSigningOpen }\"",
+			':model-value="paymentDialogOpen && !cashierSigningOpen"',
 		);
+		expect(posShellSource).toContain('v-if="paymentDialogOpen"');
 		expect(posShellSource).toMatch(
 			/<div[\s\S]{0,80}v-show="paymentShortcutHostOpen"[\s\S]{0,700}<Payments[\s\S]{0,120}host-owner="shortcut"/,
 		);
 		expect(posShellSource).toContain('v-show="!cashierSigningOpen"');
-		expect(posShellSource).toMatch(
-			/:deep\(\.payment-dialog--cashier-signing\)\s*\{[\s\S]{0,80}display:\s*none\s*!important/,
-		);
+		expect(posShellSource).not.toContain("payment-dialog--cashier-signing");
 		expect(posShellSource).toMatch(
 			/'payment-shortcut-host--locked':[\s\S]{0,180}!cashierSigningOpen/,
 		);
@@ -238,11 +235,15 @@ describe("ambiguous payment submission recovery UX", () => {
 
 	it("returns an authoritatively rejected cashier PIN to a fresh signing prompt", () => {
 		expect(paymentsSource).toContain("validateCashierSignature");
-		expect(paymentsSource).toContain('cashierSigningPinError.value = __("Invalid cashier PIN. Try again.")');
+		expect(paymentsSource).toContain(
+			'cashierSigningPinError.value = __("Invalid cashier PIN. Try again.")',
+		);
 		expect(paymentsSource).toMatch(
 			/await validateCashierSignature\([\s\S]{0,1600}settleCashierSigning\(/,
 		);
-		expect(paymentsSource).toContain("const isCashierPinRejection = (error)");
+		expect(paymentsSource).toContain(
+			"const isCashierPinRejection = (error)",
+		);
 		expect(paymentsSource).toContain('"CASHIER_PIN_REJECTED"');
 		expect(paymentsSource).toMatch(
 			/isCashierPinRejection\(error\)[\s\S]{0,320}cashierSignature = await requestCashierSigning\(\)/,
@@ -251,7 +252,9 @@ describe("ambiguous payment submission recovery UX", () => {
 			/requestCashierSigning\(\)[\s\S]{0,1000}while \(true\)/,
 		);
 		expect(paymentsSource).toContain('data-testid="cashier-signing-retry"');
-		expect(paymentsSource).toContain("releaseCashierSignedSubmissionRecovery");
+		expect(paymentsSource).toContain(
+			"releaseCashierSignedSubmissionRecovery",
+		);
 		expect(paymentsSource).toMatch(
 			/releaseCashierSignedSubmissionRecovery\(\)[\s\S]{0,180}submitInvoiceWrapper\(false\)/,
 		);

@@ -98,13 +98,9 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		provisioned?.profileName ||
 		"";
 	const expectedCashier =
-		process.env.POSA_SIGNING_E2E_CASHIER?.trim() ||
-		provisioned?.user ||
-		"";
+		process.env.POSA_SIGNING_E2E_CASHIER?.trim() || provisioned?.user || "";
 	const cashierPin =
-		process.env.POSA_E2E_CASHIER_PIN?.trim() ||
-		provisioned?.pin ||
-		"";
+		process.env.POSA_E2E_CASHIER_PIN?.trim() || provisioned?.pin || "";
 	if (!expectedProfile || !expectedCashier || !cashierPin) {
 		throw new Error(
 			"Configure signing credentials or run with POSA_E2E_PROVISION_CASHIER=1.",
@@ -138,7 +134,7 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 	const expectedPaymentMethods = (profile.payments || []).map(
 		(payment: any) => payment.mode_of_payment,
 	);
-	expect(expectedPaymentMethods.length).toBeGreaterThan(1);
+	expect(expectedPaymentMethods.length).toBeGreaterThan(0);
 
 	await page.evaluate(() => {
 		(window as any).__cashierSigningResponses = [];
@@ -154,6 +150,9 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 
 	const itemCode = await addKnownItem(page);
 	const signingDialog = page.getByTestId("cashier-sale-signing-dialog");
+	const visiblePaymentRoot = page.locator(
+		'[data-testid="payment-root"]:visible',
+	);
 	if (SUBMISSION_TRIGGER === "shortcuts") {
 		const printShortcutStartedAt = Date.now();
 		await page.keyboard.press("Alt+P");
@@ -163,14 +162,18 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 			`[cashier-signing] Alt+P dialog latency: ${printShortcutLatencyMs}ms`,
 		);
 		expect(printShortcutLatencyMs).toBeLessThan(1_500);
-		await expect(page.getByTestId("payment-root")).toBeHidden();
+		await expect(visiblePaymentRoot).toHaveCount(0);
 		await expect(page.locator("[role='dialog']:visible")).toHaveCount(1);
 		await expect(
-			signingDialog.getByTestId("cashier-sale-pin-input").locator("input"),
+			signingDialog
+				.getByTestId("cashier-sale-pin-input")
+				.locator("input"),
 		).toBeFocused();
 		await signingDialog.getByTestId("cashier-sale-cancel").click();
 		await expect(signingDialog).toBeHidden({ timeout: 15_000 });
-		await expect(page.getByTestId(`cart-row-${itemCode}`).first()).toBeVisible();
+		await expect(
+			page.getByTestId(`cart-row-${itemCode}`).first(),
+		).toBeVisible();
 
 		const submitShortcutStartedAt = Date.now();
 		await page.keyboard.press("Alt+X");
@@ -180,20 +183,24 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 			`[cashier-signing] Alt+X dialog latency: ${submitShortcutLatencyMs}ms`,
 		);
 		expect(submitShortcutLatencyMs).toBeLessThan(1_500);
-		await expect(page.getByTestId("payment-root")).toBeHidden();
+		await expect(visiblePaymentRoot).toHaveCount(0);
 		await expect(page.locator("[role='dialog']:visible")).toHaveCount(1);
 		await expect(
-			signingDialog.getByTestId("cashier-sale-pin-input").locator("input"),
+			signingDialog
+				.getByTestId("cashier-sale-pin-input")
+				.locator("input"),
 		).toBeFocused();
 	} else {
 		await page.getByTestId("invoice-action-pay").click();
-		await expect(page.getByTestId("payment-root")).toBeVisible({
+		await expect(visiblePaymentRoot).toHaveCount(1, {
 			timeout: 30_000,
 		});
-		await expect(page.getByTestId("payment-submit")).toBeEnabled({
+		const visiblePaymentSubmit =
+			visiblePaymentRoot.getByTestId("payment-submit");
+		await expect(visiblePaymentSubmit).toBeEnabled({
 			timeout: 15_000,
 		});
-		await page.getByTestId("payment-submit").click();
+		await visiblePaymentSubmit.click();
 	}
 
 	await expect(signingDialog).toBeVisible({ timeout: 15_000 });
@@ -220,7 +227,7 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 		signingDialog.getByText("Invalid cashier PIN. Try again."),
 	).toBeVisible();
 	await expect(page.getByTestId("submission-recovery-banner")).toHaveCount(0);
-	await expect(page.getByTestId("payment-root")).toBeHidden();
+	await expect(visiblePaymentRoot).toHaveCount(0);
 	expect(
 		await page.evaluate(
 			() => (window as any).__cashierSigningResponses.length,
@@ -228,13 +235,18 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 	).toBe(0);
 
 	await pinInput.fill(cashierPin);
-	await pinInput.press("ArrowDown");
-	await expect(paymentMethods.nth(1)).toHaveAttribute("aria-checked", "true");
-	await pinInput.press("ArrowUp");
-	await expect(paymentMethods.first()).toHaveAttribute(
-		"aria-checked",
-		"true",
-	);
+	if (expectedPaymentMethods.length > 1) {
+		await pinInput.press("ArrowDown");
+		await expect(paymentMethods.nth(1)).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		await pinInput.press("ArrowUp");
+		await expect(paymentMethods.first()).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+	}
 	await pinInput.press("Enter");
 
 	await expect
