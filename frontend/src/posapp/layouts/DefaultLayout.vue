@@ -917,9 +917,23 @@ watch(
 );
 
 watch(
-	customersStartupReady,
-	(loaded) => {
-		if (loaded) {
+	() => [initialBootstrapSyncSettled.value, loadingState.sources.init || 0],
+	([settled, sourceProgress]) => {
+		// A terminal lock/unlock reload can remount the layout after initialization
+		// has already settled and reset the module-level loading sources. Restore
+		// only the completed init source; never release it while required startup
+		// work is still pending.
+		if (settled && sourceProgress < 100) {
+			markSourceLoaded("init");
+		}
+	},
+	{ immediate: true },
+);
+
+watch(
+	() => [customersStartupReady.value, loadingState.sources.customers || 0],
+	([loaded, sourceProgress]) => {
+		if (loaded && sourceProgress < 100) {
 			markSourceLoaded("customers");
 		}
 	},
@@ -935,9 +949,9 @@ watch(
 );
 
 watch(
-	itemsStartupReady,
-	(loaded) => {
-		if (loaded) {
+	() => [itemsStartupReady.value, loadingState.sources.items || 0],
+	([loaded, sourceProgress]) => {
+		if (loaded && sourceProgress < 100) {
 			markSourceLoaded("items");
 		}
 	},

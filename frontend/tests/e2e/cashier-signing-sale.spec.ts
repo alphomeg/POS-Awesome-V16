@@ -91,6 +91,12 @@ test("submits a keyboard-signed sale with an exact profile payment method", asyn
 	if (/\/login/.test(page.url())) {
 		throw new Error("Cashier-signing E2E requires POSA_SMOKE_SID.");
 	}
+	await expect(page.locator(".main-section").first()).toBeVisible({
+		timeout: 90_000,
+	});
+	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
+		timeout: 90_000,
+	});
 	await ensureAuthoritativeTerminalUnlock(page);
 	const provisioned = getProvisionedTerminalCashier(page);
 	const expectedProfile =

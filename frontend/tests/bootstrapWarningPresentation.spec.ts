@@ -35,12 +35,15 @@ describe("DefaultLayout bootstrap warning presentation", () => {
 		);
 		expect(source).toContain("const itemsStartupReady = computed");
 		expect(source).toMatch(
-			/watch\(\s*itemsStartupReady,[\s\S]{0,160}markSourceLoaded\("items"\)/,
+			/initialBootstrapSyncSettled\.value[\s\S]{0,220}loadingState\.sources\.init[\s\S]{0,700}markSourceLoaded\("init"\)/,
+		);
+		expect(source).toMatch(
+			/loadingState\.sources\.items[\s\S]{0,220}markSourceLoaded\("items"\)/,
 		);
 		expect(source).toContain("const onlineCustomerStartupReady = computed");
 		expect(source).toContain("const customersStartupReady = computed");
 		expect(source).toMatch(
-			/watch\(\s*customersStartupReady,[\s\S]{0,180}markSourceLoaded\("customers"\)/,
+			/loadingState\.sources\.customers[\s\S]{0,240}markSourceLoaded\("customers"\)/,
 		);
 		expect(source).toMatch(
 			/itemsStartupSyncSettled:\s*Boolean\(areItemsLoaded\)\s*&&\s*!areItemsSyncing/,
