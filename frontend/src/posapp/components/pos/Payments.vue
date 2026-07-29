@@ -2712,7 +2712,10 @@ watch(selectedCustomer, (newCustomer, oldCustomer) => {
 const restorePendingSaleBeforeGeneralSync = async () => {
 	const recovery = await resumePendingSubmissionRecovery(buildSubmissionCallbacks(false));
 	if (!recovery) {
-		await syncStore.syncPendingInvoices({ showToasts: false });
+		await syncStore.syncPendingInvoices({
+			showToasts: false,
+			transactionalOnly: true,
+		});
 	}
 };
 

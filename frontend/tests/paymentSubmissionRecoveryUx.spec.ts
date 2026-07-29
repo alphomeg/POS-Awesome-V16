@@ -103,8 +103,8 @@ describe("ambiguous payment submission recovery UX", () => {
 	});
 
 	it("leaves reconnect ownership to the layout and keeps mount recovery silent", () => {
-		expect(paymentsSource).toContain(
-			"syncStore.syncPendingInvoices({ showToasts: false })",
+		expect(paymentsSource).toMatch(
+			/syncStore\.syncPendingInvoices\(\{[\s\S]{0,120}transactionalOnly:\s*true/,
 		);
 		expect(paymentsSource).not.toContain(
 			'eventBus.on("network-online", () => syncStore.syncPendingInvoices())',

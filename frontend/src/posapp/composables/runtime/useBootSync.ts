@@ -12,6 +12,7 @@ type UseBootSyncOptions = {
 	offlineSyncRuntime: OfflineSyncRuntimeLike;
 	evaluateBootstrapSnapshot: (options?: { allowPrompt?: boolean }) => void;
 	getLastRunSummary?: () => unknown;
+	isInitialBootstrapSettled?: () => boolean;
 };
 
 export function useBootSync(options: UseBootSyncOptions) {
@@ -50,6 +51,16 @@ export function useBootSync(options: UseBootSyncOptions) {
 	}
 
 	function triggerOnlineResumeSync() {
+		// The coordinator serializes triggers. Starting an online-resume warm
+		// catalog sync before boot settles would make the boot trigger join that
+		// long-running promise and strand the readiness overlay.
+		if (
+			options.isInitialBootstrapSettled &&
+			!options.isInitialBootstrapSettled()
+		) {
+			return Promise.resolve(false);
+		}
+
 		return options.offlineSyncRuntime
 			.triggerOnlineResumeSync()
 			.catch((error) => {

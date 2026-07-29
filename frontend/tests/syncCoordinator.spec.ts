@@ -114,16 +114,77 @@ describe("SyncCoordinator", () => {
 		const timer = coordinator.runTrigger("timer");
 		const manual = coordinator.runTrigger("user_action");
 
-		expect(timer).toBe(reconnect);
-		expect(manual).toBe(reconnect);
+		expect(timer).not.toBe(reconnect);
+		expect(manual).not.toBe(reconnect);
 		await vi.waitFor(() => expect(runResource).toHaveBeenCalledTimes(1));
 		releaseRun?.();
-		await reconnect;
+		await Promise.all([reconnect, timer, manual]);
 
 		expect(started[0]).toBe("online_resume");
 		expect(started).toContain("timer");
 		expect(started).toContain("user_action");
 		expect(maxActiveRuns).toBe(1);
+	});
+
+	it("settles boot before a later warm trigger finishes", async () => {
+		let releaseBoot: (() => void) | null = null;
+		let releaseItems: (() => void) | null = null;
+		let warmSettled = false;
+		const started: string[] = [];
+		const coordinator = new SyncCoordinator({
+			concurrency: 1,
+			resources: [
+				makeResource("bootstrap_config", "boot_critical", ["boot"]),
+				makeResource("items", "warm", ["user_action"]),
+			],
+			runResource: async (resource, trigger) => {
+				started.push(`${trigger}:${resource.id}`);
+				if (trigger === "boot") {
+					await new Promise<void>((resolve) => {
+						releaseBoot = resolve;
+					});
+				}
+				if (resource.id === "items") {
+					await new Promise<void>((resolve) => {
+						releaseItems = resolve;
+					});
+				}
+			},
+		});
+
+		const boot = coordinator.runTrigger("boot");
+		await vi.waitFor(() =>
+			expect(started).toEqual(["boot:bootstrap_config"]),
+		);
+		const warm = coordinator.runTrigger("user_action").finally(() => {
+			warmSettled = true;
+		});
+
+		releaseBoot?.();
+		await expect(boot).resolves.toBeUndefined();
+		await vi.waitFor(() => expect(started).toContain("user_action:items"));
+		expect(warmSettled).toBe(false);
+
+		releaseItems?.();
+		await warm;
+	});
+
+	it("drains follow-up work enqueued by a settled trigger caller", async () => {
+		const started: string[] = [];
+		const coordinator = new SyncCoordinator({
+			resources: [
+				makeResource("bootstrap_config", "boot_critical", ["boot"]),
+				makeResource("items", "warm", ["user_action"]),
+			],
+			runResource: async (resource, trigger) => {
+				started.push(`${trigger}:${resource.id}`);
+			},
+		});
+
+		await coordinator.runTrigger("boot");
+		await coordinator.runTrigger("user_action");
+
+		expect(started).toEqual(["boot:bootstrap_config", "user_action:items"]);
 	});
 
 	it("starts urgent transactional work before an active catalog resource finishes", async () => {

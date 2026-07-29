@@ -210,7 +210,10 @@ describe("runtime composable lifecycle ownership", () => {
 		await metrics.syncQueues();
 
 		expect(syncPendingInvoices).toHaveBeenCalledTimes(1);
-		expect(syncPendingInvoices).toHaveBeenCalledWith({ showToasts: false });
+		expect(syncPendingInvoices).toHaveBeenCalledWith({
+			showToasts: false,
+			transactionalOnly: true,
+		});
 		expect(updatePendingCount).toHaveBeenCalledTimes(1);
 		expect(metrics.syncTotals.value).toEqual({
 			pending: 0,
@@ -239,5 +242,33 @@ describe("runtime composable lifecycle ownership", () => {
 
 		expect(runtime.startTimerSync).toHaveBeenCalledTimes(1);
 		expect(runtime.stopTimerSync).toHaveBeenCalledTimes(1);
+	});
+
+	it("defers online-resume warm sync until initial bootstrap settles", async () => {
+		let initialBootstrapSettled = false;
+		const runtime = {
+			startTimerSync: vi.fn(),
+			stopTimerSync: vi.fn(),
+			scheduleBootWarmSync: vi.fn(async () => true),
+			triggerOnlineResumeSync: vi.fn(async () => true),
+			triggerOperatorRefreshSync: vi.fn(async () => true),
+		};
+		const evaluateBootstrapSnapshot = vi.fn();
+		const boot = useBootSync({
+			offlineSyncRuntime: runtime,
+			evaluateBootstrapSnapshot,
+			isInitialBootstrapSettled: () => initialBootstrapSettled,
+		});
+
+		await expect(boot.triggerOnlineResumeSync()).resolves.toBe(false);
+		expect(runtime.triggerOnlineResumeSync).not.toHaveBeenCalled();
+		expect(evaluateBootstrapSnapshot).not.toHaveBeenCalled();
+
+		initialBootstrapSettled = true;
+		await expect(boot.triggerOnlineResumeSync()).resolves.toBe(true);
+		expect(runtime.triggerOnlineResumeSync).toHaveBeenCalledTimes(1);
+		expect(evaluateBootstrapSnapshot).toHaveBeenCalledWith({
+			allowPrompt: false,
+		});
 	});
 });

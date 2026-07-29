@@ -103,9 +103,10 @@ type ResourceExecutionSummary = {
  * Orchestrates offline background synchronisation for all registered resources.
  *
  * Resources are processed in priority order (`transactional` → `boot_critical` →
- * `warm` → `lazy`) with configurable concurrency. Overlapping trigger requests share
- * one promise: the active trigger is deduplicated and distinct triggers are queued
- * once, then drained serially.
+ * `warm` → `lazy`) with configurable concurrency. The active trigger is deduplicated
+ * and distinct triggers are queued once, then drained serially. Each caller receives
+ * a promise for its requested trigger rather than for the entire drain queue, so
+ * background work queued behind boot cannot extend bootstrap readiness.
  *
  * @example
  * ```ts
@@ -142,6 +143,14 @@ export class SyncCoordinator {
 	private activeTrigger: SyncTrigger | null = null;
 
 	private readonly pendingTriggers = new Set<SyncTrigger>();
+
+	private readonly triggerWaiters = new Map<
+		SyncTrigger,
+		Array<{
+			resolve: () => void;
+			reject: (error: unknown) => void;
+		}>
+	>();
 
 	private transactionalRun: Promise<void> | null = null;
 
@@ -228,13 +237,14 @@ export class SyncCoordinator {
 	}
 
 	/**
-	 * Runs all resources that subscribe to `trigger`, in priority order. Overlapping
-	 * requests return the shared in-flight Promise; a distinct trigger is queued once
-	 * and an active trigger is deduplicated.
+	 * Runs all resources that subscribe to `trigger`, in priority order. An active or
+	 * queued trigger is deduplicated, while every caller is settled as soon as that
+	 * requested trigger completes. Later queued triggers continue in the background.
 	 *
 	 * @param trigger - The event that initiated this sync pass.
 	 */
 	runTrigger(trigger: SyncTrigger) {
+		const completion = this.createTriggerCompletion(trigger);
 		if (this.inFlightRun) {
 			// A transaction can be created after the active trigger has already
 			// moved on to a slow catalog resource. Give transactional work its own
@@ -245,17 +255,61 @@ export class SyncCoordinator {
 			if (trigger !== this.activeTrigger) {
 				this.pendingTriggers.add(trigger);
 			}
-			return this.inFlightRun;
+			return completion;
 		}
 
 		this.pendingTriggers.add(trigger);
-		const runPromise = this.drainTriggerQueue().finally(() => {
-			if (this.inFlightRun === runPromise) {
-				this.inFlightRun = null;
-			}
-		});
+		this.startTriggerDrain();
+		return completion;
+	}
+
+	private startTriggerDrain() {
+		if (this.inFlightRun) {
+			return;
+		}
+		const runPromise = this.drainTriggerQueue()
+			.catch((error) => {
+				this.rejectAllTriggerWaiters(error);
+				console.error("Offline sync trigger queue failed", error);
+			})
+			.finally(() => {
+				if (this.inFlightRun === runPromise) {
+					this.inFlightRun = null;
+				}
+				// A caller settled by the last trigger can enqueue follow-up work
+				// before this finalizer runs. Start a fresh drain so that narrow
+				// per-trigger promises cannot leave that work stranded.
+				if (this.pendingTriggers.size) {
+					this.startTriggerDrain();
+				}
+			});
 		this.inFlightRun = runPromise;
-		return runPromise;
+	}
+
+	private createTriggerCompletion(trigger: SyncTrigger) {
+		return new Promise<void>((resolve, reject) => {
+			const waiters = this.triggerWaiters.get(trigger) || [];
+			waiters.push({ resolve, reject });
+			this.triggerWaiters.set(trigger, waiters);
+		});
+	}
+
+	private settleTriggerWaiters(trigger: SyncTrigger, error?: unknown) {
+		const waiters = this.triggerWaiters.get(trigger) || [];
+		this.triggerWaiters.delete(trigger);
+		for (const waiter of waiters) {
+			if (error) {
+				waiter.reject(error);
+			} else {
+				waiter.resolve();
+			}
+		}
+	}
+
+	private rejectAllTriggerWaiters(error: unknown) {
+		for (const trigger of this.triggerWaiters.keys()) {
+			this.settleTriggerWaiters(trigger, error);
+		}
 	}
 
 	/**
@@ -326,8 +380,6 @@ export class SyncCoordinator {
 	}
 
 	private async drainTriggerQueue() {
-		let firstError: unknown = null;
-
 		while (this.pendingTriggers.size) {
 			const trigger = this.pendingTriggers.values().next().value as
 				| SyncTrigger
@@ -339,15 +391,12 @@ export class SyncCoordinator {
 			this.activeTrigger = trigger;
 			try {
 				await this.executeTrigger(trigger);
+				this.settleTriggerWaiters(trigger);
 			} catch (error) {
-				firstError ||= error;
+				this.settleTriggerWaiters(trigger, error);
 			} finally {
 				this.activeTrigger = null;
 			}
-		}
-
-		if (firstError) {
-			throw firstError;
 		}
 	}
 

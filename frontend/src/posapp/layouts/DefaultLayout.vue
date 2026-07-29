@@ -1,5 +1,18 @@
 <template>
-	<v-app class="container1 posapp pos-theme-root" :class="rtlClasses">
+	<v-app
+		class="container1 posapp pos-theme-root"
+		:class="rtlClasses"
+		:data-bootstrap-phase="initialBootstrapPhase"
+		:data-bootstrap-settled="initialBootstrapSyncSettled ? '1' : '0'"
+		:data-loading-source-init="loadingState.sources.init ?? -1"
+		:data-loading-source-items="loadingState.sources.items ?? -1"
+		:data-loading-source-customers="loadingState.sources.customers ?? -1"
+		:data-items-startup-ready="itemsStartupReady ? '1' : '0'"
+		:data-customers-startup-ready="customersStartupReady ? '1' : '0'"
+		:data-fast-counter-enabled="fastCounterEnabled ? '1' : '0'"
+		:data-network-online="networkOnline ? '1' : '0'"
+		:data-server-online="serverOnline ? '1' : '0'"
+	>
 		<AppLoadingOverlay :visible="globalLoading" />
 		<v-main class="main-content">
 			<ClosingDialog />
@@ -328,6 +341,7 @@ const bootstrapLimitedMode = ref(getBootstrapLimitedMode());
 const bootstrapSnackbarVisible = ref(false);
 const confirmedBootstrapDecisionKey = ref("");
 const initialBootstrapSyncSettled = ref(false);
+const initialBootstrapPhase = ref("setup");
 const startupBootstrapWarningsReady = ref(false);
 const offlineQueueInitializationError = ref(null);
 const startupOfflineWarmupInFlight = ref(false);
@@ -347,6 +361,7 @@ const bootSync = useBootSync({
 	offlineSyncRuntime,
 	evaluateBootstrapSnapshot,
 	getLastRunSummary: () => syncCoordinator.getLastRunSummary(),
+	isInitialBootstrapSettled: () => initialBootstrapSyncSettled.value,
 });
 
 const networkLifecycle = useNetworkLifecycle({
@@ -1063,10 +1078,13 @@ const initializeOfflineQueueReadiness = async () => {
 };
 
 const initializeData = async () => {
+	initialBootstrapPhase.value = "offline-storage-init";
 	await initPromise;
 	const offlineStorageReady = isOfflineStorageReady();
 	if (offlineStorageReady) {
+		initialBootstrapPhase.value = "offline-queue-readiness";
 		await initializeOfflineQueueReadiness();
+		initialBootstrapPhase.value = "offline-resource-hydration";
 		await hydrateOfflineSyncResourceStates();
 		checkDbHealth().catch(() => {});
 	} else {
@@ -1087,6 +1105,7 @@ const initializeData = async () => {
 	if (openingData) {
 		uiStore.setRegisterData(openingData);
 		if (navigator.onLine) {
+			initialBootstrapPhase.value = "tax-setting";
 			await refreshTaxInclusiveSetting();
 		}
 	}
@@ -1098,6 +1117,7 @@ const initializeData = async () => {
 		}
 	}
 
+	initialBootstrapPhase.value = "pending-count";
 	await syncStore.updatePendingCount();
 	syncTotals.value = getLastSyncTotals();
 
@@ -1118,10 +1138,13 @@ const initializeData = async () => {
 	evaluateBootstrapSnapshot({
 		allowPrompt: manualOffline.value || !navigator.onLine,
 	});
+	initialBootstrapPhase.value = "boot-critical-sync";
 	await scheduleBootCriticalWarmSync();
+	initialBootstrapPhase.value = "pricing-rules";
 	await refreshOfflinePricingRules();
 	evaluateBootstrapSnapshot({ allowPrompt: false });
 	initialBootstrapSyncSettled.value = true;
+	initialBootstrapPhase.value = "settled";
 	void runStartupOfflineDataWarmup("initial_load");
 
 	markSourceLoaded("init");

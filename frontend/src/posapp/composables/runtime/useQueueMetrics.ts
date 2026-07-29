@@ -76,6 +76,10 @@ export function useQueueMetrics(options: UseQueueMetricsOptions) {
 
 		const result = await options.syncStore?.syncPendingInvoices?.({
 			showToasts: false,
+			// Connectivity callbacks use this queue-specific path during startup.
+			// Keep it on the coordinator's transactional lane so pending sales
+			// never enqueue a full catalog refresh ahead of boot readiness.
+			transactionalOnly: true,
 		});
 		const cashMovementResult = await options.syncOfflineCashMovements?.();
 		if (result && (result.synced || result.drafted)) {

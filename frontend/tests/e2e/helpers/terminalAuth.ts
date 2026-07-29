@@ -52,15 +52,21 @@ async function provisionTemporaryCashier(page: Page, profileName: string) {
 				}
 			};
 			let userDoc: any = null;
-			try {
+			const existingUsers = (
+				await call("frappe.client.get_list", {
+					doctype: "User",
+					filters: { name: cashierUser },
+					fields: ["name"],
+					limit_page_length: 1,
+				})
+			)?.message;
+			if (existingUsers?.[0]?.name) {
 				userDoc = (
 					await call("frappe.client.get", {
 						doctype: "User",
 						name: cashierUser,
 					})
 				)?.message;
-			} catch {
-				userDoc = null;
 			}
 			let createdUser = false;
 			const originalPin = userDoc?.posa_pos_pin
