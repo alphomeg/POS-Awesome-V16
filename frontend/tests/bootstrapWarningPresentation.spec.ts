@@ -26,6 +26,14 @@ describe("DefaultLayout bootstrap warning presentation", () => {
 		expect(source).toContain("resolveOfflineQueueReadiness");
 		expect(source).toContain("continuing the online POS bootstrap");
 		expect(source).toContain("initialBootstrapSyncSettled");
+		expect(source).toContain("const fastCounterStartupReady = computed");
+		expect(source).toContain("const itemsStartupReady = computed");
+		expect(source).toMatch(
+			/watch\(\s*itemsStartupReady,[\s\S]{0,160}markSourceLoaded\("items"\)/,
+		);
+		expect(source).toMatch(
+			/itemsStartupSyncSettled:\s*Boolean\(areItemsLoaded\)\s*&&\s*!areItemsSyncing/,
+		);
 		expect(source).toContain("<v-snackbar");
 		expect(source).toContain('v-model="bootstrapSnackbarVisible"');
 		expect(source).toContain('location="top center"');

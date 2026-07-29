@@ -234,7 +234,22 @@ const {
 	itemsLoaded,
 	isBackgroundLoading: itemsBackgroundLoading,
 	loadProgress: itemsLoadProgress,
+	hotItems,
+	hotItemsLoaded,
 } = storeToRefs(itemsStore);
+const fastCounterStartupReady = computed(() => {
+	const configured = posProfile.value?.posa_fast_counter_mode;
+	const enabled =
+		configured === true ||
+		configured === 1 ||
+		["1", "true", "yes"].includes(String(configured || "").toLowerCase());
+	return enabled && hotItemsLoaded.value && hotItems.value.length > 0;
+});
+// Fast Counter can search its hot catalogue and fall back to the server before
+// the complete offline snapshot finishes.  Lift only the global online startup
+// overlay here; offline capability warnings still wait for itemsLoaded and the
+// background sync to settle below.
+const itemsStartupReady = computed(() => itemsLoaded.value || fastCounterStartupReady.value);
 const supportedOfflineSyncResources = filterSupportedOfflineSyncResources(getSyncResourceDefinitions());
 const syncCoordinator = setSyncCoordinator(
 	new SyncCoordinator({
@@ -906,7 +921,7 @@ watch(
 );
 
 watch(
-	itemsLoaded,
+	itemsStartupReady,
 	(loaded) => {
 		if (loaded) {
 			markSourceLoaded("items");
