@@ -485,9 +485,24 @@ test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 
 	test("uses the centered RetailMind payment surface", async () => {
 		await page.setViewportSize({ width: 1366, height: 768 });
+		if ((await page.locator(".posa-cart-item-row").count()) === 0) {
+			const entry = page.getByTestId("counter-grid-item-entry");
+			await entry.fill("02017");
+			await entry.press("Enter");
+			const search = page.getByTestId("pos-item-search").locator("input");
+			await expect(page.getByTestId("pos-item-row-02017")).toBeVisible({
+				timeout: 30_000,
+			});
+			await search.press("Enter");
+			await expect(page.getByTestId("cart-row-02017").first()).toBeVisible(
+				{ timeout: 30_000 },
+			);
+		}
 		await page.keyboard.press("F9");
 
-		const payment = page.getByTestId("payment-root");
+		const payment = page.locator(
+			'.payment-shell--dialog[data-testid="payment-root"]',
+		);
 		const paymentContent = page.locator(".counter-grid-payment-content");
 		await expect(payment).toBeVisible({ timeout: 30_000 });
 		await expect(payment).toHaveClass(/payment-shell--counter-grid/);
@@ -511,7 +526,7 @@ test.describe("Counter Grid RetailMind Fresh Operations visual system", () => {
 			fullPage: true,
 		});
 
-		await page.getByTestId("payment-cancel").click();
+		await payment.getByTestId("payment-cancel").click();
 		await expect(payment).toBeHidden({ timeout: 30_000 });
 	});
 });
