@@ -48,6 +48,11 @@ type CallOfflineSyncMethod = (
 type RunSupportedOfflineSyncResourceArgs = {
 	resource: SyncResourceDefinition;
 	posProfile: SupportedSyncProfile;
+	/**
+	 * Optional explicit session user for deterministic callers/tests. The layout
+	 * leaves this undefined and the runner reads the authenticated Frappe session.
+	 */
+	sessionUser?: string | null;
 	schemaVersion: string;
 	getPersistedState: (
 		_resourceId: SyncResourceId,
@@ -125,6 +130,7 @@ export function buildOfflineSyncProfile(
 export async function runSupportedOfflineSyncResource({
 	resource,
 	posProfile,
+	sessionUser,
 	schemaVersion,
 	getPersistedState,
 	callOfflineSyncMethod,
@@ -298,6 +304,14 @@ export async function runSupportedOfflineSyncResource({
 			await syncOfflineCustomers();
 			const result = await syncInvoiceOutboxResource(
 				callOfflineSyncMethod,
+				{
+					owner_user:
+						sessionUser !== undefined
+							? sessionUser
+							: (globalThis as any)?.frappe?.session?.user,
+					pos_profile: posProfile?.name || null,
+					company: posProfile?.company || null,
+				},
 			);
 			recordCoordinatorInvoiceOutboxResult(result);
 			return result;

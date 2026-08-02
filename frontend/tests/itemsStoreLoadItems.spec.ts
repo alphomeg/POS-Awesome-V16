@@ -660,6 +660,44 @@ describe("itemsStore loadItems", () => {
 		).toHaveBeenCalledWith({ itemsCount: 40_500 });
 	});
 
+	it("keeps an exact offline catalog match ahead of unrelated hot suggestions", async () => {
+		const store = useItemsStore();
+		offlineMocks.isOffline.mockReturnValue(true);
+		offlineMocks.getStoredItemsCountByScope.mockResolvedValue(40_500);
+		offlineMocks.searchStoredItems.mockResolvedValue([
+			{
+				item_code: "01009",
+				item_name: "Exact Cached Scanner Item",
+				item_group: "Medicines",
+			},
+		]);
+		itemServiceMocks.getHotItemsData.mockResolvedValue([
+			{
+				item_code: "HOT-SUGGESTION",
+				item_name: "Unrelated Hot Suggestion",
+				item_group: "Medicines",
+			},
+		]);
+
+		await store.initialize({
+			name: "POS-COUNTER",
+			warehouse: "Main Store",
+			selling_price_list: "Retail",
+			currency: "PKR",
+			item_groups: [],
+			posa_fast_counter_mode: 1,
+			posa_use_limit_search: 1,
+			posa_force_server_items: 1,
+		} as any);
+
+		const result = await store.searchItems("01009", { resultLimit: 1 });
+
+		expect(result.map((item) => item.item_code)).toEqual(["01009"]);
+		expect(store.filteredItems.map((item) => item.item_code)).toEqual([
+			"01009",
+		]);
+	});
+
 	it("does not let a slower offline lookup replace a newer cashier query", async () => {
 		const store = useItemsStore();
 		offlineMocks.isOffline.mockReturnValue(true);

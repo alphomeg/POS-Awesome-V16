@@ -111,6 +111,16 @@ def _load_employees_module():
     return module
 
 
+def _load_cashier_pin_security_module():
+    module_name = "posawesome.posawesome.api.cashier_pin_security"
+    file_path = REPO_ROOT / "posawesome" / "posawesome" / "api" / "cashier_pin_security.py"
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class TestEmployeesApi(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -123,10 +133,12 @@ class TestEmployeesApi(unittest.TestCase):
             for name in (
                 "posawesome.posawesome.api.pos_access",
                 "posawesome.posawesome.api.terminal_state",
+                "posawesome.posawesome.api.cashier_pin_security",
             )
         }
         _install_frappe_stub()
         _install_dependency_stubs()
+        _load_cashier_pin_security_module()
         cls.employees = _load_employees_module()
         cls.production_create_cashier_pin_attempt_tracker = staticmethod(
             cls.employees._create_cashier_pin_attempt_tracker
@@ -432,17 +444,25 @@ class TestEmployeesApi(unittest.TestCase):
     def test_cashier_pin_request_context_is_redacted_recursively(self):
         request_form = {
             "cashier_pin": "7391",
+            "offline_sale_authorization": "signed-ticket-secret",
             "invoice": json.dumps(
                 {
                     "payments": [
-                        {"mode_of_payment": "Cash", "cashierPin": "7391"}
+                        {
+                            "mode_of_payment": "Cash",
+                            "cashierPin": "7391",
+                            "offlineSaleAuthorization": "nested-ticket-secret",
+                        }
                     ]
                 }
             ),
         }
         recorder_form = {
             "new_pin": "7391",
-            "correction_data": {"current_pin": "7391"},
+            "correction_data": {
+                "current_pin": "7391",
+                "_posa_offline_sale_authorization": "recorder-ticket-secret",
+            },
         }
         previous_local = getattr(self.employees.frappe, "local", None)
         self.employees.frappe.local = types.SimpleNamespace(
@@ -459,10 +479,16 @@ class TestEmployeesApi(unittest.TestCase):
         self.employees.redact_cashier_pin_request_context()
 
         self.assertEqual(request_form["cashier_pin"], "********")
+        self.assertEqual(request_form["offline_sale_authorization"], "********")
         self.assertNotIn("7391", request_form["invoice"])
+        self.assertNotIn("nested-ticket-secret", request_form["invoice"])
         self.assertEqual(recorder_form["new_pin"], "********")
         self.assertEqual(
             recorder_form["correction_data"]["current_pin"],
+            "********",
+        )
+        self.assertEqual(
+            recorder_form["correction_data"]["_posa_offline_sale_authorization"],
             "********",
         )
 

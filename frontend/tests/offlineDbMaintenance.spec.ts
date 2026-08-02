@@ -52,7 +52,7 @@ describe("offline IndexedDB maintenance", () => {
 		expect(await db.table("keyval").count()).toBe(1500);
 	});
 
-	it("prunes terminal outbox rows and stale metadata while retaining active rows", async () => {
+	it("prunes only acknowledged outbox rows and stale metadata while retaining unresolved recovery rows", async () => {
 		const oldIso = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
 		const freshIso = new Date().toISOString();
 		await db.table("invoice_outbox").bulkPut([
@@ -79,6 +79,19 @@ describe("offline IndexedDB maintenance", () => {
 				next_retry_at: null,
 				retry_count: 0,
 				last_error: null,
+				invoice_name: null,
+				acknowledged_at: null,
+			},
+			{
+				client_request_id: "old-dead-letter",
+				status: "dead_letter",
+				invoice: {},
+				data: {},
+				created_at: oldIso,
+				updated_at: oldIso,
+				next_retry_at: null,
+				retry_count: 5,
+				last_error: "requires back-office review",
 				invoice_name: null,
 				acknowledged_at: null,
 			},
@@ -168,6 +181,7 @@ describe("offline IndexedDB maintenance", () => {
 		expect(await db.table("invoice_outbox").toArray()).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ client_request_id: "pending" }),
+				expect.objectContaining({ client_request_id: "old-dead-letter" }),
 				expect.objectContaining({ client_request_id: "fresh-ack" }),
 			]),
 		);

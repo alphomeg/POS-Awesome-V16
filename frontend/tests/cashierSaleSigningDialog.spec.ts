@@ -166,4 +166,26 @@ describe("CashierSaleSigningDialog", () => {
 			"Invalid cashier PIN. Try again.",
 		);
 	});
+
+	it("submits a prepared offline cash authorization without rendering a PIN field", async () => {
+		const onSubmit = vi.fn();
+		const wrapper = mountDialog({
+			onSubmit,
+			requireCashierPin: false,
+			creditEligible: false,
+			creditReason: "OFFLINE_CASH_ONLY",
+			payments: [{ mode_of_payment: "Cash", type: "Cash", default: 1 }],
+			offlineAuthorizationMessage: "Prepared offline cash sale",
+		});
+
+		expect(wrapper.find('[data-testid="cashier-sale-pin-input"]').exists()).toBe(false);
+		expect(wrapper.text()).toContain("Prepared offline cash sale");
+		(wrapper.vm as any).submit();
+
+		expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+			cashierPin: "",
+			modeOfPayment: "Cash",
+			settlementMode: "pay",
+		}));
+	});
 });

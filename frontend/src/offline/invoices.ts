@@ -4,6 +4,7 @@ import { reduceCacheUsage } from "./cache";
 import { ensureOfflineInvoiceRequest } from "./idempotency";
 import {
 	enqueueInvoiceOutboxEntry,
+	attachInvoiceOutboxOwnerScope,
 	assertConsistentInvoiceRequestIdentity,
 	assertSupportedInvoiceOutboxEntry,
 	getInvoiceClientRequestId,
@@ -11,6 +12,7 @@ import {
 	getInvoiceOutboxRows,
 	haveMatchingInvoiceOutboxIntent,
 	removeInvoiceIntentJournalStrict,
+	resolveInvoiceOutboxOwnerScope,
 	syncInvoiceOutboxResource,
 	shouldWriteInvoiceOutbox,
 	type InvoiceOutboxEntry,
@@ -261,7 +263,9 @@ function prepareOfflineInvoiceEntry(entry: AnyRecord) {
 }
 
 export async function saveOfflineInvoice(entry: AnyRecord) {
-	const cleanEntry = prepareOfflineInvoiceEntry(entry);
+	const cleanEntry = attachInvoiceOutboxOwnerScope(
+		prepareOfflineInvoiceEntry(entry),
+	);
 	if (shouldWriteInvoiceOutbox()) {
 		await enqueueInvoiceOutboxEntry(cleanEntry);
 	}
@@ -875,6 +879,7 @@ export function syncOfflineInvoices() {
 
 	invoiceRecoveryPromise = (async () => {
 		if (getInvoiceOutboxMode() === "coordinator") {
+			const activeOutboxScope = resolveInvoiceOutboxOwnerScope();
 			const outboxResult = await syncInvoiceOutboxResource(
 				async (method, args = {}) => {
 					const response = await frappe.call({ method, args });
@@ -882,6 +887,7 @@ export function syncOfflineInvoices() {
 						? response || {}
 						: response.message;
 				},
+				activeOutboxScope,
 			);
 			recordCoordinatorInvoiceOutboxResult(outboxResult);
 		}

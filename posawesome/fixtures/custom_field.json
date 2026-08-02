@@ -8746,5 +8746,49 @@
 		"unique": 1,
 		"insert_after": "reference_no",
 		"name": "Payment Entry-posa_client_request_id"
+	},
+	{
+		"doctype": "Custom Field",
+		"dt": "POS Profile",
+		"fieldname": "posa_allow_offline_signed_cash_sales",
+		"fieldtype": "Check",
+		"label": "Allow Offline Signed Cash Sales",
+		"description": "Allow time-bounded, server-issued authorizations for queued cash-only sales while offline. Keep disabled unless offline checkout is explicitly required.",
+		"default": "0",
+		"insert_after": "posa_allow_offline_sale_without_stock_verification",
+		"name": "POS Profile-posa_allow_offline_signed_cash_sales"
+	},
+	{
+		"doctype": "Custom Field",
+		"dt": "POS Profile",
+		"fieldname": "posa_offline_signed_sale_max_amount",
+		"fieldtype": "Currency",
+		"label": "Offline Signed Cash Sale Maximum (Company Currency)",
+		"description": "Maximum company-currency total for one queued offline cash sale. A positive value is required when offline signed cash sales are enabled.",
+		"default": "0",
+		"insert_after": "posa_allow_offline_signed_cash_sales",
+		"name": "POS Profile-posa_offline_signed_sale_max_amount"
+	},
+	{
+		"doctype": "Custom Field",
+		"dt": "POS Profile",
+		"fieldname": "posa_offline_signed_sale_ttl_minutes",
+		"fieldtype": "Int",
+		"label": "Offline Signed Cash Sale Authorization TTL (Minutes)",
+		"description": "Lifetime before the initial server ledger is recorded. Values are clamped between 5 minutes and 7 days; an expired or invalid pre-ledger authorization needs fresh cashier or supervisor reauthorization. Exact commands already recorded by the server remain recoverable.",
+		"default": "1440",
+		"insert_after": "posa_offline_signed_sale_max_amount",
+		"name": "POS Profile-posa_offline_signed_sale_ttl_minutes"
+	},
+	{
+		"doctype": "Custom Field",
+		"dt": "POS Profile",
+		"fieldname": "posa_offline_signed_sale_ticket_batch_size",
+		"fieldtype": "Int",
+		"label": "Offline Signed Cash Sale Authorization Batch Size",
+		"description": "How many one-sale authorizations an online cashier PIN verification prepares. Values are clamped between 1 and 25.",
+		"default": "5",
+		"insert_after": "posa_offline_signed_sale_ttl_minutes",
+		"name": "POS Profile-posa_offline_signed_sale_ticket_batch_size"
 	}
 ]

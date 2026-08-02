@@ -382,7 +382,7 @@ async function readOfflineShellState(page: Page) {
 			cacheDetails.push({
 				cacheName,
 				complete: Boolean(marker),
-				appShell: Boolean(await cache.match("/app/posapp")),
+				appShell: Boolean(await cache.match("/desk/posapp")),
 				offlinePage: Boolean(await cache.match("/offline.html")),
 			});
 		}
@@ -714,7 +714,7 @@ test("disabling local storage limits hybrid offline search to the current page",
 	});
 });
 
-test("complete service-worker cache still fails a Chromium offline reload", async ({
+test("complete service-worker cache reloads the POS shell offline", async ({
 	context,
 	page,
 }) => {
@@ -723,15 +723,7 @@ test("complete service-worker cache still fails a Chromium offline reload", asyn
 	await waitForPos(page);
 	const shellReadiness = await observeOfflineShellReadiness(page);
 	const pageUrl = page.url();
-	if (!shellReadiness.ready) {
-		await attachJson(page, "offline-shell-cache-readiness-failure", {
-			pageUrl,
-			shellReadiness,
-			failureMode: "complete-cache-not-ready",
-		});
-		expect(shellReadiness.ready).toBe(false);
-		return;
-	}
+	expect(shellReadiness.ready).toBe(true);
 
 	await context.setOffline(true);
 	page.once("dialog", (dialog) => dialog.accept());
@@ -742,12 +734,12 @@ test("complete service-worker cache still fails a Chromium offline reload", asyn
 	await page.waitForTimeout(5000);
 	const renderedCounterGrid = await page
 		.getByTestId("counter-grid-pos")
-		.isVisible()
+		.isVisible({ timeout: 30_000 })
 		.catch(() => false);
-	expect(reloadError).toContain("ERR_FAILED");
-	expect(renderedCounterGrid).toBe(false);
+	expect(reloadError).toBeNull();
+	expect(renderedCounterGrid).toBe(true);
 	await context.setOffline(false);
-	await attachJson(page, "offline-shell-reload-failure", {
+	await attachJson(page, "offline-shell-reload", {
 		pageUrl,
 		shellReadiness,
 		reloadError,

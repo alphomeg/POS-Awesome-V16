@@ -1222,16 +1222,40 @@ class TestManualPostingDatePreservation(unittest.TestCase):
 
         self.assertNotIn("cashierPin", payload["payments"][0])
 
+    def test_embedded_offline_authorization_is_rejected_and_removed(self):
+        payload = {
+            "customer": "CUST-0001",
+            "payments": [
+                {
+                    "mode_of_payment": "Cash",
+                    "offlineSaleAuthorization": "signed-ticket-secret",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(Exception, "Offline cash-sale authorization"):
+            self.creation._reject_embedded_cashier_pin(payload)
+
+        self.assertNotIn("offlineSaleAuthorization", payload["payments"][0])
+
     def test_json_dumps_strips_nested_cashier_pin_aliases(self):
         serialized = self.creation._json_dumps(
             {
                 "customer": "CUST-0001",
-                "payments": [{"mode_of_payment": "Cash", "cashier_pin": "1234"}],
+                "payments": [
+                    {
+                        "mode_of_payment": "Cash",
+                        "cashier_pin": "1234",
+                        "offline_sale_authorization": "signed-ticket-secret",
+                    }
+                ],
             }
         )
 
         self.assertNotIn("1234", serialized)
         self.assertNotIn("cashier_pin", serialized)
+        self.assertNotIn("signed-ticket-secret", serialized)
+        self.assertNotIn("offline_sale_authorization", serialized)
 
     def test_authoritative_cashier_replaces_forged_client_identity(self):
         payload = {
@@ -1278,6 +1302,33 @@ class TestManualPostingDatePreservation(unittest.TestCase):
             "Main POS",
             "cashier@example.com",
         )
+
+    def test_persisted_offline_audit_uses_historical_cashier_after_terminal_reassignment(self):
+        ledger_doc = FakeDoc(
+            name="ledger-historical-cashier-001",
+            posa_cashier="former-cashier@example.com",
+        )
+        self.creation.validate_assigned_terminal_cashier = Mock(
+            side_effect=PermissionError("former cashier is no longer assigned")
+        )
+
+        self.assertEqual(
+            self.creation._resolve_authoritative_cashier(
+                "Main POS",
+                ledger_doc,
+                offline_sale_cashier="former-cashier@example.com",
+                allow_historical_offline_cashier=True,
+            ),
+            "former-cashier@example.com",
+        )
+        self.creation.validate_assigned_terminal_cashier.assert_not_called()
+
+        with self.assertRaisesRegex(PermissionError, "no longer assigned"):
+            self.creation._resolve_authoritative_cashier(
+                "Main POS",
+                ledger_doc,
+                offline_sale_cashier="former-cashier@example.com",
+            )
 
     def test_payment_modes_fail_closed_when_profile_has_no_configured_methods(self):
         invoice_doc = FakeDoc(
@@ -2439,6 +2490,209 @@ class TestInvoiceIdempotency(unittest.TestCase):
         self.assertEqual(result["status"], 1)
         self.assertTrue(result["replayed"])
         self.creation._resolve_cashier_by_pin.assert_not_called()
+
+    def test_signed_ledger_final_replay_requires_original_owner_or_supervisor_before_response(self):
+        """The durable audit gate must run before any final replay disclosure."""
+
+        module_name = "posawesome.posawesome.api.offline_sale_authorizations"
+        previous_module = sys.modules.get(module_name)
+        fake_authorizations = types.ModuleType(module_name)
+        calls = []
+
+        def restore_module():
+            if previous_module is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous_module
+
+        def validate_persisted(audit, **kwargs):
+            calls.append(
+                {
+                    "user": self.frappe.session.user,
+                    "audit": audit,
+                    "payload_hash": kwargs.get("payload_hash"),
+                }
+            )
+            if self.frappe.session.user == "other-cashier@example.com":
+                raise PermissionError("signed ledger is owned by another cashier")
+            return dict(audit)
+
+        fake_authorizations.offline_cash_sale_payload_hash = (
+            lambda *_args: "immutable-command-hash"
+        )
+        fake_authorizations.offline_cash_sale_authorization_audit = lambda claims, **_kwargs: dict(
+            claims
+        )
+        fake_authorizations.validate_persisted_offline_cash_sale_audit = validate_persisted
+        sys.modules[module_name] = fake_authorizations
+        self.addCleanup(restore_module)
+        previous_user = self.frappe.session.user
+        self.addCleanup(setattr, self.frappe.session, "user", previous_user)
+
+        ledger_doc = FakeDoc(
+            doctype="POS Invoice Submission Ledger",
+            name="ledger-signed-final-001",
+            client_request_id="signed-final-001",
+            company="Test Company",
+            pos_profile="Main POS",
+            document_type="Sales Invoice",
+            state="POST_SUBMIT_DONE",
+            request_data=json.dumps(
+                {
+                    self.creation.OFFLINE_CASH_SALE_AUDIT_KEY: {
+                        "ticket_id": "audit-ticket-001",
+                        "session_user": "cashier@example.com",
+                        "payload_hash": "immutable-command-hash",
+                    }
+                }
+            ),
+        )
+        replay_response = {
+            "name": "ACC-SINV-SIGNED-001",
+            "status": 1,
+            "docstatus": 1,
+            "doctype": "Sales Invoice",
+            "replayed": True,
+        }
+        payload = json.dumps(
+            {
+                "doctype": "Sales Invoice",
+                "pos_profile": "Main POS",
+                "company": "Test Company",
+                "items": [],
+                "payments": [],
+                "posa_client_request_id": "signed-final-001",
+            }
+        )
+        data = json.dumps({"idempotency_key": "signed-final-001"})
+
+        with (
+            patch.object(self.creation, "_get_submission_ledger", return_value=ledger_doc),
+            patch.object(self.creation, "_assert_submission_ledger_scope", return_value=None),
+            patch.object(self.creation, "find_invoice_by_client_request_id", return_value=None),
+            patch.object(
+                self.creation,
+                "_ledger_final_replay_response",
+                return_value=replay_response,
+            ) as replay,
+        ):
+            self.frappe.session.user = "other-cashier@example.com"
+            with self.assertRaisesRegex(PermissionError, "owned by another cashier"):
+                self.creation.submit_invoice(payload, data, submit_in_background=0)
+            replay.assert_not_called()
+
+            self.frappe.session.user = "cashier@example.com"
+            self.assertEqual(
+                self.creation.submit_invoice(payload, data, submit_in_background=0),
+                replay_response,
+            )
+            self.frappe.session.user = "supervisor@example.com"
+            self.assertEqual(
+                self.creation.submit_invoice(payload, data, submit_in_background=0),
+                replay_response,
+            )
+
+        self.assertEqual(
+            [call["user"] for call in calls],
+            ["other-cashier@example.com", "cashier@example.com", "supervisor@example.com"],
+        )
+        self.assertTrue(all(call["payload_hash"] == "immutable-command-hash" for call in calls))
+
+    def test_signed_draft_repair_context_uses_server_audit_hash_not_reconstructed_payload(self):
+        """A repair adds an invoice name, so it must use its trusted ledger context."""
+
+        module_name = "posawesome.posawesome.api.offline_sale_authorizations"
+        previous_module = sys.modules.get(module_name)
+        fake_authorizations = types.ModuleType(module_name)
+        payload_hash = Mock(
+            side_effect=AssertionError("repair must not hash a reconstructed server payload")
+        )
+
+        def restore_module():
+            if previous_module is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous_module
+
+        def validate_persisted(_audit, **kwargs):
+            self.assertEqual(kwargs.get("payload_hash"), "original-browser-command-hash")
+            raise RuntimeError("trusted repair audit was validated")
+
+        fake_authorizations.offline_cash_sale_payload_hash = payload_hash
+        fake_authorizations.offline_cash_sale_authorization_audit = lambda claims, **_kwargs: dict(
+            claims
+        )
+        fake_authorizations.validate_persisted_offline_cash_sale_audit = validate_persisted
+        sys.modules[module_name] = fake_authorizations
+        self.addCleanup(restore_module)
+
+        ledger_doc = FakeDoc(
+            doctype="POS Invoice Submission Ledger",
+            name="ledger-signed-draft-repair-001",
+            client_request_id="signed-draft-repair-001",
+            company="Test Company",
+            pos_profile="Main POS",
+            document_type="Sales Invoice",
+            state="DRAFT_CREATED",
+            request_data=json.dumps(
+                {
+                    self.creation.OFFLINE_CASH_SALE_AUDIT_KEY: {
+                        "ticket_id": "audit-ticket-002",
+                        "session_user": "cashier@example.com",
+                        "payload_hash": "original-browser-command-hash",
+                    }
+                }
+            ),
+        )
+        trusted_context = {
+            "ledger_name": ledger_doc.name,
+            "client_request_id": ledger_doc.client_request_id,
+            "pos_profile": ledger_doc.pos_profile,
+            "company": ledger_doc.company,
+            "document_type": ledger_doc.document_type,
+        }
+        setattr(
+            self.frappe.flags,
+            self.creation.TRUSTED_OFFLINE_SALE_REPAIR_FLAG,
+            trusted_context,
+        )
+        self.addCleanup(
+            lambda: hasattr(
+                self.frappe.flags,
+                self.creation.TRUSTED_OFFLINE_SALE_REPAIR_FLAG,
+            )
+            and delattr(
+                self.frappe.flags,
+                self.creation.TRUSTED_OFFLINE_SALE_REPAIR_FLAG,
+            )
+        )
+
+        with (
+            patch.object(self.creation, "_get_submission_ledger", return_value=ledger_doc),
+            patch.object(self.creation, "_assert_submission_ledger_scope", return_value=None),
+            patch.object(self.creation, "find_invoice_by_client_request_id", return_value=None),
+            patch.object(self.creation.frappe.db, "exists", return_value=False),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "trusted repair audit was validated"):
+                self.creation.submit_invoice(
+                    json.dumps(
+                        {
+                            "doctype": "Sales Invoice",
+                            # This field is injected by repair_invoice_submission
+                            # and is intentionally absent from the original hash.
+                            "name": "ACC-SINV-SIGNED-DRAFT-001",
+                            "pos_profile": "Main POS",
+                            "company": "Test Company",
+                            "items": [],
+                            "payments": [],
+                            "posa_client_request_id": ledger_doc.client_request_id,
+                        }
+                    ),
+                    json.dumps({"idempotency_key": ledger_doc.client_request_id}),
+                    submit_in_background=0,
+                )
+
+        payload_hash.assert_not_called()
 
     def test_submit_retry_does_not_turn_failed_post_submit_ledger_into_success(self):
         ledger_doc = FakeDoc(

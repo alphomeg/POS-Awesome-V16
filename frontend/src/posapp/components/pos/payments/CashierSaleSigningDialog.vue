@@ -156,6 +156,7 @@
 				</div>
 
 				<v-text-field
+					v-if="requireCashierPin"
 					ref="pinInput"
 					v-model="cashierPin"
 					:label="__('Cashier PIN')"
@@ -174,6 +175,13 @@
 					@keydown.down.prevent="selectNextPayment"
 					@keydown.up.prevent="selectPreviousPayment"
 				/>
+				<p
+					v-else
+					class="cashier-sale-signing-card__offline-authorization"
+					data-testid="cashier-sale-offline-authorization"
+				>
+					{{ offlineAuthorizationMessage }}
+				</p>
 
 				<div
 					v-if="settlementMode === 'pay' || receivedAmount > 0"
@@ -260,6 +268,8 @@ const props = defineProps({
 	initialDueDate: { type: String, default: "" },
 	postingDate: { type: String, default: "" },
 	errorMessage: { type: String, default: "" },
+	requireCashierPin: { type: Boolean, default: true },
+	offlineAuthorizationMessage: { type: String, default: "" },
 });
 
 const emit = defineEmits(["update:modelValue", "submit", "cancel", "pin-change"]);
@@ -331,6 +341,7 @@ const reasonMessages = {
 	RETURN_NOT_ALLOWED: __("Returns cannot be submitted as Credit Sales."),
 	INCOMPATIBLE_REDEMPTION: __("Remove customer balance or gift card redemption to use Credit Sale."),
 	CONTEXT_UNAVAILABLE: __("Customer credit details could not be loaded. Try again."),
+	OFFLINE_CASH_ONLY: __("Prepared offline authorizations are for cash-only sales."),
 };
 const creditHelper = computed(() => {
 	if (props.creditContextLoading) return __("Checking customer credit eligibility…");
@@ -341,7 +352,7 @@ const creditHelper = computed(() => {
 });
 
 const canSubmit = computed(() => {
-	if (!cashierPin.value.trim() || props.loading) return false;
+	if ((props.requireCashierPin && !cashierPin.value.trim()) || props.loading) return false;
 	if (settlementMode.value === "pay") return Boolean(selectedMode.value);
 	if (
 		!props.creditEligible ||
@@ -419,10 +430,12 @@ const reset = () => {
 };
 
 const focusPinInput = () => {
+	if (!props.requireCashierPin) return;
 	const input = pinInput.value?.$el?.querySelector?.("input");
 	input?.focus?.();
 };
 const focusAndSelectPinInput = () => {
+	if (!props.requireCashierPin) return;
 	const input = pinInput.value?.$el?.querySelector?.("input");
 	input?.focus?.();
 	input?.select?.();
@@ -434,7 +447,7 @@ const cancel = () => {
 
 const submit = () => {
 	const pin = cashierPin.value.trim();
-	if (!pin) {
+	if (props.requireCashierPin && !pin) {
 		pinError.value = __("Cashier PIN is required");
 		return;
 	}
@@ -470,6 +483,9 @@ const handleModelUpdate = (value) => {
 	if (!value) cancel();
 };
 
+// The mounted signing host can be recreated by a responsive/remount path while
+// already open. Initialize its payment selection in that state too; otherwise
+// the visible dialog has no selected tender and cannot submit.
 watch(
 	() => props.modelValue,
 	(isOpen) => {
@@ -478,6 +494,7 @@ watch(
 			nextTick(focusPinInput);
 		}
 	},
+	{ immediate: true },
 );
 watch(() => props.preferredMode, selectPreferredMode);
 watch(normalizedPayments, selectPreferredMode);
@@ -488,7 +505,7 @@ watch(cashierPin, () => {
 watch(
 	() => props.errorMessage,
 	(errorMessage) => {
-		if (!errorMessage) return;
+		if (!errorMessage || !props.requireCashierPin) return;
 		nextTick(focusAndSelectPinInput);
 	},
 );
@@ -618,6 +635,16 @@ defineExpose({ submit });
 
 .cashier-sale-signing-card__helper--warning {
 	color: #9a5a10;
+}
+
+.cashier-sale-signing-card__offline-authorization {
+	margin: 14px 0;
+	padding: 12px 14px;
+	border: 1px solid #28744a;
+	border-radius: 6px;
+	background: #edf8ef;
+	color: #174c2e;
+	font-weight: 700;
 }
 
 .cashier-sale-signing-card__credit-panel {

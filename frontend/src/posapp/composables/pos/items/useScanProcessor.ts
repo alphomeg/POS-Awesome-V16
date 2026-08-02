@@ -5,7 +5,12 @@ import {
 	formatStockShortageError,
 	parseBooleanSetting,
 } from "../../../utils/stock";
-import { saveItems, savePriceListItems } from "../../../../offline/index";
+import {
+	isOffline,
+	saveItems,
+	savePriceListItems,
+	searchStoredItems,
+} from "../../../../offline/index";
 import { openItemSelectionDialog } from "../../../utils/itemSelectionDialog";
 import {
 	extractScanAssignmentFromItem,
@@ -105,6 +110,116 @@ export function useScanProcessor(context: ScanProcessorContext) {
 		console.debug(`[POS ScanFlow] ${step}`, payload || {});
 	};
 
+	/**
+	 * The durable item catalog is partitioned by the POS Profile + warehouse.
+	 * A cold offline terminal deliberately has no complete in-memory barcode
+	 * index yet, so scanner reads must use this same scope before considering a
+	 * cached row.  Missing scope fails closed rather than probing another
+	 * terminal's catalog.
+	 */
+	const getOfflineCatalogScope = () => {
+		const profileName = String(pos_profile.value?.name || "").trim();
+		const warehouse = String(pos_profile.value?.warehouse || "").trim();
+		if (!profileName || !warehouse) {
+			return "";
+		}
+		return `${profileName}_${warehouse}`;
+	};
+
+	const normalizeScanIdentifier = (value: unknown) =>
+		String(value || "")
+			.normalize("NFKD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.toLowerCase()
+			.trim();
+
+	const getItemBarcodeValues = (item: any): string[] => {
+		const values: unknown[] = [];
+		if (item?.barcode) {
+			values.push(item.barcode);
+		}
+		if (Array.isArray(item?.item_barcode)) {
+			values.push(
+				...item.item_barcode.map((entry: any) => entry?.barcode),
+			);
+		} else if (item?.item_barcode) {
+			values.push(item.item_barcode);
+		}
+		if (Array.isArray(item?.barcodes)) {
+			values.push(
+				...item.barcodes.map((entry: any) =>
+					entry && typeof entry === "object" ? entry.barcode : entry,
+				),
+			);
+		}
+		return values
+			.map((value) => String(value || "").trim())
+			.filter(Boolean);
+	};
+
+	const isExactCachedScanMatch = (item: any, searchCode: string) => {
+		const expected = normalizeScanIdentifier(searchCode);
+		if (!item || !expected) {
+			return false;
+		}
+		if (normalizeScanIdentifier(item.item_code) === expected) {
+			return true;
+		}
+		return getItemBarcodeValues(item).some(
+			(barcode) => normalizeScanIdentifier(barcode) === expected,
+		);
+	};
+
+	const findOfflineCatalogItem = async (searchCode: string) => {
+		const scope = getOfflineCatalogScope();
+		if (!scope || !String(searchCode || "").trim()) {
+			return null;
+		}
+
+		try {
+			const candidates = await searchStoredItems({
+				search: searchCode,
+				itemGroup: "ALL",
+				limit: 12,
+				offset: 0,
+				scope,
+			});
+			if (!Array.isArray(candidates)) {
+				return null;
+			}
+
+			// `searchStoredItems` is intentionally also a compatibility free-text
+			// search on pre-V19 browser databases. The scanner must never add a
+			// fuzzy suggestion, even during that upgrade window.
+			return (
+				candidates.find((item) =>
+					isExactCachedScanMatch(item, searchCode),
+				) || null
+			);
+		} catch (error) {
+			console.warn(
+				"Failed to resolve scanned item from offline catalog",
+				error,
+			);
+			return null;
+		}
+	};
+
+	const addToRuntimeBarcodeIndex = (item: any) => {
+		if (!item?.item_code) {
+			return item;
+		}
+		const existing = items.value.find(
+			(currentItem) => currentItem?.item_code === item.item_code,
+		);
+		if (existing) {
+			return existing;
+		}
+		items.value.push(item);
+		barcodeIndex.indexItem(item);
+		return item;
+	};
+
 	const isNegativeStockEnabled = (item: any = null) => {
 		const allowNegativeSetting = parseBooleanSetting(
 			context.stock_settings.value?.allow_negative_stock,
@@ -198,65 +313,84 @@ export function useScanProcessor(context: ScanProcessorContext) {
 			if (barcodeMatch && matchedUom) {
 				newItem.uom = matchedUom;
 
-				// Try fetching the rate for this UOM from the active price list
-				try {
-					const res = await frappe.call({
-						method: "posawesome.posawesome.api.items.get_price_for_uom",
-						args: {
-							item_code: newItem.item_code,
-							price_list: active_price_list.value,
-							uom: matchedUom,
-						},
-					});
+				const uomInfo =
+					newItem.item_uoms &&
+					newItem.item_uoms.find(
+						(u: any) => u.uom === matchedUom,
+					);
+				const conversionFactor =
+					uomInfo && uomInfo.conversion_factor
+						? parseFloat(uomInfo.conversion_factor)
+						: null;
+				const currentConversion = newItem.conversion_factor || 1;
+				const baseUnitRate =
+					parseFloat(
+						String(
+							(newItem.base_price_list_rate ||
+								newItem.base_rate ||
+								newItem.price_list_rate ||
+								newItem.rate ||
+								0) / (currentConversion || 1),
+						),
+					) || 0;
 
-					const uomInfo =
-						newItem.item_uoms &&
-						newItem.item_uoms.find(
-							(u: any) => u.uom === matchedUom,
-						);
-					const conversionFactor =
-						uomInfo && uomInfo.conversion_factor
-							? parseFloat(uomInfo.conversion_factor)
-							: null;
-					const currentConversion = newItem.conversion_factor || 1;
-					const baseUnitRate =
-						parseFloat(
-							String(
-								(newItem.base_price_list_rate ||
-									newItem.base_rate ||
-									newItem.price_list_rate ||
-									newItem.rate ||
-									0) / (currentConversion || 1),
-							),
-						) || 0;
+				// A cold offline terminal can still use the cached item/UOM rate. Do
+				// not make a scanner wait on a request that cannot complete; online
+				// behavior keeps the authoritative UOM-price fetch unchanged.
+				const offlineUomLookup = isOffline();
+				if (!offlineUomLookup) {
+					try {
+						const res = await frappe.call({
+							method: "posawesome.posawesome.api.items.get_price_for_uom",
+							args: {
+								item_code: newItem.item_code,
+								price_list: active_price_list.value,
+								uom: matchedUom,
+							},
+						});
 
-					if (res.message) {
-						const price = parseFloat(res.message);
-						newItem.rate = price;
-						newItem.price_list_rate = price;
-						const basePrice = conversionFactor
-							? price / conversionFactor
-							: price;
-						newItem.base_rate = basePrice;
-						newItem.base_price_list_rate = basePrice;
-						if (conversionFactor) {
+						if (res.message) {
+							const price = parseFloat(res.message);
+							newItem.rate = price;
+							newItem.price_list_rate = price;
+							const basePrice = conversionFactor
+								? price / conversionFactor
+								: price;
+							newItem.base_rate = basePrice;
+							newItem.base_price_list_rate = basePrice;
+							if (conversionFactor) {
+								newItem.conversion_factor = conversionFactor;
+							}
+							newItem._manual_rate_set = true;
+							newItem.skip_force_update = true;
+						} else if (conversionFactor) {
+							const newPrice = baseUnitRate * conversionFactor;
+
+							newItem.rate = newPrice;
+							newItem.price_list_rate = newPrice;
+							newItem.base_rate = baseUnitRate;
+							newItem.base_price_list_rate = baseUnitRate;
 							newItem.conversion_factor = conversionFactor;
+							newItem._manual_rate_set = true;
+							newItem.skip_force_update = true;
 						}
-						newItem._manual_rate_set = true;
-						newItem.skip_force_update = true;
-					} else if (conversionFactor) {
-						const newPrice = baseUnitRate * conversionFactor;
-
-						newItem.rate = newPrice;
-						newItem.price_list_rate = newPrice;
-						newItem.base_rate = baseUnitRate;
-						newItem.base_price_list_rate = baseUnitRate;
-						newItem.conversion_factor = conversionFactor;
-						newItem._manual_rate_set = true;
-						newItem.skip_force_update = true;
+					} catch (e) {
+						console.error("Failed to fetch UOM price", e);
 					}
-				} catch (e) {
-					console.error("Failed to fetch UOM price", e);
+				}
+
+				// The same conversion fallback is used when the server has no
+				// dedicated UOM price and when the terminal is offline.
+				if (conversionFactor && offlineUomLookup) {
+					const newPrice = baseUnitRate * conversionFactor;
+
+					newItem.rate = newPrice;
+					newItem.price_list_rate = newPrice;
+					newItem.base_rate = baseUnitRate;
+					newItem.base_price_list_rate = baseUnitRate;
+					newItem.conversion_factor = conversionFactor;
+					newItem._manual_rate_set = true;
+					newItem.skip_force_update = true;
 				}
 			}
 		}
@@ -436,7 +570,11 @@ export function useScanProcessor(context: ScanProcessorContext) {
 		const mark = perfMarkStart("pos:scan-process");
 		logScanFlow("Start processing scan", { scannedCode });
 		pendingScanCode.value = scannedCode;
-		if (typeof scannerInput.ensureScaleBarcodeSettings === "function") {
+		const offlineScan = isOffline();
+		if (
+			!offlineScan &&
+			typeof scannerInput.ensureScaleBarcodeSettings === "function"
+		) {
 			await scannerInput.ensureScaleBarcodeSettings();
 		}
 
@@ -447,16 +585,18 @@ export function useScanProcessor(context: ScanProcessorContext) {
 		let scaleResponse: any = null;
 		let scanAssignment: ScanAssignment = emptyScanAssignment();
 
-		try {
-			const res = await frappe.call({
-				method: "posawesome.posawesome.api.items.parse_scale_barcode",
-				args: { barcode: scannedCode },
-			});
-			if (res && res.message) {
-				scaleResponse = res.message;
+		if (!offlineScan) {
+			try {
+				const res = await frappe.call({
+					method: "posawesome.posawesome.api.items.parse_scale_barcode",
+					args: { barcode: scannedCode },
+				});
+				if (res && res.message) {
+					scaleResponse = res.message;
+				}
+			} catch (error) {
+				console.error("Failed to parse scale barcode via API:", error);
 			}
-		} catch (error) {
-			console.error("Failed to parse scale barcode via API:", error);
 		}
 
 		if (
@@ -548,7 +688,19 @@ export function useScanProcessor(context: ScanProcessorContext) {
 				priceFromBarcode !== null,
 		);
 
-		if (!foundItem && qtyFromBarcode === null) {
+		if (!foundItem && offlineScan) {
+			foundItem = await findOfflineCatalogItem(searchCode);
+			if (foundItem) {
+				foundItem = addToRuntimeBarcodeIndex(foundItem);
+				logScanFlow("Durable offline catalog item resolved", {
+					item_code: foundItem?.item_code,
+					scannedCode,
+					searchCode,
+				});
+			}
+		}
+
+		if (!foundItem && qtyFromBarcode === null && !offlineScan) {
 			const searchSerialNo = parseBooleanSetting(
 				pos_profile.value?.posa_search_serial_no,
 			);
@@ -609,6 +761,19 @@ export function useScanProcessor(context: ScanProcessorContext) {
 				scanAssignment,
 				{ isScaleBarcode: isScaleBarcodeScan },
 			);
+			return;
+		}
+
+		if (offlineScan) {
+			if (context.onItemNotFound) context.onItemNotFound(scannedCode);
+			showScanError({
+				message: `${__("Item is not available in this terminal's offline catalog")}: ${scannedCode}`,
+				code: scannedCode,
+				details: __(
+					"Reconnect and refresh this POS catalog before selling this item.",
+				),
+			});
+			perfMarkEnd("pos:scan-process", mark);
 			return;
 		}
 

@@ -3,13 +3,19 @@ import invoiceService from "../../../services/invoiceService";
 import { isApiEnvelopeError, unwrapApiResult } from "../../../services/api";
 import {
 	enqueueInvoiceOutboxEntry,
+	consumeOfflineCashSaleAuthorization,
 	finalizeAcknowledgedInvoiceOutboxEntry,
+	getOfflineCustomers,
 	getInvoiceOutboxRows,
 	isOffline,
 	persistInvoiceIntentJournal,
+	releaseOfflineCashSaleAuthorization,
 	removeInvoiceIntentJournalStrict,
 	removeInvoiceOutboxEntry,
 	updateLocalStock,
+	validateStockForOfflineInvoice,
+	type OfflineCashSaleAuthorizationTicket,
+	type OfflineSaleAuthorizationScope,
 } from "../../../../offline/index";
 import {
 	ensureInvoiceClientRequestId,
@@ -65,6 +71,7 @@ export interface PaymentSubmissionOptions {
 export interface CashierSignature {
 	cashierPin: string;
 	modeOfPayment?: string;
+	offlineSaleAuthorization?: OfflineCashSaleAuthorizationTicket | null;
 }
 
 export interface SubmissionCallbacks {
@@ -2283,6 +2290,174 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		});
 	}
 
+	const getOfflineSaleAuthorizationScope = (
+		profile: any,
+		doc: any,
+	): OfflineSaleAuthorizationScope => ({
+		posProfile: String(doc?.pos_profile || profile?.name || "").trim(),
+		company: String(doc?.company || profile?.company || "").trim(),
+		user: String((globalThis as any)?.frappe?.session?.user || "").trim(),
+	});
+
+	const assertOfflineCashSaleSubmission = (
+		submissionDoc: any,
+		data: any,
+		ticket: OfflineCashSaleAuthorizationTicket,
+		documentType: string,
+	) => {
+		if (!["Sales Invoice", "POS Invoice"].includes(documentType)) {
+			throw new Error(
+				__("Offline signed sales only support Sales Invoice and POS Invoice."),
+			);
+		}
+		if (ticket.document_type !== documentType) {
+			throw new Error(
+				__("Offline cash-sale authorization belongs to a different invoice type."),
+			);
+		}
+		const signedOwner = String(ticket.owner_user || "").trim();
+		const activeUser = String(
+			(globalThis as any)?.frappe?.session?.user || "",
+		).trim();
+		if (!signedOwner || !activeUser || signedOwner !== activeUser) {
+			throw new Error(
+				__("Offline cash-sale authorization belongs to a different signed-in user."),
+			);
+		}
+		if (submissionDoc?.is_return || submissionDoc?.return_against || !submissionDoc?.is_pos) {
+			throw new Error(__("Offline signed sales do not support returns."));
+		}
+		const finiteNumber = (value: unknown) => {
+			const parsed = Number(value);
+			return Number.isFinite(parsed) ? parsed : null;
+		};
+		const nonZeroOrInvalid = (value: unknown) => {
+			if (value === undefined || value === null || value === "") {
+				return false;
+			}
+			const parsed = finiteNumber(value);
+			return parsed === null || parsed !== 0;
+		};
+		if (
+			data?.is_credit_sale ||
+			data?.is_write_off_change ||
+			nonZeroOrInvalid(data?.write_off_amount) ||
+			nonZeroOrInvalid(data?.redeemed_customer_credit) ||
+			nonZeroOrInvalid(data?.credit_change) ||
+			nonZeroOrInvalid(submissionDoc?.loyalty_amount) ||
+			submissionDoc?.redeem_loyalty_points ||
+			(Array.isArray(data?.gift_card_redemptions) &&
+				data.gift_card_redemptions.some(
+					(row: any) => !row || nonZeroOrInvalid(row.amount),
+				))
+		) {
+			throw new Error(
+				__("Offline signed sales support ordinary cash sales only."),
+			);
+		}
+
+		const companyCurrency = String(ticket.company_currency || "").trim();
+		const invoiceCompanyCurrency = String(
+			submissionDoc?.company_currency || "",
+		).trim();
+		const invoiceCurrency = String(submissionDoc?.currency || "").trim();
+		if (!companyCurrency || (invoiceCompanyCurrency && invoiceCompanyCurrency !== companyCurrency)) {
+			throw new Error(
+				__("Offline cash-sale authorization belongs to a different company currency."),
+			);
+		}
+		const baseTotal = finiteNumber(
+			submissionDoc?.base_rounded_total ?? submissionDoc?.base_grand_total,
+		);
+		const total =
+			baseTotal !== null
+				? baseTotal
+				: invoiceCurrency === companyCurrency
+					? finiteNumber(
+							submissionDoc?.rounded_total ?? submissionDoc?.grand_total,
+						)
+					: null;
+		const maximum = finiteNumber(ticket.maximum_amount);
+		if (total === null || total <= 0 || maximum === null || maximum <= 0 || total > maximum) {
+			throw new Error(
+				__("Offline cash sale exceeds its authorized maximum amount."),
+			);
+		}
+		const paidRows: number[] = [];
+		for (const payment of Array.isArray(submissionDoc?.payments)
+			? submissionDoc.payments
+			: []) {
+			const amount = finiteNumber(payment?.amount);
+			const hasBaseAmount = payment?.base_amount !== undefined && payment?.base_amount !== null;
+			const baseAmount = hasBaseAmount ? finiteNumber(payment?.base_amount) : null;
+			if (
+				amount === null ||
+				amount < 0 ||
+				(hasBaseAmount && (baseAmount === null || baseAmount < 0))
+			) {
+				throw new Error(
+					__("Offline signed sales cannot contain negative or invalid payment rows."),
+				);
+			}
+			const companyAmount =
+				baseAmount !== null
+					? baseAmount
+					: invoiceCurrency === companyCurrency
+						? amount
+						: null;
+			if (companyAmount === null) {
+				throw new Error(
+					__("Offline signed sales in a foreign currency require a company-currency payment amount."),
+				);
+			}
+			if (amount > 0 || companyAmount > 0) {
+				if (
+					String(payment?.mode_of_payment || "").trim() !==
+					String(ticket.cash_mode_of_payment || "").trim()
+				) {
+					throw new Error(
+						__("Offline signed sales must use the authorized cash payment method only."),
+					);
+				}
+				paidRows.push(companyAmount);
+			}
+		}
+		if (!paidRows.length) {
+			throw new Error(
+				__("Offline signed sales must use the authorized cash payment method only."),
+			);
+		}
+		const paidTotal = paidRows.reduce((sum, amount) => sum + amount, 0);
+		if (paidTotal + 0.001 < total) {
+			throw new Error(
+				__("Offline signed sales must be paid in full with cash."),
+			);
+		}
+		const selectedCustomer = String(submissionDoc?.customer || "").trim();
+		const hasQueuedCustomer = selectedCustomer && getOfflineCustomers().some(
+			(entry: any) =>
+				String(
+					entry?.args?.customer_name || entry?.customer_name || "",
+				).trim() === selectedCustomer,
+		);
+		if (hasQueuedCustomer) {
+			// Customer creation can replace a temporary browser-only name with the
+			// authoritative server name. That is a meaningful change to a signed
+			// invoice, so require an online sale instead of mutating its immutable
+			// outbox command during later customer synchronization.
+			throw new Error(
+				__("Offline signed sales cannot use a customer created while offline. Use an existing synced customer or complete this sale after reconnecting."),
+			);
+		}
+		const stockValidation = validateStockForOfflineInvoice(
+			submissionDoc?.items || [],
+			submissionDoc,
+		);
+		if (!stockValidation.isValid) {
+			throw new Error(stockValidation.errorMessage);
+		}
+	};
+
 	const submitInvoice = async (
 		print: boolean,
 		callbacks: SubmissionCallbacks = {},
@@ -2291,6 +2466,30 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		const doc = unref(invoiceDoc);
 		const profile = unref(posProfile);
 		const type = unref(invoiceType);
+		const submittingOffline = isOffline();
+		const offlineSaleAuthorization =
+			submitOptions.cashierSignature?.offlineSaleAuthorization || null;
+		if (submittingOffline && offlineSaleAuthorization) {
+			const boundRequestId = String(
+				offlineSaleAuthorization.client_request_id || "",
+			).trim();
+			const existingRequestId = String(
+				doc?.posa_client_request_id || "",
+			).trim();
+			if (!boundRequestId) {
+				throw new Error(
+					__("Offline cash-sale authorization is missing its request identity."),
+				);
+			}
+			if (existingRequestId && existingRequestId !== boundRequestId) {
+				throw new Error(
+					__(
+						"This cart already has a different submission identity. Reconnect before creating an offline sale.",
+					),
+				);
+			}
+			doc.posa_client_request_id = boundRequestId;
+		}
 		const prec = unref(options.currencyPrecision) || 2;
 		const {
 			isCashback,
@@ -2454,18 +2653,14 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			supportsInvoiceOutboxRecovery &&
 			!requiresTransientCashierAuthorization;
 
-		if (isOffline()) {
-			throw new Error(
-				__(
-					"Final sale submission requires an online connection for cashier PIN verification. The cart is still available for retry.",
-				),
-			);
-		}
-
 		let durableIntent = false;
 		let recoveryPointerPersisted = false;
 		let submissionDispatched = false;
-		let intent: { data: any; invoice: any } | null = null;
+		let intent: {
+			data: any;
+			invoice: any;
+			offline_sale_authorization?: string | null;
+		} | null = null;
 		let outboxPersistPromise: Promise<any> = Promise.resolve(null);
 		const lockAcknowledgedClientCompletion = (
 			invoiceName: string | null,
@@ -2574,6 +2769,152 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				"pending",
 			);
 		};
+
+		if (submittingOffline) {
+			if (!requiresCashierSignature || !offlineSaleAuthorization) {
+				throw new Error(
+					__(
+						"No prepared offline cash-sale authorization is available. Reconnect and have the cashier sign a sale before working offline.",
+					),
+				);
+			}
+			if (cashierPin) {
+				throw new Error(
+					__("Offline sales must not retain or submit a cashier PIN."),
+				);
+			}
+			const expiresAt = Date.parse(
+				String(offlineSaleAuthorization.expires_at || ""),
+			);
+			if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+				throw new Error(
+					__(
+						"The prepared offline cash-sale authorization has expired. Reconnect and prepare another one.",
+					),
+				);
+			}
+			assertOfflineCashSaleSubmission(
+				submissionDoc,
+				data,
+				offlineSaleAuthorization,
+				resolvedSubmissionDoctype,
+			);
+			const authorizationScope = getOfflineSaleAuthorizationScope(
+				profile,
+				submissionDoc,
+			);
+			const offlineIntent = {
+				data,
+				invoice: submissionDoc,
+				offline_sale_authorization:
+					offlineSaleAuthorization.authorization,
+			};
+			intent = offlineIntent;
+			try {
+				persistActiveInvoiceSubmissionRecovery({
+					requestId: submissionDoc.posa_client_request_id,
+					invoiceName: submissionDoc.name || doc?.name || null,
+					documentType: resolvedSubmissionDoctype,
+					recoveryMode: "invoice_outbox",
+					posProfile:
+						submissionDoc.pos_profile || doc?.pos_profile || profile?.name,
+					company:
+						submissionDoc.company || doc?.company || profile?.company,
+					user: (globalThis as any)?.frappe?.session?.user,
+					cartFingerprint: buildInvoiceRecoveryCartFingerprint(
+						doc,
+						getLiveCartItems(),
+					),
+					printRequested: false,
+				});
+				recoveryPointerPersisted = true;
+					await enqueueInvoiceOutboxEntry(offlineIntent);
+				durableIntent = true;
+				// Durable outbox ownership is the source of truth. A crash or a
+				// secondary IndexedDB write failure here is reconciled from that row
+				// on the next load; it must not make an already queued sale look
+				// failed or invite an unsafe retry.
+				try {
+					const consumed = await consumeOfflineCashSaleAuthorization(
+						authorizationScope,
+						submissionDoc.posa_client_request_id,
+					);
+					if (!consumed) {
+						console.warn(
+							"Offline cash-sale ticket state will be reconciled from its durable outbox entry",
+							submissionDoc.posa_client_request_id,
+						);
+					}
+				} catch (ticketStateError) {
+					console.warn(
+						"Unable to finalize offline cash-sale ticket state; durable outbox recovery remains authoritative",
+						ticketStateError,
+					);
+				}
+
+				const applyClientEffects = claimInvoiceRecoveryClientEffects(
+					submissionDoc.posa_client_request_id,
+				);
+				if (applyClientEffects) {
+					const submittedItems = Array.isArray(submissionDoc.items)
+						? submissionDoc.items
+						: [];
+					updateLocalStock(submittedItems);
+					stockCoordinator.applyInvoiceConsumption(submittedItems, {
+						source: "offline_invoice",
+					});
+					stores?.uiStore?.setLastStockAdjustment?.({
+						items: submittedItems,
+						item_codes: submittedItems
+							.map((item: any) => item?.item_code)
+							.filter((code: unknown) => code !== undefined && code !== null),
+						timestamp: Date.now(),
+					});
+					stores?.toastStore?.show({
+						title: __("Offline cash sale queued"),
+						detail: __(
+							"The sale is stored securely on this device and will sync when the POS reconnects.",
+						),
+						color: "info",
+					});
+					if (customerCreditDict) customerCreditDict.value = [];
+					onSuccess?.({
+						queued: true,
+						offline: true,
+						client_request_id: submissionDoc.posa_client_request_id,
+					});
+					onFinishNavigation?.(true);
+				}
+				if (!completeDirectRecoveryCheckpoint()) {
+					throw new Error(
+						__(
+							"The offline sale was queued but this browser could not clear its recovery checkpoint. Do not retry; ask a supervisor to review the outbox.",
+						),
+					);
+				}
+				return {
+					success: true,
+					queued: true,
+					offline: true,
+					message: {
+						client_request_id: submissionDoc.posa_client_request_id,
+						queued: true,
+					},
+				};
+			} catch (offlineError) {
+				if (!durableIntent) {
+					await releaseOfflineCashSaleAuthorization(
+						authorizationScope,
+						submissionDoc.posa_client_request_id,
+					).catch(() => false);
+					if (recoveryPointerPersisted) {
+						completeDirectRecoveryCheckpoint();
+					}
+				}
+				(offlineError as any).posaOfflineSaleDurable = durableIntent;
+				throw offlineError;
+			}
+		}
 
 		// Online Submission
 		try {

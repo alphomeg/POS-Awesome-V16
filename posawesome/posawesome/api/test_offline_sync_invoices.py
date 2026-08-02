@@ -34,6 +34,17 @@ def _install_stubs():
     frappe_module.whitelist = lambda *args, **kwargs: (lambda fn: fn)
     sys.modules["frappe"] = frappe_module
 
+    security_name = "posawesome.posawesome.api.cashier_pin_security"
+    security_path = (
+        REPO_ROOT / "posawesome" / "posawesome" / "api" / "cashier_pin_security.py"
+    )
+    security_spec = importlib.util.spec_from_file_location(
+        security_name, security_path
+    )
+    security_module = importlib.util.module_from_spec(security_spec)
+    sys.modules[security_name] = security_module
+    security_spec.loader.exec_module(security_module)
+
     # The offline-sync harness installs namespace stubs with empty package paths,
     # so load the real shared identity helper explicitly.
     idempotency_name = "posawesome.posawesome.api.idempotency"
@@ -48,7 +59,13 @@ def _install_stubs():
     idempotency_spec.loader.exec_module(idempotency_module)
 
     creation_module = types.ModuleType("posawesome.posawesome.api.invoice_processing.creation")
-    def submit_invoice(invoice, data, submit_in_background=0, cashier_pin=None):
+    def submit_invoice(
+        invoice,
+        data,
+        submit_in_background=0,
+        cashier_pin=None,
+        offline_sale_authorization=None,
+    ):
         if cashier_pin is not None:
             frappe_module.throw("offline outbox must not provide cashier_pin")
         return {
@@ -121,10 +138,17 @@ class TestOfflineSyncInvoices(unittest.TestCase):
         captured = {}
         original_submit_invoice = self.module.submit_invoice
 
-        def capture_submit(invoice, data, submit_in_background=0, cashier_pin=None):
+        def capture_submit(
+            invoice,
+            data,
+            submit_in_background=0,
+            cashier_pin=None,
+            offline_sale_authorization=None,
+        ):
             captured["invoice"] = json.loads(invoice)
             captured["data"] = json.loads(data)
             captured["cashier_pin"] = cashier_pin
+            captured["offline_sale_authorization"] = offline_sale_authorization
             return {
                 "name": "ACC-SINV-OUTBOX-0002",
                 "doctype": "Sales Invoice",
@@ -154,17 +178,96 @@ class TestOfflineSyncInvoices(unittest.TestCase):
             "outbox-authoritative-002",
         )
         self.assertIsNone(captured["cashier_pin"])
+        self.assertIsNone(captured["offline_sale_authorization"])
         self.assertEqual(
             captured["data"]["idempotency_key"],
             "outbox-authoritative-002",
         )
         self.assertEqual(captured["data"]["client_request_id"], "outbox-authoritative-002")
 
+    def test_submit_invoice_outbox_passes_ticket_outside_invoice_payload(self):
+        captured = {}
+        original_submit_invoice = self.module.submit_invoice
+
+        def capture_submit(
+            invoice,
+            data,
+            submit_in_background=0,
+            cashier_pin=None,
+            offline_sale_authorization=None,
+        ):
+            captured["invoice"] = json.loads(invoice)
+            captured["data"] = json.loads(data)
+            captured["offline_sale_authorization"] = offline_sale_authorization
+            return {
+                "name": "ACC-SINV-OFFLINE-TICKET-0001",
+                "doctype": "Sales Invoice",
+                "docstatus": 1,
+                "status": 1,
+                "client_request_id": json.loads(invoice).get("posa_client_request_id"),
+            }
+
+        self.module.submit_invoice = capture_submit
+        try:
+            self.module.submit_invoice_outbox_entry(
+                client_request_id="offline-ticket-001",
+                invoice={"doctype": "Sales Invoice"},
+                data={},
+                offline_sale_authorization="signed-ticket-value",
+            )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+
+        self.assertEqual(captured["offline_sale_authorization"], "signed-ticket-value")
+        self.assertNotIn("offline_sale_authorization", captured["invoice"])
+        self.assertNotIn("offline_sale_authorization", captured["data"])
+
+    def test_submit_invoice_outbox_pauses_only_typed_offline_authorization_outcomes(self):
+        authorization_name = "posawesome.posawesome.api.offline_sale_authorizations"
+        previous_authorization_module = sys.modules.get(authorization_name)
+        authorization_module = types.ModuleType(authorization_name)
+        authorization_module.extract_offline_cash_sale_failure = lambda error: {
+            "resolution": "requires_supervisor_review",
+            "reason": "current_policy_rejects_command",
+            "message": "The current POS Profile policy no longer permits this sale.",
+        }
+        sys.modules[authorization_name] = authorization_module
+
+        original_submit_invoice = self.module.submit_invoice
+        self.module.submit_invoice = lambda *args, **kwargs: (_ for _ in ()).throw(
+            Exception("POSA_OFFLINE_CASH_SALE:requires_reauthorization:expired")
+        )
+        try:
+            response = self.module.submit_invoice_outbox_entry(
+                client_request_id="offline-ticket-expired-001",
+                invoice={"doctype": "Sales Invoice"},
+                data={},
+                offline_sale_authorization="opaque-ticket",
+            )
+        finally:
+            self.module.submit_invoice = original_submit_invoice
+            if previous_authorization_module is None:
+                sys.modules.pop(authorization_name, None)
+            else:
+                sys.modules[authorization_name] = previous_authorization_module
+
+        self.assertFalse(response["acknowledged"])
+        self.assertTrue(response["definitive_rejection"])
+        self.assertEqual(response["resolution"], "requires_supervisor_review")
+        self.assertEqual(response["reason"], "current_policy_rejects_command")
+        self.assertEqual(response["client_request_id"], "offline-ticket-expired-001")
+        self.assertNotIn("invoice", response)
+
     def test_late_offline_sync_uses_server_controlled_current_shift(self):
         captured = {}
         original_submit_invoice = self.module.submit_invoice
 
-        def capture_submit(invoice, data, submit_in_background=0):
+        def capture_submit(
+            invoice,
+            data,
+            submit_in_background=0,
+            offline_sale_authorization=None,
+        ):
             captured["invoice"] = json.loads(invoice)
             captured["data"] = json.loads(data)
             return {

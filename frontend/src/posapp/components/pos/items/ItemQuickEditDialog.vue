@@ -967,7 +967,7 @@ watch(
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: #e4f4f0 !important;
+	color: #ffffff !important;
 }
 
 .item-quick-edit__title :deep(.v-btn) {

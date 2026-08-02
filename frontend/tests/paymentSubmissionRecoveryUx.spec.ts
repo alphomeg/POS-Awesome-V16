@@ -226,10 +226,13 @@ describe("ambiguous payment submission recovery UX", () => {
 			/'payment-shortcut-host--locked':[\s\S]{0,180}!cashierSigningOpen/,
 		);
 		expect(paymentsSource).toMatch(
-			/requestCashierSigning = \(\)[\s\S]{0,900}setCashierSigningOpen\?\.\(true\)/,
+			// The ticket is intentionally staged through a module-private vault
+			// before opening the dialog, so do not couple this recovery contract to
+			// a fragile source-line distance.
+			/requestCashierSigning = async \(\)[\s\S]{0,4200}setCashierSigningOpen\?\.\(true\)/,
 		);
 		expect(paymentsSource).toMatch(
-			/settleCashierSigning = \(result\)[\s\S]{0,220}setCashierSigningOpen\?\.\(false\)/,
+			/settleCashierSigning = \(result\)[\s\S]{0,1200}setCashierSigningOpen\?\.\(false\)/,
 		);
 	});
 

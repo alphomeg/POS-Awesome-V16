@@ -60,7 +60,26 @@ const SCHEMA_V18 = {
 		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],profile_scope,item_code",
 };
 
-const SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V18);
+// Keep this declaration byte-for-byte equivalent in meaning to offline/db.ts.
+// Exact code and barcode reads use these indexes; barcode candidates are
+// scope-filtered by the main-thread cache module because multi-entry indexes
+// cannot be compounded with the profile/generation key.
+const SCHEMA_V19 = {
+	...SCHEMA_V18,
+	items: "&item_code,profile_scope,item_code_lc,*barcodes_lc",
+	item_catalog_rows:
+		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],[profile_scope+catalog_generation+item_code_lc],profile_scope,item_code,item_code_lc,*barcodes_lc",
+};
+
+// Keep this declaration byte-for-byte equivalent in meaning to offline/db.ts.
+// The outbox index supports owner/profile/company-routed invoice recovery.
+const SCHEMA_V20 = {
+	...SCHEMA_V19,
+	invoice_outbox:
+		"++outbox_id,&client_request_id,status,resource,owner_user,pos_profile,company,created_at,updated_at,acknowledged_at,next_retry_at,nextAttemptAt,retry_count,[status+next_retry_at],[resource+status],[status+nextAttemptAt],[status+acknowledged_at],[status+updated_at],[status+created_at],[owner_user+pos_profile+company+status]",
+};
+
+const SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V20);
 
 const normalizeSearchValue = (value) =>
 	String(value || "")
@@ -74,6 +93,7 @@ const uniqueStrings = (values) =>
 
 const deriveItemSearchFields = (it) => {
 	const barcodes = uniqueStrings([
+		...(it.barcode ? [String(it.barcode)] : []),
 		...(Array.isArray(it.item_barcode)
 			? it.item_barcode.map((b) => b && b.barcode)
 			: it.item_barcode
@@ -246,6 +266,22 @@ const dbReady = (async () => {
 		);
 	db.version(18)
 		.stores(SCHEMA_V18)
+		.upgrade((tx) =>
+			tx.table("settings").put({
+				key: "schema_signature",
+				value: SCHEMA_SIGNATURE,
+			}),
+		);
+	db.version(19)
+		.stores(SCHEMA_V19)
+		.upgrade((tx) =>
+			tx.table("settings").put({
+				key: "schema_signature",
+				value: SCHEMA_SIGNATURE,
+			}),
+		);
+	db.version(20)
+		.stores(SCHEMA_V20)
 		.upgrade((tx) =>
 			tx.table("settings").put({
 				key: "schema_signature",

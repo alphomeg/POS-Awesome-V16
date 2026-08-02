@@ -976,7 +976,7 @@ watch(historyRows, () => {
 }
 
 .posa-item-history-header__identity .text-subtitle-2 {
-	color: #e4f4f0 !important;
+	color: #ffffff !important;
 }
 
 .posa-item-history-header__metrics {
@@ -1200,7 +1200,7 @@ watch(historyRows, () => {
 }
 
 .invoice-detail-header .text-subtitle-2 {
-	color: #e4f4f0 !important;
+	color: #ffffff !important;
 }
 
 .invoice-detail-header :deep(.v-btn) {

@@ -1224,7 +1224,12 @@ export const useItemsStore = defineStore("items", () => {
 
 		const exactHotItem = getExactHotItem(term);
 		const hotSearchResults = searchHotItems(term, resultLimit);
-		if (exactHotItem) {
+		// When offline, the complete, POS-profile-scoped IndexedDB catalog is
+		// authoritative. A hot-catalog suggestion must not hide an exact cached
+		// barcode/code match simply because it was rendered first.
+		const shouldPreferStoredOfflineCatalog =
+			isOffline() && shouldPersistItems();
+		if (exactHotItem && !shouldPreferStoredOfflineCatalog) {
 			const exactResults = dedupeItems(
 				[[exactHotItem], hotSearchResults],
 				resultLimit,
@@ -1248,7 +1253,7 @@ export const useItemsStore = defineStore("items", () => {
 			);
 			const cachedServerResults =
 				getCachedServerSearchResult(serverResultCacheKey);
-			if (cachedServerResults) {
+			if (cachedServerResults && !shouldPreferStoredOfflineCatalog) {
 				setFilteredItems(cachedServerResults, term);
 				performanceMetrics.value.searchHits++;
 				return cachedServerResults;
@@ -1268,7 +1273,7 @@ export const useItemsStore = defineStore("items", () => {
 					return [];
 				}
 				const offlineResults = dedupeItems(
-					[hotSearchResults, storedResults],
+					[storedResults, hotSearchResults],
 					resultLimit,
 				);
 				setFilteredItems(offlineResults, term);
@@ -1337,7 +1342,7 @@ export const useItemsStore = defineStore("items", () => {
 				});
 
 				searchResults = dedupeItems(
-					[hotSearchResults, Array.isArray(results) ? results : []],
+					[Array.isArray(results) ? results : [], hotSearchResults],
 					resultLimit,
 				);
 

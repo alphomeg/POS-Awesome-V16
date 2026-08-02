@@ -44,6 +44,7 @@ from posawesome.posawesome.api.item_sale_controls import (
 )
 from posawesome.posawesome.api.cashier_pin_security import (
     CASHIER_PIN_KEYS,
+    OFFLINE_SALE_AUTHORIZATION_KEYS,
     redact_cashier_pin_request_context,
 )
 from posawesome.posawesome.api.credit_sales import (
@@ -72,9 +73,16 @@ STATE_FAILED = "FAILED"
 FINAL_LEDGER_STATES = {STATE_SUBMITTED, STATE_POST_SUBMIT_DONE}
 AUTHORITATIVE_CASHIER_FIELD = "posa_cashier"
 CLIENT_CASHIER_KEYS = {AUTHORITATIVE_CASHIER_FIELD, "_posa_authoritative_cashier"}
+TRANSIENT_SUBMISSION_KEYS = CASHIER_PIN_KEYS | OFFLINE_SALE_AUTHORIZATION_KEYS
 TRUSTED_SHIFT_AUDIT_KEY = "_posa_shift_reassignment_audit"
 TRUSTED_SHIFT_SOURCES = {"offline_sync", "submitted_amendment"}
 SYSTEM_PAYMENT_MODES = {"Gift Card"}
+OFFLINE_CASH_SALE_AUDIT_KEY = "_posa_offline_cash_sale_audit"
+# Set only by ``repair_invoice_submission`` after it has authorized a
+# supervisor/manager and loaded the exact server-owned ledger.  It lets the
+# repair path validate the ledger audit against its original recorded command
+# hash instead of against a reconstructed payload with server-added fields.
+TRUSTED_OFFLINE_SALE_REPAIR_FLAG = "posa_trusted_offline_cash_sale_repair"
 
 RETURN_OUTSTANDING_MESSAGE_MARKERS = (
     "Updating the outstanding to this invoice.",
@@ -231,24 +239,50 @@ def _strip_client_cashier_identity(*payloads):
             payload.pop(key, None)
 
 
-def _reject_embedded_cashier_pin(*payloads):
+def _reject_embedded_transient_authorization(*payloads):
     def scrub(value):
-        found = False
+        found_pin = False
+        found_authorization = False
         if isinstance(value, dict):
             for key in list(value):
                 if key in CASHIER_PIN_KEYS:
-                    found = bool(str(value.pop(key, None) or "").strip()) or found
+                    found_pin = bool(str(value.pop(key, None) or "").strip()) or found_pin
+                elif key in OFFLINE_SALE_AUTHORIZATION_KEYS:
+                    found_authorization = (
+                        bool(str(value.pop(key, None) or "").strip())
+                        or found_authorization
+                    )
                 else:
-                    found = scrub(value.get(key)) or found
+                    child_pin, child_authorization = scrub(value.get(key))
+                    found_pin = found_pin or child_pin
+                    found_authorization = found_authorization or child_authorization
         elif isinstance(value, list):
             for child in value:
-                found = scrub(child) or found
-        return found
+                child_pin, child_authorization = scrub(child)
+                found_pin = found_pin or child_pin
+                found_authorization = found_authorization or child_authorization
+        return found_pin, found_authorization
 
-    if any(scrub(payload) for payload in payloads):
+    found_pin = False
+    found_authorization = False
+    for payload in payloads:
+        payload_pin, payload_authorization = scrub(payload)
+        found_pin = found_pin or payload_pin
+        found_authorization = found_authorization or payload_authorization
+    if found_pin:
         _permission_denied(
             _("Cashier PIN must be sent as a transient submit argument.")
         )
+    if found_authorization:
+        _permission_denied(
+            _("Offline cash-sale authorization must be sent as a transient submit argument.")
+        )
+
+
+# Kept for focused legacy tests and callers; the implementation now also
+# rejects embedded offline bearer credentials.
+def _reject_embedded_cashier_pin(*payloads):
+    return _reject_embedded_transient_authorization(*payloads)
 
 
 def _scrub_transient_submission_keys(value):
@@ -256,7 +290,7 @@ def _scrub_transient_submission_keys(value):
         return {
             key: _scrub_transient_submission_keys(child)
             for key, child in value.items()
-            if key not in CASHIER_PIN_KEYS
+            if key not in TRANSIENT_SUBMISSION_KEYS
         }
     if isinstance(value, list):
         return [_scrub_transient_submission_keys(child) for child in value]
@@ -322,13 +356,33 @@ def _resolve_authoritative_cashier(
     pos_profile,
     ledger_doc=None,
     cashier_pin=None,
+    offline_sale_cashier=None,
     require_pin=False,
+    allow_historical_offline_cashier=False,
 ):
     owned_ledger_name = getattr(
         getattr(frappe, "flags", None),
         "posa_owned_submission_ledger",
         None,
     )
+    # A persisted offline audit is the historical authorization for an exact
+    # server-owned ledger.  Its owner/supervisor gate has already run in
+    # submit_invoice, so an interrupted ledger must not be stranded merely
+    # because the original cashier was later reassigned or deactivated.  This
+    # exception is deliberately unavailable to a new ticket/new sale.
+    historical_offline_cashier = str(offline_sale_cashier or "").strip()
+    if allow_historical_offline_cashier and historical_offline_cashier:
+        ledger_cashier = ""
+        if ledger_doc:
+            ledger_cashier = str(
+                ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD) or ""
+            ).strip()
+        if ledger_cashier and ledger_cashier != historical_offline_cashier:
+            _permission_denied(
+                _("This invoice request has conflicting historical cashier records.")
+            )
+        return historical_offline_cashier
+
     current_sale_cashier = str(
         getattr(
             getattr(frappe, "flags", None),
@@ -360,6 +414,9 @@ def _resolve_authoritative_cashier(
         and ledger_doc.get("name") == owned_ledger_name
     ):
         return validate_assigned_terminal_cashier(pos_profile, background_cashier)
+
+    if historical_offline_cashier:
+        return validate_assigned_terminal_cashier(pos_profile, historical_offline_cashier)
 
     cashier_pin = str(cashier_pin or "").strip()
     if cashier_pin:
@@ -657,6 +714,50 @@ def _ledger_final_replay_response(ledger_doc):
     if ledger_doc.get("state") not in FINAL_LEDGER_STATES:
         return None
     return _ledger_response(ledger_doc, replayed=True)
+
+
+def _trusted_offline_sale_repair_payload_hash(
+    ledger_doc,
+    persisted_audit,
+    *,
+    client_request_id,
+    pos_profile,
+    company,
+    document_type,
+):
+    """Return an audit hash only for an internally-authorized ledger repair.
+
+    A normal browser retry must always hash its supplied immutable command.
+    ``repair_invoice_submission`` is different: it deliberately reconstructs
+    a draft from server-owned ledger data and injects server fields such as the
+    invoice name.  That reconstruction cannot be compared byte-for-byte with
+    the original browser command.  The narrow per-request flag is set only
+    after supervisor authorization and must match every ledger scope field.
+    """
+
+    context = getattr(
+        getattr(frappe, "flags", None),
+        TRUSTED_OFFLINE_SALE_REPAIR_FLAG,
+        None,
+    )
+    if not isinstance(context, dict) or not isinstance(persisted_audit, dict):
+        return None
+
+    expected = {
+        "ledger_name": str(ledger_doc.get("name") or "").strip(),
+        "client_request_id": str(client_request_id or "").strip(),
+        "pos_profile": str(pos_profile or "").strip(),
+        "company": str(company or "").strip(),
+        "document_type": str(document_type or "").strip(),
+    }
+    if not expected["ledger_name"] or any(
+        str(context.get(key) or "").strip() != value
+        for key, value in expected.items()
+    ):
+        return None
+
+    payload_hash = str(persisted_audit.get("payload_hash") or "").strip()
+    return payload_hash or None
 
 
 def _wait_for_submission_ledger_result(ledger_doc, timeout_seconds=12, interval_seconds=0.25):
@@ -1896,8 +1997,14 @@ def update_invoice(data):
     return response
 
 
-@frappe.whitelist()
-def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
+@frappe.whitelist(methods=["POST"])
+def submit_invoice(
+    invoice,
+    data,
+    submit_in_background=False,
+    cashier_pin=None,
+    offline_sale_authorization=None,
+):
     redact_cashier_pin_request_context()
     data = json.loads(data)
     invoice = json.loads(invoice)
@@ -1905,6 +2012,9 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
     # invoice marker is server-owned and must never be trusted from the client.
     invoice.pop(CREDIT_SALE_FIELD, None)
     data.pop(CREDIT_SALE_FIELD, None)
+    # This marker is server-owned.  A browser must never be able to turn an
+    # ordinary request into an offline-authorized one by embedding it in data.
+    data.pop(OFFLINE_CASH_SALE_AUDIT_KEY, None)
     invoice.pop(TRUSTED_SHIFT_AUDIT_KEY, None)
     data.pop(TRUSTED_SHIFT_AUDIT_KEY, None)
     trusted_shift_audit = getattr(
@@ -1912,10 +2022,17 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
     )
     if isinstance(trusted_shift_audit, dict):
         data[TRUSTED_SHIFT_AUDIT_KEY] = dict(trusted_shift_audit)
-    _reject_embedded_cashier_pin(invoice, data)
+    _reject_embedded_transient_authorization(invoice, data)
     client_request_id = normalize_invoice_request_identity(invoice, data)
     if not client_request_id:
         frappe.throw(_("client_request_id is required for invoice submission."))
+    offline_sale_payload_hash = None
+    if offline_sale_authorization:
+        from posawesome.posawesome.api.offline_sale_authorizations import (
+            offline_cash_sale_payload_hash,
+        )
+
+        offline_sale_payload_hash = offline_cash_sale_payload_hash(invoice, data)
     _sanitize_delivery_dates(invoice)
     _apply_manual_posting_controls(invoice)
     submit_in_background = cint(submit_in_background)
@@ -1968,6 +2085,52 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         company=company,
         permission_type="read",
     )
+
+    # A signed offline sale becomes a durable server-ledger authorization once
+    # the ledger exists.  Enforce its original-owner/supervisor and immutable
+    # command checks *before* returning any final idempotent replay.  Without
+    # this gate, another same-profile cashier who knew a request ID could read
+    # the final invoice response before the audit check below was reached.
+    offline_sale_claims = None
+    persisted_offline_audit = None
+    if ledger_doc:
+        persisted_offline_audit = _json_loads(ledger_doc.get("request_data")).get(
+            OFFLINE_CASH_SALE_AUDIT_KEY
+        )
+    if persisted_offline_audit:
+        from posawesome.posawesome.api.offline_sale_authorizations import (
+            offline_cash_sale_authorization_audit,
+            offline_cash_sale_payload_hash,
+            validate_persisted_offline_cash_sale_audit,
+        )
+
+        trusted_repair_hash = _trusted_offline_sale_repair_payload_hash(
+            ledger_doc,
+            persisted_offline_audit,
+            client_request_id=client_request_id,
+            pos_profile=pos_profile,
+            company=company,
+            document_type=doctype,
+        )
+        if trusted_repair_hash:
+            offline_sale_payload_hash = trusted_repair_hash
+        elif not offline_sale_payload_hash:
+            offline_sale_payload_hash = offline_cash_sale_payload_hash(invoice, data)
+        offline_sale_claims = validate_persisted_offline_cash_sale_audit(
+            persisted_offline_audit,
+            profile_doc=profile_doc,
+            client_request_id=client_request_id,
+            document_type=doctype,
+            payload_hash=offline_sale_payload_hash,
+        )
+        # Keep the server-owned audit present when this request resumes an
+        # unfinished ledger; it remains non-secret and is excluded from the
+        # immutable command hash.
+        data[OFFLINE_CASH_SALE_AUDIT_KEY] = offline_cash_sale_authorization_audit(
+            offline_sale_claims,
+            payload_hash=offline_sale_payload_hash,
+        )
+
     final_replay = bool(
         (ledger_doc and ledger_doc.get("state") in FINAL_LEDGER_STATES)
         or (existing_by_request and cint(existing_by_request.docstatus) == 1)
@@ -2062,11 +2225,52 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
             )
             invoice["name"] = ledger_invoice.name
 
+    # A short-lived signed ticket is required only until this server has
+    # created the durable request ledger. Retried work has already passed the
+    # durable-audit gate above. A new request validates the opaque bearer here.
+    if offline_sale_claims is None and offline_sale_authorization:
+        from posawesome.posawesome.api.offline_sale_authorizations import (
+            offline_cash_sale_authorization_audit,
+            validate_offline_cash_sale_authorization,
+        )
+
+        if str(cashier_pin or "").strip():
+            _permission_denied(
+                _("Use either a cashier PIN or an offline cash-sale authorization, not both.")
+            )
+        offline_sale_claims = validate_offline_cash_sale_authorization(
+            offline_sale_authorization,
+            profile_doc=profile_doc,
+            client_request_id=client_request_id,
+            document_type=doctype,
+            payload_hash=offline_sale_payload_hash,
+        )
+        data[OFFLINE_CASH_SALE_AUDIT_KEY] = offline_cash_sale_authorization_audit(
+            offline_sale_claims,
+            payload_hash=offline_sale_payload_hash,
+        )
+
+    if offline_sale_claims and str(cashier_pin or "").strip():
+        _permission_denied(
+            _("Use either a cashier PIN or an offline cash-sale authorization, not both.")
+        )
+    if offline_sale_claims and submit_in_background:
+        _permission_denied(
+            _("Offline signed cash sales must be submitted synchronously through the invoice outbox.")
+        )
+
     authoritative_cashier = _resolve_authoritative_cashier(
         pos_profile,
         ledger_doc,
         cashier_pin=cashier_pin,
-        require_pin=not bool(ledger_doc and ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD)),
+        offline_sale_cashier=(offline_sale_claims or {}).get("cashier"),
+        allow_historical_offline_cashier=bool(
+            persisted_offline_audit and offline_sale_claims
+        ),
+        require_pin=not bool(
+            (ledger_doc and ledger_doc.get(AUTHORITATIVE_CASHIER_FIELD))
+            or offline_sale_claims
+        ),
     )
     data["_posa_authoritative_cashier"] = authoritative_cashier
     allow_background_submit = frappe.get_value(
@@ -2240,11 +2444,15 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
     # from Sales Order). Only auto-disable stock when the flag was not provided.
     if invoice.get("posa_delivery_date") and invoice.get("update_stock") is None:
         invoice_doc.update_stock = 0
-    mop_cash_list = [
-        i.mode_of_payment
-        for i in invoice_doc.payments
-        if "cash" in i.mode_of_payment.lower() and i.type == "Cash"
-    ]
+    mop_cash_list = (
+        [offline_sale_claims["cash_mode_of_payment"]]
+        if offline_sale_claims
+        else [
+            i.mode_of_payment
+            for i in invoice_doc.payments
+            if "cash" in i.mode_of_payment.lower() and i.type == "Cash"
+        ]
+    )
     if len(mop_cash_list) > 0:
         cash_account = get_bank_cash_account(mop_cash_list[0], invoice_doc.company)
     else:
@@ -2320,6 +2528,12 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         profile_doc=profile_doc,
         lock_customer=True,
     )
+    if offline_sale_claims:
+        from posawesome.posawesome.api.offline_sale_authorizations import (
+            validate_offline_cash_sale_document,
+        )
+
+        validate_offline_cash_sale_document(offline_sale_claims, invoice_doc, data)
 
     invoice_doc.flags.ignore_permissions = True
     frappe.flags.ignore_account_permission = True
@@ -2329,6 +2543,11 @@ def submit_invoice(invoice, data, submit_in_background=False, cashier_pin=None):
         lambda: _save_draft_with_latest_timestamp(invoice_doc),
     )
     _normalize_return_payment_rows(invoice_doc, invoice_doc.get("conversion_rate") or 1)
+    if offline_sale_claims:
+        # Hooks and save-time recalculation may modify a draft after the first
+        # authorization check. Revalidate the final persisted form immediately
+        # before the only synchronous submit path.
+        validate_offline_cash_sale_document(offline_sale_claims, invoice_doc, data)
 
     if data.get("due_date"):
         frappe.db.set_value(
@@ -2688,7 +2907,7 @@ def submit_payload_in_background_job(kwargs):
             delattr(frappe.flags, "posa_background_opening_accepted")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def repair_invoice_submission(
     client_request_id,
     company,
@@ -2804,10 +3023,28 @@ def repair_invoice_submission(
             "posa_background_opening_shift",
             "posa_background_opening_user",
             "posa_background_opening_accepted",
+            TRUSTED_OFFLINE_SALE_REPAIR_FLAG,
         )
     }
     try:
         frappe.flags.posa_owned_submission_ledger = ledger_doc.name
+        if isinstance(request_data.get(OFFLINE_CASH_SALE_AUDIT_KEY), dict):
+            # The payload below is reconstructed only from the supervisor-
+            # authorized, server-owned ledger and linked draft.  Bind the
+            # trusted repair marker to every scope value so submit_invoice can
+            # use the recorded immutable audit hash rather than a hash changed
+            # by these server-injected repair fields.
+            setattr(
+                frappe.flags,
+                TRUSTED_OFFLINE_SALE_REPAIR_FLAG,
+                {
+                    "ledger_name": ledger_doc.name,
+                    "client_request_id": client_request_id,
+                    "pos_profile": pos_profile,
+                    "company": company,
+                    "document_type": document_type,
+                },
+            )
         if opening_shift_name and opening_user:
             frappe.flags.posa_background_opening_shift = opening_shift_name
             frappe.flags.posa_background_opening_user = opening_user

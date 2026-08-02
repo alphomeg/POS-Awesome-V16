@@ -16,6 +16,7 @@ import {
 } from "../../../../offline/index";
 import { getValidCachedOpeningForCurrentUser } from "../../../utils/openingCache";
 import { createBootstrapSnapshotFromRegisterData } from "../../../../offline/bootstrapSnapshot";
+import { warmSalesPersonOptions } from "../../../services/salesPersonService";
 
 declare const __BUILD_VERSION__: string;
 declare const frappe: any;
@@ -104,6 +105,13 @@ export function usePosShift(openDialog?: () => void) {
 				{ buildVersion },
 			),
 		);
+		// Refresh optional payment metadata in the background while the terminal is
+		// online. The helper is profile-scoped, durable before it reports success,
+		// and deliberately performs no RPC when this cached opening is restored
+		// offline.
+		void warmSalesPersonOptions(data.pos_profile).catch((error) => {
+			console.warn("Unable to warm POS sales-person options", error);
+		});
 
 		try {
 			frappe.realtime.emit("pos_profile_registered");

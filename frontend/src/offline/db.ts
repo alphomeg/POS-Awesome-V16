@@ -172,7 +172,28 @@ const SCHEMA_V18 = {
 	item_catalog_rows:
 		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],profile_scope,item_code",
 };
-const OFFLINE_DB_SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V18);
+
+// Exact scanner identifiers must not fall back to a full catalog walk. The
+// barcode index remains multi-entry (and therefore cannot be a compound
+// IndexedDB key); cache.ts filters those indexed candidates back to the active
+// profile/generation before returning them.
+const SCHEMA_V19 = {
+	...SCHEMA_V18,
+	items: "&item_code,profile_scope,item_code_lc,*barcodes_lc",
+	item_catalog_rows:
+		"&[profile_scope+catalog_generation+item_code],[profile_scope+catalog_generation],[profile_scope+catalog_generation+item_code_lc],profile_scope,item_code,item_code_lc,*barcodes_lc",
+};
+
+// The invoice outbox must route a shared browser's durable sale intents to the
+// exact user/profile/company that created them. The compound index is retained
+// for recovery diagnostics and future targeted maintenance; claiming still
+// examines all unresolved rows so it can move mismatches into waiting_owner.
+const SCHEMA_V20 = {
+	...SCHEMA_V19,
+	invoice_outbox:
+		"++outbox_id,&client_request_id,status,resource,owner_user,pos_profile,company,created_at,updated_at,acknowledged_at,next_retry_at,nextAttemptAt,retry_count,[status+next_retry_at],[resource+status],[status+nextAttemptAt],[status+acknowledged_at],[status+updated_at],[status+created_at],[owner_user+pos_profile+company+status]",
+};
+const OFFLINE_DB_SCHEMA_SIGNATURE = JSON.stringify(SCHEMA_V20);
 
 export const KEY_TABLE_MAP: Record<string, string> = {
 	offline_invoices: "queue",
@@ -239,6 +260,10 @@ const LEGACY_KEY_TABLES: Record<string, string[]> = {
 export const STARTUP_MEMORY_KEYS = Object.freeze([
 	"manual_offline",
 	"invoice_outbox_mode",
+	// Payment metadata must be ready with the cached opening state so an offline
+	// checkout never has to start a network request just to render its optional
+	// sales-person selector.
+	"sales_persons_storage",
 	"bootstrap_snapshot",
 	"bootstrap_snapshot_status",
 	"bootstrap_limited_mode",
@@ -374,6 +399,22 @@ db.version(18)
 			value: OFFLINE_DB_SCHEMA_SIGNATURE,
 		}),
 	);
+db.version(19)
+	.stores(SCHEMA_V19)
+	.upgrade((tx) =>
+		tx.table("settings").put({
+			key: "schema_signature",
+			value: OFFLINE_DB_SCHEMA_SIGNATURE,
+		}),
+	);
+db.version(20)
+	.stores(SCHEMA_V20)
+	.upgrade((tx) =>
+		tx.table("settings").put({
+			key: "schema_signature",
+			value: OFFLINE_DB_SCHEMA_SIGNATURE,
+		}),
+	);
 
 let persistWorker: Worker | null = null;
 
@@ -403,7 +444,10 @@ const MEMORY_DEFAULTS: AnyRecord = {
 	payment_methods_last_sync: null,
 	pos_opening_storage: null,
 	opening_dialog_storage: null,
-	sales_persons_storage: [],
+	// Profile-scoped sales-person options. Older installations may hydrate the
+	// legacy array shape; cache.ts treats that shape as untrusted for a scoped
+	// offline read and refreshes it while online.
+	sales_persons_storage: {},
 	price_list_cache: {},
 	item_details_cache: {},
 	tax_template_cache: {},
@@ -1046,7 +1090,10 @@ function statusDateRange(
 
 async function pruneInvoiceOutboxRows(cutoff: number, cutoffIso: string) {
 	let deleted = 0;
-	for (const status of ["acknowledged", "dead_letter"]) {
+	// Only an acknowledged invoice is settled. A dead-letter or action-required
+	// command remains operational evidence and may need supervised recovery long
+	// after the normal cache-retention window, so pruning must never erase it.
+	for (const status of ["acknowledged"]) {
 		deleted += await pruneCollectionInChunks(
 			"invoice_outbox",
 			(table) =>
