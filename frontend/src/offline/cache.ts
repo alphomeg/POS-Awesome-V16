@@ -428,7 +428,7 @@ const dedupeExactStoredItems = (items: Array<Record<string, any> | null>) => {
 	});
 };
 
-async function searchExactStoredItems({
+export async function searchExactStoredItems({
 	search,
 	itemGroup,
 	scope,

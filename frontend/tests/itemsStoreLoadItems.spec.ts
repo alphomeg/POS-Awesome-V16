@@ -11,6 +11,7 @@ const offlineMocks = vi.hoisted(() => ({
 	getStoredItemsCountByScope: vi.fn(async () => 0),
 	getAllStoredItems: vi.fn(async () => []),
 	searchStoredItems: vi.fn(async () => []),
+	searchExactStoredItems: vi.fn(async () => []),
 	clearStoredItems: vi.fn(async () => undefined),
 	getCachedPriceListItems: vi.fn(async () => null),
 	getItemsLastSync: vi.fn(() => null),
@@ -50,6 +51,7 @@ vi.mock("../src/offline/index", () => ({
 	getStoredItemsCountByScope: offlineMocks.getStoredItemsCountByScope,
 	getAllStoredItems: offlineMocks.getAllStoredItems,
 	searchStoredItems: offlineMocks.searchStoredItems,
+	searchExactStoredItems: offlineMocks.searchExactStoredItems,
 	clearStoredItems: offlineMocks.clearStoredItems,
 	getCachedPriceListItems: offlineMocks.getCachedPriceListItems,
 	getItemsLastSync: offlineMocks.getItemsLastSync,
@@ -221,6 +223,7 @@ describe("itemsStore loadItems", () => {
 		offlineMocks.getStoredItemsCountByScope.mockResolvedValue(0);
 		offlineMocks.getAllStoredItems.mockResolvedValue([]);
 		offlineMocks.searchStoredItems.mockResolvedValue([]);
+		offlineMocks.searchExactStoredItems.mockResolvedValue([]);
 		offlineMocks.isOffline.mockReturnValue(false);
 		offlineMocks.isOfflineStorageReady.mockReturnValue(true);
 		cacheMocks.getCachedItems.mockResolvedValue(null);
@@ -359,6 +362,46 @@ describe("itemsStore loadItems", () => {
 		expect(store.filteredItems.map((item) => item.item_code)).toEqual([
 			"HOT-BAR",
 		]);
+		expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
+	});
+
+	it("resolves an exact online identifier from the durable browser catalog before server fallback", async () => {
+		const store = useItemsStore();
+		offlineMocks.getStoredItemsCountByScope.mockResolvedValue(6000);
+		offlineMocks.searchExactStoredItems.mockResolvedValue([
+			{
+				item_code: "CACHED-EXACT-1",
+				item_name: "Durable Cached Item",
+				item_group: "Medicines",
+			},
+		]);
+
+		await store.initialize({
+			name: "POS-CACHED",
+			warehouse: "Main Store",
+			selling_price_list: "Retail",
+			currency: "PKR",
+			item_groups: [],
+			posa_fast_counter_mode: 1,
+			posa_local_storage: 1,
+			posa_use_limit_search: 1,
+			posa_force_server_items: 0,
+		} as any);
+		itemServiceMocks.getItemsData.mockClear();
+
+		const result = await store.searchItems("CACHED-EXACT-1", {
+			serverFallbackDelayMs: 0,
+			resultLimit: 20,
+		});
+
+		expect(result.map((item) => item.item_code)).toEqual([
+			"CACHED-EXACT-1",
+		]);
+		expect(offlineMocks.searchExactStoredItems).toHaveBeenCalledWith({
+			search: "CACHED-EXACT-1",
+			itemGroup: "ALL",
+			scope: "POS-CACHED_Main Store",
+		});
 		expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
 	});
 

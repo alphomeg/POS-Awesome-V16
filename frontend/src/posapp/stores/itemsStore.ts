@@ -121,6 +121,14 @@ export const useItemsStore = defineStore("items", () => {
 		return await searchFn(args);
 	};
 
+	const searchExactStoredItemsCompat = async (args: any) => {
+		const searchFn = await getOfflineFn("searchExactStoredItems");
+		if (typeof searchFn !== "function") {
+			return [];
+		}
+		return await searchFn(args);
+	};
+
 	const getCachedPriceListItemsCompat = async (priceList: string) => {
 		const fn = await getOfflineFn("getCachedPriceListItems");
 		if (typeof fn !== "function") {
@@ -1250,6 +1258,41 @@ export const useItemsStore = defineStore("items", () => {
 			setFilteredItems(exactResults, term);
 			performanceMetrics.value.searchHits++;
 			return exactResults;
+		}
+
+		// A complete browser catalogue is authoritative for exact item-code and
+		// barcode lookups even while online. The in-memory hot catalogue is a
+		// bounded acceleration layer, so an exact identifier may legitimately be
+		// absent from it while remaining available in the scoped IndexedDB
+		// generation. Resolve that indexed identifier before scheduling an online
+		// server fallback. Non-exact text searches retain the hybrid/server path.
+		if (shouldPersistItems() && !shouldForceServerSearch) {
+			const normalizedGroup =
+				typeof itemGroup.value === "string" &&
+				itemGroup.value.length > 0
+					? itemGroup.value
+					: "ALL";
+			const exactStoredItems = await searchExactStoredItemsCompat({
+				search: term,
+				itemGroup: normalizedGroup,
+				scope: getStorageScope(),
+			}).catch(() => []);
+			if (
+				normalizeSearchScope(searchTerm.value) !==
+				requestedSearchScope
+			) {
+				return [];
+			}
+			if (Array.isArray(exactStoredItems) && exactStoredItems.length > 0) {
+				const exactResults = dedupeItems(
+					[exactStoredItems, hotSearchResults],
+					resultLimit,
+				);
+				cancelPendingServerSearchFallback(exactResults);
+				setFilteredItems(exactResults, term);
+				performanceMetrics.value.searchHits++;
+				return exactResults;
+			}
 		}
 
 		if (limitSearchEnabled.value) {
