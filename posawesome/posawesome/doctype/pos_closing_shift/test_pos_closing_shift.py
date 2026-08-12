@@ -8,7 +8,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from posawesome.posawesome.doctype.pos_closing_shift.closing_processing import creation, invoices, overview
+from posawesome.posawesome.doctype.pos_closing_shift.closing_processing import (
+    creation,
+    invoices,
+    overview,
+    submission_barrier,
+)
 
 
 class DummyClosingShift:
@@ -96,6 +101,10 @@ class TestPOSClosingShift(unittest.TestCase):
                 return_value={"closing_shift": canonical},
             ) as make_closing,
             patch.object(creation, "normalize_pos_payment_references") as normalize,
+            patch.object(
+                creation,
+                "assert_opening_shift_submissions_settled",
+            ) as assert_settled,
         ):
             result = creation.submit_closing_shift(
                 """{
@@ -114,8 +123,97 @@ class TestPOSClosingShift(unittest.TestCase):
         authorize_profile.assert_called_once_with("POS-PROFILE-1", "My Co")
         make_closing.assert_called_once_with('{"name":"POS-OPEN-1"}')
         normalize.assert_called_once_with(canonical)
+        assert_settled.assert_called_once_with("POS-OPEN-1", "POS-PROFILE-1")
         canonical.save.assert_called_once_with()
         canonical.submit.assert_called_once_with()
+
+    @patch(
+        "posawesome.posawesome.doctype.pos_closing_shift.closing_processing.submission_barrier.frappe"
+    )
+    def test_closing_submission_status_scopes_pending_ledgers_to_opening_shift(
+        self, mock_frappe
+    ):
+        mock_frappe.get_all.return_value = [
+            AttrDict(
+                {
+                    "name": "LEDGER-PENDING",
+                    "client_request_id": "request-pending",
+                    "state": "DRAFT_CREATED",
+                    "document_type": "POS Invoice",
+                    "invoice_name": "PINV-0001",
+                    "invoice_payload": '{"posa_pos_opening_shift":"POS-OPEN-1"}',
+                    "request_data": "{}",
+                    "error_message": None,
+                    "modified": "2026-08-12 12:00:00",
+                }
+            ),
+            AttrDict(
+                {
+                    "name": "LEDGER-OTHER",
+                    "client_request_id": "request-other",
+                    "state": "FAILED",
+                    "document_type": "POS Invoice",
+                    "invoice_name": "PINV-0002",
+                    "invoice_payload": '{"posa_pos_opening_shift":"POS-OPEN-2"}',
+                    "request_data": "{}",
+                    "error_message": "unrelated",
+                    "modified": "2026-08-12 11:00:00",
+                }
+            ),
+        ]
+
+        status = submission_barrier.get_opening_shift_submission_status(
+            "POS-OPEN-1",
+            "POS-PROFILE-1",
+        )
+
+        self.assertFalse(status["ready"])
+        self.assertEqual(status["pending_count"], 1)
+        self.assertEqual(status["failed_count"], 0)
+        self.assertEqual(status["pending"][0]["ledger"], "LEDGER-PENDING")
+        mock_frappe.get_all.assert_called_once()
+
+    @patch(
+        "posawesome.posawesome.doctype.pos_closing_shift.closing_processing.submission_barrier.frappe"
+    )
+    def test_closing_submission_barrier_rejects_failed_sale(self, mock_frappe):
+        mock_frappe.ValidationError = ValueError
+        mock_frappe.get_all.return_value = [
+            AttrDict(
+                {
+                    "name": "LEDGER-FAILED",
+                    "client_request_id": "request-failed",
+                    "state": "FAILED",
+                    "document_type": "POS Invoice",
+                    "invoice_name": "PINV-0003",
+                    "invoice_payload": '{"posa_pos_opening_shift":"POS-OPEN-1"}',
+                    "request_data": "{}",
+                    "error_message": "stock changed",
+                    "modified": "2026-08-12 12:00:00",
+                }
+            )
+        ]
+        mock_frappe.throw.side_effect = lambda message, **kwargs: (_ for _ in ()).throw(
+            ValueError(message)
+        )
+
+        with self.assertRaisesRegex(ValueError, "supervisor review"):
+            submission_barrier.assert_opening_shift_submissions_settled(
+                "POS-OPEN-1",
+                "POS-PROFILE-1",
+            )
+
+    @patch("posawesome.posawesome.doctype.pos_closing_shift.closing_processing.invoices.frappe")
+    def test_draft_cleanup_is_enqueued_only_after_close_commit(self, mock_frappe):
+        mock_frappe.get_value.return_value = 1
+
+        invoices.enqueue_draft_invoice_cleanup("POS-OPEN-1", "POS-PROFILE-1")
+
+        mock_frappe.enqueue.assert_called_once()
+        kwargs = mock_frappe.enqueue.call_args.kwargs
+        self.assertTrue(kwargs["enqueue_after_commit"])
+        self.assertEqual(kwargs["pos_opening_shift"], "POS-OPEN-1")
+        self.assertEqual(kwargs["pos_profile"], "POS-PROFILE-1")
 
     @patch("posawesome.posawesome.doctype.pos_closing_shift.closing_processing.creation.frappe")
     def test_submit_closing_shift_rejects_another_cashiers_opening(self, mock_frappe):

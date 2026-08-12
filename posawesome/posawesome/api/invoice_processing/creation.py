@@ -2721,7 +2721,9 @@ def submit_in_background_job(kwargs):
             if ledger_doc:
                 _update_submission_ledger(
                     ledger_doc,
-                    STATE_SUBMITTED,
+                    STATE_SUBMITTED
+                    if _has_post_submit_payment_work(data)
+                    else STATE_POST_SUBMIT_DONE,
                     invoice_name=invoice_doc.name,
                 )
             return

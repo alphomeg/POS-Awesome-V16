@@ -14,6 +14,10 @@ from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.data imp
 from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.invoices import (
     submit_printed_invoices,
 )
+from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.submission_barrier import (
+    assert_opening_shift_submissions_settled,
+    get_opening_shift_submission_status,
+)
 
 
 def build_pos_payment_reference(payment_entry):
@@ -86,6 +90,10 @@ def normalize_pos_payment_references(closing_shift_doc):
 @frappe.whitelist()
 def make_closing_shift_from_opening(opening_shift):
     opening_shift = json.loads(opening_shift)
+    assert_opening_shift_submissions_settled(
+        opening_shift.get("name"),
+        opening_shift.get("pos_profile"),
+    )
     use_pos_invoice = frappe.db.get_value(
         "POS Profile",
         opening_shift.get("pos_profile"),
@@ -249,6 +257,24 @@ def make_closing_shift_from_opening(opening_shift):
 
 
 @frappe.whitelist()
+def get_closing_submission_status(opening_shift):
+    opening_name = (
+        opening_shift.get("name")
+        if isinstance(opening_shift, dict)
+        else str(opening_shift or "").strip()
+    )
+    opening_doc = frappe.get_doc("POS Opening Shift", opening_name)
+    session_user = get_authenticated_pos_user()
+    if opening_doc.user != session_user and not user_can_manage_pos(session_user):
+        frappe.throw(
+            _("Only the assigned cashier or a POS supervisor can inspect this shift."),
+            frappe.PermissionError,
+        )
+    get_authorized_pos_profile(opening_doc.pos_profile, opening_doc.company)
+    return get_opening_shift_submission_status(opening_doc.name, opening_doc.pos_profile)
+
+
+@frappe.whitelist()
 def submit_closing_shift(closing_shift):
     requested_closing = json.loads(closing_shift)
     opening_name = requested_closing.get("pos_opening_shift")
@@ -266,6 +292,11 @@ def submit_closing_shift(closing_shift):
     get_authorized_pos_profile(opening_shift.pos_profile, opening_shift.company)
     if opening_shift.docstatus != 1 or opening_shift.status != "Open":
         frappe.throw(_("Selected POS Opening Shift should be open."))
+
+    assert_opening_shift_submissions_settled(
+        opening_shift.name,
+        opening_shift.pos_profile,
+    )
 
     canonical = make_closing_shift_from_opening(frappe.as_json(opening_shift.as_dict()))[
         "closing_shift"

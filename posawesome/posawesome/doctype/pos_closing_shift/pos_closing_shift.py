@@ -16,12 +16,14 @@ from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.overview
     get_payment_reconciliation_details,
 )
 from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.creation import (
+    get_closing_submission_status,
     make_closing_shift_from_opening,
     submit_closing_shift,
 )
 from posawesome.posawesome.doctype.pos_closing_shift.closing_processing.invoices import (
     submit_printed_invoices,
     delete_draft_invoices,
+    enqueue_draft_invoice_cleanup,
     _set_closing_entry_invoices,
     _clear_closing_entry_invoices,
     consolidate_closing_shift_invoices,
@@ -68,11 +70,14 @@ class POSClosingShift(Document):
         opening_entry = frappe.get_doc("POS Opening Shift", self.pos_opening_shift)
         opening_entry.pos_closing_shift = self.name
         opening_entry.set_status()
-        self.delete_draft_invoices()
         opening_entry.save(ignore_permissions=True)
         # link invoices with this closing shift so ERPNext can block edits
         _set_closing_entry_invoices(self)
         consolidate_closing_shift_invoices(self)
+        # Unprinted drafts are disposable housekeeping. Delete them only after
+        # this financial close commits so a transient draft lock can never roll
+        # back the shift or race an acknowledged background sale.
+        enqueue_draft_invoice_cleanup(self.pos_opening_shift, self.pos_profile)
 
     def on_cancel(self):
         if frappe.db.exists("POS Opening Shift", self.pos_opening_shift):
