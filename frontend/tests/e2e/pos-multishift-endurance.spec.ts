@@ -169,6 +169,10 @@ function responseFor(method: string) {
 		response.url().includes(method) && response.status() === 200;
 }
 
+function requestFor(method: string) {
+	return (request: { url: () => string }) => request.url().includes(method);
+}
+
 function requestSearchValue(request: Request) {
 	if (!request.url().includes(SEARCH_REQUEST_METHOD)) return null;
 	const body = request.postData() || "";
@@ -506,16 +510,14 @@ async function cleanupTemporaryCashier(
 			name: assignment.name,
 		}).catch(() => null);
 	}
-	await callFrappe(page, "frappe.client.delete", {
+	// Submission-ledger rows intentionally retain cashier identity, so a user
+	// that completed a sale is linked and cannot be deleted. Disable it directly
+	// instead of provoking a Frappe link-validation modal during test cleanup.
+	await callFrappe(page, "frappe.client.set_value", {
 		doctype: "User",
 		name: cashier.user,
-	}).catch(async () => {
-		await callFrappe(page, "frappe.client.set_value", {
-			doctype: "User",
-			name: cashier.user,
-			fieldname: { enabled: 0, posa_pos_pin: "" },
-		}).catch(() => null);
-	});
+		fieldname: { enabled: 0, posa_pos_pin: "" },
+	}).catch(() => null);
 }
 
 async function waitForPosShell(page: Page) {
@@ -562,17 +564,44 @@ async function startShiftThroughUi(page: Page, profileName: string) {
 	const amountInputs = dialog.locator(
 		'[data-testid^="opening-shift-amount-"] input',
 	);
-	for (let index = 0; index < (await amountInputs.count()); index += 1) {
-		await amountInputs.nth(index).fill("0");
+	let opening: Record<string, any> | null = null;
+	let lastResponse = "no request dispatched";
+	for (let attempt = 1; attempt <= 3 && !opening; attempt += 1) {
+		for (let index = 0; index < (await amountInputs.count()); index += 1) {
+			await amountInputs.nth(index).fill("0");
+		}
+		const requestPromise = page
+			.waitForRequest(requestFor("create_opening_voucher"), {
+				timeout: 10_000,
+			})
+			.catch(() => null);
+		const responsePromise = page
+			.waitForResponse(requestFor("create_opening_voucher"), {
+				timeout: CLOSE_RESPONSE_TIMEOUT_MS,
+			})
+			.catch(() => null);
+		await dialog.getByTestId("opening-shift-submit").click();
+		const request = await requestPromise;
+		if (!request) {
+			lastResponse = `attempt ${attempt}: opening submit did not dispatch a request`;
+			const messageClose = page.locator(".modal:visible .btn-modal-close").last();
+			if (await messageClose.isVisible().catch(() => false)) {
+				await messageClose.click().catch(() => null);
+			}
+			await page.waitForTimeout(500);
+			continue;
+		}
+		const response = await responsePromise;
+		if (!response) {
+			throw new Error(
+				`Opening request was dispatched but its result is ambiguous after ${CLOSE_RESPONSE_TIMEOUT_MS}ms; refusing to retry it.`,
+			);
+		}
+		const body = await response.json().catch(() => ({}));
+		opening = body?.message?.pos_opening_shift || body?.message || null;
+		lastResponse = `attempt ${attempt}: HTTP ${response.status()} ${JSON.stringify(body).slice(0, 1000)}`;
 	}
-	const responsePromise = page.waitForResponse(
-		responseFor("create_opening_voucher"),
-		{ timeout: 45_000 },
-	);
-	await dialog.getByTestId("opening-shift-submit").click();
-	const body = await (await responsePromise).json();
-	const opening = body?.message?.pos_opening_shift || body?.message;
-	expect(opening?.name).toBeTruthy();
+	expect(opening?.name, lastResponse).toBeTruthy();
 	await expect(dialog).toBeHidden({ timeout: 45_000 });
 	await expect(page.locator('[data-test="pos-navbar"]')).toHaveAttribute(
 		"data-pos-profile",
@@ -582,7 +611,7 @@ async function startShiftThroughUi(page: Page, profileName: string) {
 	await expect(page.getByTestId("counter-grid-item-entry")).toBeFocused({
 		timeout: 45_000,
 	});
-	return String(opening.name);
+	return String(opening?.name);
 }
 
 async function closeShiftThroughUi(page: Page) {
@@ -765,27 +794,31 @@ async function chooseCachedItems(
 	totalSales: number,
 	profileScope: string,
 ) {
-	await expect
-		.poll(
-			async () => {
-				const items = await readActiveCatalogItems(page);
-				return items.filter(
-					(item) =>
-						item.profileScope === profileScope && item.actualQty > 0,
-				).length;
-			},
-			{ timeout: 5 * 60_000, intervals: [1000, 2000, 5000] },
-		)
-		.toBeGreaterThan(0);
+	const deadline = Date.now() + 10 * 60_000;
+	let cachedItems: CatalogItem[] = [];
+	let nextProgressLog = Date.now();
+	while (Date.now() < deadline) {
+		cachedItems = (await readActiveCatalogItems(page)).filter(
+			(item) => item.profileScope === profileScope && item.actualQty > 0,
+		);
+		if (cachedItems.length > 0) break;
+		if (Date.now() >= nextProgressLog) {
+			console.log(
+				`[pos-multishift] waiting for active browser catalog ${profileScope}`,
+			);
+			nextProgressLog = Date.now() + 60_000;
+		}
+		await page.waitForTimeout(2000);
+	}
+	expect(
+		cachedItems.length,
+		`The active browser catalog ${profileScope} did not expose a positive-stock item within ten minutes.`,
+	).toBeGreaterThan(0);
 	return chooseFixturePool(
-		await readActiveCatalogItems(page).then((items) =>
-			items
-				.filter((item) => item.profileScope === profileScope)
-				.map((item) => ({
-					itemCode: item.itemCode,
-					availableQty: item.actualQty,
-				})),
-		),
+		cachedItems.map((item) => ({
+			itemCode: item.itemCode,
+			availableQty: item.actualQty,
+		})),
 		totalSales,
 		"The local browser cache does not contain enough positive stock for the cached-search phase.",
 	).map((item) => ({ ...item, searchQuery: item.itemCode }));
