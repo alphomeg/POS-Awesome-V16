@@ -79,6 +79,8 @@ type SaleResult = {
 	signingLatencyMs: number;
 	submissionLatencyMs: number;
 	serverRequests: number;
+	totalGetItemsRequests: number;
+	requestEvidence: Array<{ url: string; postData: string }>;
 };
 type StockSnapshot = {
 	capturedAt: string;
@@ -126,6 +128,7 @@ type TemporaryCashier = {
 type CatalogItem = {
 	itemCode: string;
 	actualQty: number;
+	profileScope: string;
 };
 
 test.skip(
@@ -655,7 +658,7 @@ async function setForceServerSearchThroughUi(page: Page, enabled: boolean) {
 	const forceServerControl = dialog.locator('input[type="checkbox"]').last();
 	await expect(forceServerControl).toBeVisible();
 	if ((await forceServerControl.isChecked()) !== enabled) {
-		await forceServerControl.check({ force: true });
+		await forceServerControl.setChecked(enabled, { force: true });
 	}
 	await dialog.getByRole("button", { name: "Save Settings" }).click();
 	await expect(dialog).toBeHidden({ timeout: 15_000 });
@@ -705,6 +708,7 @@ async function readActiveCatalogItems(page: Page) {
 				.map((row) => ({
 					itemCode: String(row?.item_code || ""),
 					actualQty: Number(row?.actual_qty || 0),
+					profileScope: String(row?.profile_scope || ""),
 				}))
 				.filter((row) => row.itemCode);
 		} finally {
@@ -756,22 +760,31 @@ async function chooseServerItems(
 	}));
 }
 
-async function chooseCachedItems(page: Page, totalSales: number) {
+async function chooseCachedItems(
+	page: Page,
+	totalSales: number,
+	profileScope: string,
+) {
 	await expect
 		.poll(
 			async () => {
 				const items = await readActiveCatalogItems(page);
-				return items.filter((item) => item.actualQty > 0).length;
+				return items.filter(
+					(item) =>
+						item.profileScope === profileScope && item.actualQty > 0,
+				).length;
 			},
 			{ timeout: 5 * 60_000, intervals: [1000, 2000, 5000] },
 		)
 		.toBeGreaterThan(0);
 	return chooseFixturePool(
 		await readActiveCatalogItems(page).then((items) =>
-			items.map((item) => ({
-			itemCode: item.itemCode,
-			availableQty: item.actualQty,
-			})),
+			items
+				.filter((item) => item.profileScope === profileScope)
+				.map((item) => ({
+					itemCode: item.itemCode,
+					availableQty: item.actualQty,
+				})),
 		),
 		totalSales,
 		"The local browser cache does not contain enough positive stock for the cached-search phase.",
@@ -836,13 +849,22 @@ async function addItemByKeyboard(
 		const result = page.getByTestId(`pos-item-row-${itemCode}`).first();
 		await expect(result).toBeVisible({ timeout: 30_000 });
 		await expect(result).toHaveAttribute("aria-selected", "true");
+		// Search-source compliance ends when the requested result is ready. Item
+		// selection may independently refresh transactional item details; that is
+		// not a product-search fallback and must be reported separately.
+		const serverRequests = requests.length;
 		await page.getByTestId("pos-item-search").locator("input").press("Enter");
 		await expect(page.getByTestId(`cart-row-${itemCode}`).first()).toBeVisible({
 			timeout: 30_000,
 		});
 		return {
 			searchLatencyMs: Date.now() - startedAt,
-			serverRequests: requests.length,
+			serverRequests,
+			totalGetItemsRequests: requests.length,
+			requestEvidence: requests.map((request) => ({
+				url: request.url(),
+				postData: request.postData() || "",
+			})),
 		};
 	} finally {
 		page.off("request", listener);
@@ -1055,7 +1077,11 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 				shiftEvidence.items = serverItems;
 			} else {
 				await setForceServerSearchThroughUi(page, false);
-				shiftEvidence.items = await chooseCachedItems(page, SALES_PER_SHIFT);
+				shiftEvidence.items = await chooseCachedItems(
+					page,
+					SALES_PER_SHIFT,
+					`${POS_PROFILE}_${warehouse}`,
+				);
 				expect(
 					shiftEvidence.items.length,
 					"The local browser cache must contain positive-stock items for cached sales.",
@@ -1145,6 +1171,8 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 							mode,
 							expectedGetItemsRequests: mode === "server" ? "> 0" : "0",
 							actualGetItemsRequests: result.serverRequests,
+							totalGetItemsRequests: result.totalGetItemsRequests,
+							requestEvidence: result.requestEvidence,
 						};
 						shiftEvidence.searchModeFailures.push(searchModeFailure);
 						evidence.searchModeFailures.push(searchModeFailure);
