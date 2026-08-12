@@ -520,9 +520,23 @@ async function waitForPosShell(page: Page) {
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
-	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
-		timeout: 90_000,
-	});
+	// A cold register with no open shift is ready when its opening-shift dialog
+	// is visible. That blocking dialog intentionally hides the counter grid; an
+	// already-open register instead exposes the grid directly.
+	await expect
+		.poll(
+			async () =>
+				(await page
+					.getByTestId("opening-shift-dialog")
+					.isVisible()
+					.catch(() => false)) ||
+				(await page
+					.getByTestId("counter-grid-pos")
+					.isVisible()
+					.catch(() => false)),
+			{ timeout: 90_000 },
+		)
+		.toBe(true);
 }
 
 async function waitForShiftState(page: Page) {
