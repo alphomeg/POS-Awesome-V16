@@ -51,6 +51,7 @@ export const useItemsStore = defineStore("items", () => {
 	type SearchItemsOptions = {
 		serverFallbackDelayMs?: number;
 		resultLimit?: number;
+		forceServer?: boolean;
 	};
 
 	const getOfflineApi = async (): Promise<OfflineModule> => {
@@ -391,7 +392,11 @@ export const useItemsStore = defineStore("items", () => {
 		resetItemLoadingCoordinator();
 	};
 
-	const shouldTryServerSearchFallback = (term: string, group: string) => {
+	const shouldTryServerSearchFallback = (
+		term: string,
+		group: string,
+		forceServer = false,
+	) => {
 		if (
 			normalizeSearchScope(term).length <
 			SERVER_SEARCH_FALLBACK_MIN_LENGTH
@@ -401,7 +406,7 @@ export const useItemsStore = defineStore("items", () => {
 		if (isOffline()) {
 			return false;
 		}
-		return !isServerSearchMissCached(
+		return forceServer || !isServerSearchMissCached(
 			buildServerSearchScopeKey(term, group),
 		);
 	};
@@ -431,7 +436,7 @@ export const useItemsStore = defineStore("items", () => {
 		group: string,
 		options: SearchItemsOptions = {},
 	): Promise<Item[]> => {
-		if (!shouldTryServerSearchFallback(term, group)) {
+		if (!shouldTryServerSearchFallback(term, group, options.forceServer)) {
 			return [];
 		}
 
@@ -1179,6 +1184,9 @@ export const useItemsStore = defineStore("items", () => {
 			options.resultLimit || resolvePageSize(),
 		);
 		const previousTerm = searchTerm.value || "";
+		const shouldForceServerSearch = normalizeBooleanSetting(
+			posProfile.value?.posa_force_server_items,
+		);
 		const canRefineSearch =
 			!shouldUseIndexedSearch() &&
 			term &&
@@ -1229,7 +1237,11 @@ export const useItemsStore = defineStore("items", () => {
 		// barcode/code match simply because it was rendered first.
 		const shouldPreferStoredOfflineCatalog =
 			isOffline() && shouldPersistItems();
-		if (exactHotItem && !shouldPreferStoredOfflineCatalog) {
+		if (
+			exactHotItem &&
+			!shouldPreferStoredOfflineCatalog &&
+			!shouldForceServerSearch
+		) {
 			const exactResults = dedupeItems(
 				[[exactHotItem], hotSearchResults],
 				resultLimit,
@@ -1251,8 +1263,9 @@ export const useItemsStore = defineStore("items", () => {
 				normalizedGroup,
 				resultLimit,
 			);
-			const cachedServerResults =
-				getCachedServerSearchResult(serverResultCacheKey);
+			const cachedServerResults = shouldForceServerSearch
+				? null
+				: getCachedServerSearchResult(serverResultCacheKey);
 			if (cachedServerResults && !shouldPreferStoredOfflineCatalog) {
 				setFilteredItems(cachedServerResults, term);
 				performanceMetrics.value.searchHits++;
@@ -1287,7 +1300,10 @@ export const useItemsStore = defineStore("items", () => {
 				const serverResults = await scheduleServerSearchFallback(
 					term,
 					normalizedGroup,
-					options,
+					{
+						...options,
+						forceServer: shouldForceServerSearch,
+					},
 				);
 				performanceMetrics.value.searchMisses++;
 

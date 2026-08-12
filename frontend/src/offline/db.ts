@@ -589,7 +589,12 @@ type PersistWorkerBatch = {
 	timeout: ReturnType<typeof setTimeout>;
 };
 
-const PERSIST_WORKER_TIMEOUT_MS = 10_000;
+// Catalog hydration can hold an IndexedDB write transaction long enough for a
+// small settings/cache write to wait behind it. Treating that expected queueing
+// as a dead worker after ten seconds caused healthy terminals to abandon their
+// worker mid-shift. One minute still bounds a genuinely stranded worker while
+// allowing the catalog transaction to finish on modest Windows hardware.
+const PERSIST_WORKER_TIMEOUT_MS = 60_000;
 const pendingPersistEntries = new Map<string, unknown>();
 const inFlightWorkerBatches = new Map<number, PersistWorkerBatch>();
 const activePersistOperations = new Set<Promise<void>>();
@@ -597,6 +602,7 @@ let persistFlushScheduled = false;
 let nextPersistBatchId = 1;
 let persistWorkerHealthy = false;
 let directPersistChain: Promise<void> = Promise.resolve();
+let workerPersistChain: Promise<void> = Promise.resolve();
 
 export async function hydrateMemoryKeys(
 	keys: readonly string[],
@@ -938,25 +944,13 @@ function initializePersistWorker() {
 	}
 }
 
-function dispatchPersistBatch(entries: PersistEntry[]) {
-	if (!entries.length) {
-		return Promise.resolve();
-	}
-	if (offlineStorageInitializationState === "pending") {
-		return startupMemoryInitialization.then((storageReady) =>
-			storageReady ? dispatchPersistBatch(entries) : undefined,
-		);
-	}
-	if (isOfflineStorageDegraded()) {
-		return Promise.resolve();
-	}
-
+function dispatchPersistBatchToWorker(entries: PersistEntry[]) {
 	if (!persistWorker || !persistWorkerHealthy) {
 		return queueDirectPersist(entries);
 	}
 
 	const batchId = nextPersistBatchId++;
-	const operation = new Promise<void>((resolve, reject) => {
+	return new Promise<void>((resolve, reject) => {
 		const timeout = setTimeout(() => {
 			failAllWorkerBatches(
 				new Error(`Persistence worker batch ${batchId} timed out`),
@@ -979,7 +973,29 @@ function dispatchPersistBatch(entries: PersistEntry[]) {
 			failAllWorkerBatches(error);
 		}
 	});
+}
 
+function dispatchPersistBatch(entries: PersistEntry[]) {
+	if (!entries.length) {
+		return Promise.resolve();
+	}
+	if (offlineStorageInitializationState === "pending") {
+		return startupMemoryInitialization.then((storageReady) =>
+			storageReady ? dispatchPersistBatch(entries) : undefined,
+		);
+	}
+	if (isOfflineStorageDegraded()) {
+		return Promise.resolve();
+	}
+
+	// Start the timeout only when this batch is actually posted. Posting every
+	// microtask immediately made later batches expire while merely waiting in
+	// the worker's own serial chain. Keeping one main-thread dispatch in flight
+	// preserves write order and makes the timeout measure worker liveness.
+	const operation = workerPersistChain.then(() =>
+		dispatchPersistBatchToWorker(entries),
+	);
+	workerPersistChain = operation.catch(() => undefined);
 	return operation;
 }
 

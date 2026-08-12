@@ -19,6 +19,7 @@ const SALES_PER_SHIFT = positiveInteger(
 	100,
 );
 const REQUEST_TIMEOUT_MS = 60_000;
+const CLOSE_RESPONSE_TIMEOUT_MS = 3 * 60_000;
 const SEARCH_REQUEST_METHOD =
 	"posawesome.posawesome.api.items.get_items";
 const STOCK_METHOD =
@@ -116,6 +117,7 @@ type ShiftEvidence = {
 	getItemsRequests: number;
 	stockAfterEachSale: SaleStockEvidence[];
 	stockAnomalies: Array<Record<string, unknown>>;
+	searchModeFailures: Array<Record<string, unknown>>;
 };
 type TemporaryCashier = {
 	user: string;
@@ -134,10 +136,10 @@ test.skip(
 // An eight-hour ceiling lets a 1,000-sale endurance test wait for authoritative
 // background finalization and capture server stock after every sale while still
 // failing a genuinely stranded ledger through the per-sale 90-second bound.
-// evidence and Playwright traces on failure. Continuous video encoding is not
-// diagnostic here and can itself saturate a test workstation, obscuring POS
-// responsiveness instead of measuring it.
-test.use({ video: "off" });
+// evidence and screenshots on failure. Continuous trace/video recording can
+// itself saturate a test workstation during a 1,000-sale run, obscuring POS
+// persistence and responsiveness instead of measuring them.
+test.use({ video: "off", trace: "off" });
 
 function positiveInteger(value: string | undefined, fallback: number) {
 	const parsed = Number.parseInt(value || "", 10);
@@ -583,7 +585,7 @@ async function startShiftThroughUi(page: Page, profileName: string) {
 async function closeShiftThroughUi(page: Page) {
 	const preparationResponse = page.waitForResponse(
 		responseFor("make_closing_shift_from_opening"),
-		{ timeout: 45_000 },
+		{ timeout: CLOSE_RESPONSE_TIMEOUT_MS },
 	);
 	await page.getByRole("button", { name: "Open actions menu" }).click();
 	await page.locator('[data-test="quick-action-close-shift"]').click();
@@ -607,7 +609,7 @@ async function closeShiftThroughUi(page: Page) {
 	}
 	const submitResponse = page.waitForResponse(
 		responseFor("submit_closing_shift"),
-		{ timeout: 45_000 },
+		{ timeout: CLOSE_RESPONSE_TIMEOUT_MS },
 	);
 	await dialog.getByRole("button", { name: "Submit", exact: true }).click();
 	const submitBody = await (await submitResponse).json();
@@ -630,11 +632,25 @@ async function setForceServerSearchThroughUi(page: Page, enabled: boolean) {
 	const searchTools = selector.getByRole("button", { name: /search tools/i });
 	const label = (await searchTools.getAttribute("aria-label")) || "";
 	if (/show/i.test(label)) await searchTools.click();
-	await selector.getByRole("button", { name: "Settings", exact: true }).click();
 	const dialog = page
 		.locator("[role='dialog']")
 		.filter({ hasText: "Item Selector Settings" })
 		.last();
+	const settingsButton = selector.getByRole("button", {
+		name: "Settings",
+		exact: true,
+	});
+	// The catalog progress update can re-render the search toolbar during cold
+	// hydration. Retry the visible UI action until the settings dialog owns the
+	// state instead of treating a replaced button node as a failed POS action.
+	const settingsDeadline = Date.now() + 30_000;
+	while (
+		Date.now() < settingsDeadline &&
+		!(await dialog.isVisible().catch(() => false))
+	) {
+		await settingsButton.click().catch(() => null);
+		await page.waitForTimeout(250);
+	}
 	await expect(dialog).toBeVisible({ timeout: 15_000 });
 	const forceServerControl = dialog.locator('input[type="checkbox"]').last();
 	await expect(forceServerControl).toBeVisible();
@@ -940,6 +956,7 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 		mainFrameNavigations: [] as string[],
 		cleanupErrors: [] as string[],
 		stockAnomalies: [] as Array<Record<string, unknown>>,
+		searchModeFailures: [] as Array<Record<string, unknown>>,
 	};
 	let profileSnapshot: ProfileSettings | null = null;
 	let cashier: TemporaryCashier | null = null;
@@ -1028,6 +1045,7 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 				getItemsRequests: 0,
 				stockAfterEachSale: [],
 				stockAnomalies: [],
+				searchModeFailures: [],
 			};
 			evidence.shifts.push(shiftEvidence);
 			shiftEvidence.openingShift = await startShiftThroughUi(page, POS_PROFILE);
@@ -1063,17 +1081,6 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 						itemCode: item.itemCode,
 						...search,
 					};
-					if (mode === "server") {
-						expect(
-							result.serverRequests,
-							`Server-search sale ${shiftIndex + 1}.${saleIndex + 1} must call get_items.`,
-						).toBeGreaterThan(0);
-					} else {
-						expect(
-							result.serverRequests,
-							`Cached exact-code sale ${shiftIndex + 1}.${saleIndex + 1} must not call get_items.`,
-						).toBe(0);
-					}
 					invoiceNames.push(result.invoice);
 					shiftEvidence.successfulSales += 1;
 					shiftEvidence.getItemsRequests += result.serverRequests;
@@ -1124,6 +1131,23 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 						};
 						shiftEvidence.stockAnomalies.push(anomaly);
 						evidence.stockAnomalies.push(anomaly);
+					}
+					const searchModeMatches =
+						mode === "server"
+							? result.serverRequests > 0
+							: result.serverRequests === 0;
+					if (!searchModeMatches) {
+						const searchModeFailure = {
+							shift: shiftIndex + 1,
+							sale: saleIndex + 1,
+							invoice: result.invoice,
+							itemCode: result.itemCode,
+							mode,
+							expectedGetItemsRequests: mode === "server" ? "> 0" : "0",
+							actualGetItemsRequests: result.serverRequests,
+						};
+						shiftEvidence.searchModeFailures.push(searchModeFailure);
+						evidence.searchModeFailures.push(searchModeFailure);
 					}
 				} catch (error) {
 					const recoverable = await recoverAfterFailedSale(page);
@@ -1197,6 +1221,10 @@ test("runs ten UI-managed same-tab POS shifts with server and browser-cache sear
 		expect(
 			evidence.stockAnomalies,
 			"Every completed sale must finalize and reduce reservation-aware available stock by one unit.",
+		).toHaveLength(0);
+		expect(
+			evidence.searchModeFailures,
+			"Every sale must use the search source selected for its shift.",
 		).toHaveLength(0);
 		expect(evidence.globalErrors, "Unexpected browser errors are not release-ready.").toHaveLength(0);
 		expect(

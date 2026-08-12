@@ -989,4 +989,61 @@ describe("itemsStore loadItems", () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it("bypasses positive and miss caches when the POS Profile forces server search", async () => {
+		vi.useFakeTimers();
+		try {
+			const store = useItemsStore();
+			await store.initialize({
+				name: "POS-FORCE-SERVER",
+				warehouse: "Main WH",
+				selling_price_list: "Retail",
+				currency: "PKR",
+				item_groups: [],
+				posa_use_limit_search: 1,
+				posa_force_server_items: 1,
+			} as any);
+			itemServiceMocks.getItemsData.mockClear();
+
+			const firstSearch = store.searchItems("panadol", {
+				serverFallbackDelayMs: 0,
+				resultLimit: 20,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await firstSearch;
+
+			const secondSearch = store.searchItems("panadol", {
+				serverFallbackDelayMs: 0,
+				resultLimit: 20,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await secondSearch;
+
+			expect(itemServiceMocks.getItemsData).toHaveBeenCalledTimes(2);
+			expect(itemServiceMocks.getItemsData).toHaveBeenNthCalledWith(
+				2,
+				expect.objectContaining({
+					search_value: "panadol",
+					limit: 20,
+				}),
+				expect.any(AbortSignal),
+			);
+
+			itemServiceMocks.getItemsData.mockResolvedValue([]);
+			const firstMiss = store.searchItems("zzzz", {
+				serverFallbackDelayMs: 0,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await firstMiss;
+			const secondMiss = store.searchItems("zzzz", {
+				serverFallbackDelayMs: 0,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await secondMiss;
+
+			expect(itemServiceMocks.getItemsData).toHaveBeenCalledTimes(4);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
