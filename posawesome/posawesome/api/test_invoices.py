@@ -236,6 +236,55 @@ class TestInvoicesApi(unittest.TestCase):
         self.assertTrue(rows[0]["can_edit_submitted_invoice"])
         self.assertIsNone(rows[0]["edit_block_reason"])
 
+    def test_list_submitted_invoices_batches_closed_shift_lookup(self):
+        reference_calls = []
+        active_child_calls = []
+
+        self.invoices.frappe.get_list = lambda *args, **kwargs: [
+            {
+                "name": f"SINV-{index:04d}",
+                "doctype": "Sales Invoice",
+                "docstatus": 1,
+                "is_return": 0,
+                "return_against": None,
+                "creation": "2026-07-10 11:30:00",
+                "amended_from": None,
+                "pos_profile": "POS-1",
+                "company": "Company 1",
+            }
+            for index in range(1, 4)
+        ]
+
+        def fake_get_all(doctype, **kwargs):
+            if doctype == "Sales Invoice Reference":
+                reference_calls.append(kwargs)
+                return [
+                    {"sales_invoice": "SINV-0001"},
+                    {"sales_invoice": "SINV-0002"},
+                    {"sales_invoice": "SINV-0003"},
+                ]
+            if doctype == "Sales Invoice":
+                active_child_calls.append(kwargs)
+            return []
+
+        self.invoices.frappe.get_all = fake_get_all
+        self.invoices.frappe.db.exists = lambda *args, **kwargs: False
+        self.invoices.frappe.db.has_column = lambda *args, **kwargs: False
+        self.invoices.frappe.db.get_value = lambda *args, **kwargs: None
+
+        rows = self.invoices.list_submitted_invoices(
+            doctype="Sales Invoice",
+            filters={"pos_profile": "POS-1"},
+            fields=["name"],
+        )
+
+        self.assertEqual(len(reference_calls), 1)
+        self.assertEqual(active_child_calls, [])
+        self.assertTrue(all(not row["can_edit_submitted_invoice"] for row in rows))
+        self.assertTrue(
+            all("closing shift" in row["edit_block_reason"] for row in rows)
+        )
+
     def test_list_submitted_invoices_includes_authoritative_cashier_when_available(self):
         captured = {}
 

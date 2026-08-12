@@ -30,7 +30,7 @@
 				@update:menu="onCustomerMenuToggle"
 				@update:modelValue="onCustomerChange"
 				@update:search="onCustomerSearch"
-				@keydown.enter="handleEnter"
+				@keydown.enter.capture="handleEnter"
 				:virtual-scroll="true"
 				:virtual-scroll-item-height="48"
 			>
@@ -58,7 +58,11 @@
 							</v-icon>
 						</template>
 					</v-tooltip>
-					<v-tooltip v-if="!isCounterGridHeader" :text="__('Reload customers')" content-class="posa-theme-tooltip">
+					<v-tooltip
+						v-if="!isCounterGridHeader"
+						:text="__('Reload customers')"
+						content-class="posa-theme-tooltip"
+					>
 						<template #activator="{ props }">
 							<v-icon
 								v-bind="props"
@@ -80,7 +84,11 @@
 
 				<!-- Add icon (right) -->
 				<template #append-inner>
-					<v-tooltip v-if="!isCounterGridHeader" :text="__('Add new customer')" content-class="posa-theme-tooltip">
+					<v-tooltip
+						v-if="!isCounterGridHeader"
+						:text="__('Add new customer')"
+						content-class="posa-theme-tooltip"
+					>
 						<template #activator="{ props }">
 							<v-icon
 								v-bind="props"
@@ -154,17 +162,11 @@
 				class="customer-load-bar"
 				rounded
 			/>
-			<div
-				v-if="showCustomerLoadProgress"
-				class="customer-load-status"
-				aria-live="polite"
-			>
+			<div v-if="showCustomerLoadProgress" class="customer-load-status" aria-live="polite">
 				<span class="customer-load-status__count">
 					{{ customerLoadedCountLabel }}
 				</span>
-				<span class="customer-load-status__percent">
-					{{ customerLoadPercent }}%
-				</span>
+				<span class="customer-load-status__percent"> {{ customerLoadPercent }}% </span>
 			</div>
 		</div>
 		<!-- Update customer modal -->
@@ -350,6 +352,7 @@ import { useOnlineStatus } from "../../../composables/core/useOnlineStatus";
 import { useToastStore } from "../../../stores/toastStore.js";
 import { useUIStore } from "../../../stores/uiStore.js";
 import { ensureCustomersReady } from "../../../modules/customers/customerLoadingCoordinator";
+import { findCustomerForKeyboardCommit } from "../../../stores/customers/customerSearch";
 
 export default {
 	props: {
@@ -400,18 +403,13 @@ export default {
 			Math.max(0, Math.min(100, Math.round(loadProgress.value || 0))),
 		);
 		const customerLoadedCountLabel = computed(
-			() =>
-				`${Number(loadedCustomerCount.value || 0).toLocaleString()} ${__("customers")}`,
+			() => `${Number(loadedCustomerCount.value || 0).toLocaleString()} ${__("customers")}`,
 		);
 		const customerFieldLabel = computed(() =>
-			showCustomerLoadProgress.value
-				? frappe._("Loading customers")
-				: frappe._("Customer"),
+			showCustomerLoadProgress.value ? frappe._("Loading customers") : frappe._("Customer"),
 		);
 		const customerFieldPlaceholder = computed(() =>
-			showCustomerLoadProgress.value
-				? __("Loading customers...")
-				: __("Search customer"),
+			showCustomerLoadProgress.value ? __("Loading customers...") : __("Search customer"),
 		);
 		const customerNoDataText = computed(() =>
 			showCustomerLoadProgress.value
@@ -573,17 +571,19 @@ export default {
 		};
 
 		const handleEnter = (event) => {
-			const inputText = event.target.value?.toLowerCase() || "";
-			const matched = customers.value.find((cust) => {
-				return (
-					cust.customer_name?.toLowerCase().includes(inputText) ||
-					cust.name?.toLowerCase().includes(inputText)
-				);
-			});
+			const matched = findCustomerForKeyboardCommit(customers.value, event.target.value);
 
 			if (!matched) {
 				return;
 			}
+
+			// Vuetify processes Enter on the input before a bubbling component
+			// handler and can commit a stale active row while our IndexedDB search
+			// publishes its latest result. Exact keyboard selection must own this
+			// event before the autocomplete's target/bubble handlers run.
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation?.();
 
 			tempSelectedCustomer.value = matched.name;
 			internalCustomer.value = matched.name;

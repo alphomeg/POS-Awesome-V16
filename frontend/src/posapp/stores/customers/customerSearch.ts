@@ -66,3 +66,33 @@ export function customerMatchesSearchTerm(
 ): boolean {
 	return customerMatchesSearchParts(customer, buildCustomerSearchParts(term));
 }
+
+export function findCustomerForKeyboardCommit(
+	customers: readonly CustomerSummary[],
+	term: string | null | undefined,
+): CustomerSummary | undefined {
+	const normalizedTerm = normalizeCustomerSearchTerm(term).toLowerCase();
+	if (!normalizedTerm) {
+		return undefined;
+	}
+
+	const exactMatch = customers.find((customer) =>
+		[customer.name, customer.customer_name].some(
+			(value) =>
+				String(value || "")
+					.trim()
+					.toLowerCase() === normalizedTerm,
+		),
+	);
+	if (exactMatch) {
+		return exactMatch;
+	}
+
+	return customers.find((customer) =>
+		[customer.name, customer.customer_name].some((value) =>
+			String(value || "")
+				.toLowerCase()
+				.includes(normalizedTerm),
+		),
+	);
+}

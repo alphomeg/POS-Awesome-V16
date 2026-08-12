@@ -205,7 +205,7 @@ def _has_stored_value_settlement(doc):
     return bool(redemptions)
 
 
-def get_submitted_invoice_edit_metadata(doc):
+def get_submitted_invoice_edit_metadata(doc, known_closed=None):
     root_info = _get_root_invoice_info(doc.doctype, doc)
     window_hours = _get_edit_window_hours(doc.get("pos_profile"))
     age_hours = _hours_since(root_info.get("original_creation"))
@@ -224,18 +224,18 @@ def get_submitted_invoice_edit_metadata(doc):
     elif doc.get("return_against"):
         can_edit = False
         reason = _("Credit notes cannot be edited. Use the return workflow.")
+    elif age_hours > window_hours:
+        can_edit = False
+        reason = _("This invoice is outside the {0}-hour edit window.").format(window_hours)
+    elif known_closed is True or (known_closed is None and _is_closed_invoice(doc)):
+        can_edit = False
+        reason = _("This invoice is already linked to a submitted POS closing shift.")
     elif frappe.db.exists(doc.doctype, {"return_against": doc.name, "docstatus": 1}):
         can_edit = False
         reason = _("This invoice already has a submitted return or credit note.")
     elif _get_active_children(doc.doctype, doc.name):
         can_edit = False
         reason = _("This invoice has already been amended. Edit the latest amended invoice.")
-    elif age_hours > window_hours:
-        can_edit = False
-        reason = _("This invoice is outside the {0}-hour edit window.").format(window_hours)
-    elif _is_closed_invoice(doc):
-        can_edit = False
-        reason = _("This invoice is already linked to a submitted POS closing shift.")
     elif _has_stored_value_settlement(doc):
         can_edit = False
         reason = _("Invoices settled with gift cards or customer credit are not editable here.")
@@ -381,6 +381,45 @@ def _append_cashier_display_names(rows):
         row["posa_cashier_name"] = cashier_names.get(cashier_id) or cashier_id
 
 
+def _get_closed_invoice_names(doctype, rows):
+    invoice_names = {
+        str(row.get("name") or "").strip()
+        for row in rows or []
+        if str(row.get("name") or "").strip()
+    }
+    if not invoice_names:
+        return set()
+
+    closed_names = {
+        str(row.get("name") or "").strip()
+        for row in rows or []
+        if row.get("pos_closing_entry")
+        or (doctype == "POS Invoice" and row.get("consolidated_invoice"))
+    }
+    remaining = sorted(invoice_names - closed_names)
+    if not remaining:
+        return closed_names
+
+    link_field = "sales_invoice" if doctype == "Sales Invoice" else "pos_invoice"
+    references = frappe.get_all(
+        "Sales Invoice Reference",
+        filters={
+            "parenttype": "POS Closing Shift",
+            "parentfield": "pos_transactions",
+            "docstatus": 1,
+            link_field: ["in", remaining],
+        },
+        fields=[link_field],
+        limit_page_length=0,
+    )
+    closed_names.update(
+        str(reference.get(link_field) or "").strip()
+        for reference in references or []
+        if str(reference.get(link_field) or "").strip()
+    )
+    return closed_names
+
+
 @frappe.whitelist()
 def list_submitted_invoices(
     doctype="Sales Invoice",
@@ -432,10 +471,16 @@ def list_submitted_invoices(
     )
     if "posa_cashier" in requested_fields:
         _append_cashier_display_names(rows)
+    closed_invoice_names = _get_closed_invoice_names(doctype, rows)
     for row in rows or []:
         row["doctype"] = doctype
         doc = frappe._dict(row)
-        row.update(get_submitted_invoice_edit_metadata(doc))
+        row.update(
+            get_submitted_invoice_edit_metadata(
+                doc,
+                known_closed=doc.name in closed_invoice_names,
+            )
+        )
     return rows
 
 

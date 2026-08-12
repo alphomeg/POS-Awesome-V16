@@ -5,6 +5,7 @@ import * as paymentInitialization from "../src/posapp/utils/paymentInitializatio
 const {
 	applyPreferredPaymentAmount,
 	initializePaymentLinesForDialog,
+	resolveImmediateSigningAmount,
 	resolvePreferredPaymentLine,
 } = paymentInitialization;
 
@@ -14,6 +15,15 @@ describe("paymentInitialization", () => {
 		String(payment?.mode_of_payment || "")
 			.toLowerCase()
 			.includes("cash");
+
+	it("uses a captured shortcut total while the payment host still reports zero", () => {
+		expect(resolveImmediateSigningAmount(0, 4)).toBe(4);
+		expect(resolveImmediateSigningAmount(undefined, -4)).toBe(4);
+	});
+
+	it("prefers the hydrated document total over a shortcut fallback", () => {
+		expect(resolveImmediateSigningAmount(3.64, 4)).toBe(3.64);
+	});
 
 	it("falls back to a cash-like payment when no default flag exists", () => {
 		const doc: any = {
