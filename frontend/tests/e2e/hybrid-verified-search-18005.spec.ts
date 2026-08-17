@@ -20,6 +20,19 @@ function isMethodRequest(request: Request, method: string) {
 	return request.url().includes(method);
 }
 
+function requestSearchValue(request: Request) {
+	const params = new URLSearchParams(request.postData() || "");
+	const direct = params.get("search_value");
+	if (direct !== null) return direct;
+	const args = params.get("args");
+	if (!args) return "";
+	try {
+		return String(JSON.parse(args)?.search_value || "");
+	} catch {
+		return "";
+	}
+}
+
 async function startZeroBalanceShiftIfNeeded(page: Page) {
 	const openingDialog = page.getByTestId("opening-shift-dialog");
 	const counterGrid = page.getByTestId("counter-grid-pos");
@@ -69,26 +82,7 @@ async function readProfileFlags(page: Page) {
 	}, PROFILE);
 }
 
-test("local candidate is immediate, then live stock and price are verified in place", async ({
-	page,
-}) => {
-	test.setTimeout(5 * 60_000);
-	const liveRequests: Request[] = [];
-	const serverSearchRequests: Request[] = [];
-	page.on("request", (request) => {
-		if (isMethodRequest(request, "get_live_item_state")) {
-			liveRequests.push(request);
-		}
-		if (
-			isMethodRequest(
-				request,
-				"posawesome.posawesome.api.items.get_items",
-			)
-		) {
-			serverSearchRequests.push(request);
-		}
-	});
-
+async function preparePos(page: Page) {
 	await page.goto(POS_PATH, { waitUntil: "domcontentloaded" });
 	if (/\/login/.test(page.url())) {
 		throw new Error("Hybrid Verified acceptance requires POSA_SMOKE_SID.");
@@ -106,6 +100,31 @@ test("local candidate is immediate, then live stock and price are verified in pl
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
+}
+
+test("local candidate is immediate, then live stock and price are verified in place", async ({
+	page,
+}) => {
+	test.setTimeout(5 * 60_000);
+	const liveRequests: Request[] = [];
+	const serverSearchRequests: Request[] = [];
+	page.on("request", (request) => {
+		if (isMethodRequest(request, "get_live_item_state")) {
+			liveRequests.push(request);
+		}
+		if (
+			isMethodRequest(
+				request,
+				"posawesome.posawesome.api.items.get_items",
+			) &&
+			requestSearchValue(request).trim().toLowerCase() ===
+				ITEM_CODE.toLowerCase()
+		) {
+			serverSearchRequests.push(request);
+		}
+	});
+
+	await preparePos(page);
 
 	expect(await readProfileFlags(page)).toEqual({
 		fastCounter: 1,
@@ -119,16 +138,16 @@ test("local candidate is immediate, then live stock and price are verified in pl
 	const startedAt = performance.now();
 	await entry.press("Enter");
 	const searchSurface = page.locator(".items-selector-shell--counter-dialog");
+	const itemRow = searchSurface
+		.locator(`[data-item-code="${ITEM_CODE}"]`)
+		.first();
+	await expect(itemRow).toBeVisible({ timeout: 10_000 });
+	const candidateLatencyMs = performance.now() - startedAt;
 	await expect(searchSurface).toHaveAttribute(
 		"data-search-ready-query",
 		ITEM_CODE,
 		{ timeout: 10_000 },
 	);
-	const candidateLatencyMs = performance.now() - startedAt;
-	const itemRow = searchSurface
-		.locator(`[data-item-code="${ITEM_CODE}"]`)
-		.first();
-	await expect(itemRow).toBeVisible({ timeout: 10_000 });
 	const firstVisibleCode = await searchSurface
 		.locator("[data-item-code]")
 		.first()
@@ -160,6 +179,52 @@ test("local candidate is immediate, then live stock and price are verified in pl
 	expect(serverSearchRequests.length).toBeLessThanOrEqual(1);
 });
 
-test.afterEach(async ({ page }) => {
+test("warmed exact-code search remains immediate offline and is labelled last known", async ({
+	context,
+	page,
+}) => {
+	test.setTimeout(5 * 60_000);
+	let liveRequestCount = 0;
+	page.on("request", (request) => {
+		if (isMethodRequest(request, "get_live_item_state")) {
+			liveRequestCount += 1;
+		}
+	});
+	await preparePos(page);
+
+	const entry = page.getByTestId("counter-grid-item-entry");
+	await expect(entry).toBeFocused({ timeout: 30_000 });
+	await entry.fill(ITEM_CODE);
+	await entry.press("Enter");
+	let searchSurface = page.locator(".items-selector-shell--counter-dialog");
+	await expect(
+		searchSurface.locator(`[data-item-code="${ITEM_CODE}"]`).first(),
+	).toBeVisible({ timeout: 10_000 });
+	await page.keyboard.press("Escape");
+	await expect(searchSurface).toBeHidden({ timeout: 15_000 });
+	await expect(entry).toBeFocused({ timeout: 15_000 });
+
+	await context.setOffline(true);
+	const requestsBeforeOfflineSearch = liveRequestCount;
+	await entry.fill(ITEM_CODE);
+	const startedAt = performance.now();
+	await entry.press("Enter");
+	searchSurface = page.locator(".items-selector-shell--counter-dialog");
+	const offlineRow = searchSurface
+		.locator(`[data-item-code="${ITEM_CODE}"]`)
+		.first();
+	await expect(offlineRow).toBeVisible({ timeout: 10_000 });
+	expect(performance.now() - startedAt).toBeLessThan(2_000);
+	await expect(
+		offlineRow.locator(
+			'.live-state-last_known[title="Showing last known stock and price"]',
+		),
+	).toBeVisible({ timeout: 10_000 });
+	expect(liveRequestCount).toBe(requestsBeforeOfflineSearch);
+	await context.setOffline(false);
+});
+
+test.afterEach(async ({ context, page }) => {
+	await context.setOffline(false).catch(() => undefined);
 	await cleanupProvisionedTerminalCashier(page).catch(() => undefined);
 });
