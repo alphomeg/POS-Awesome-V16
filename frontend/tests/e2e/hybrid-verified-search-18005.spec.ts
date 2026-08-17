@@ -83,6 +83,12 @@ async function readProfileFlags(page: Page) {
 }
 
 async function preparePos(page: Page) {
+	const hotCatalogueReady = page.waitForResponse(
+		(response) =>
+			isMethodRequest(response.request(), "get_hot_items") &&
+			response.status() === 200,
+		{ timeout: 3 * 60_000 },
+	);
 	await page.goto(POS_PATH, { waitUntil: "domcontentloaded" });
 	if (/\/login/.test(page.url())) {
 		throw new Error("Hybrid Verified acceptance requires POSA_SMOKE_SID.");
@@ -100,12 +106,16 @@ async function preparePos(page: Page) {
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
+	// A brand-new browser has no local candidates. Wait for the purpose-built
+	// hot catalogue, not the much larger background/offline catalogue. The
+	// terminal must already be unlocked so this readiness cycle is not reloaded.
+	await hotCatalogueReady;
 }
 
 test("local candidate is immediate, then live stock and price are verified in place", async ({
 	page,
 }) => {
-	test.setTimeout(5 * 60_000);
+	test.setTimeout(8 * 60_000);
 	const liveRequests: Request[] = [];
 	const serverSearchRequests: Request[] = [];
 	page.on("request", (request) => {
@@ -183,7 +193,7 @@ test("warmed exact-code search remains immediate offline and is labelled last kn
 	context,
 	page,
 }) => {
-	test.setTimeout(5 * 60_000);
+	test.setTimeout(8 * 60_000);
 	let liveRequestCount = 0;
 	page.on("request", (request) => {
 		if (isMethodRequest(request, "get_live_item_state")) {
