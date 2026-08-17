@@ -56,14 +56,6 @@
 							:format-currency="formatCurrency"
 							:rate-precision="ratePrecision"
 						/>
-						<v-icon
-							:size="14"
-							:class="['live-state-icon', liveStateClass(item)]"
-							:color="liveStateColor(item)"
-							:title="liveStateTitle(item)"
-						>
-							{{ liveStateIcon(item) }}
-						</v-icon>
 					</div>
 					<div
 						v-if="
