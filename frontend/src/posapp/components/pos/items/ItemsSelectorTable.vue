@@ -56,6 +56,14 @@
 							:format-currency="formatCurrency"
 							:rate-precision="ratePrecision"
 						/>
+						<v-icon
+							:size="14"
+							:class="['live-state-icon', liveStateClass(item)]"
+							:color="liveStateColor(item)"
+							:title="liveStateTitle(item)"
+						>
+							{{ liveStateIcon(item) }}
+						</v-icon>
 					</div>
 					<div
 						v-if="
@@ -112,10 +120,14 @@
 				</div>
 			</template>
 			<template v-slot:item.actual_qty="{ item }">
-				<span class="golden--text live-stock-cell" :class="{ 'negative-number': isNegative(item.actual_qty) }">
+				<span
+					class="golden--text live-stock-cell"
+					:class="{ 'negative-number': isNegative(item.actual_qty) }"
+				>
 					{{ formatActualQty(item.actual_qty) }}
 					<v-icon
 						:size="14"
+						:class="['live-state-icon', liveStateClass(item)]"
 						:color="liveStateColor(item)"
 						:title="liveStateTitle(item)"
 					>
@@ -165,6 +177,10 @@ function liveStateIcon(item) {
 	if (status === "verifying") return "mdi-sync";
 	if (status === "unavailable") return "mdi-block-helper";
 	return "mdi-cloud-clock-outline";
+}
+
+function liveStateClass(item) {
+	return `live-state-${item?._posa_live_state_status || "last_known"}`;
 }
 
 function liveStateColor(item) {
@@ -332,6 +348,10 @@ defineExpose({ scrollToIndex, getTableElement, tableRef });
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
+}
+
+.live-state-icon {
+	flex: 0 0 auto;
 }
 
 .sleek-data-table {

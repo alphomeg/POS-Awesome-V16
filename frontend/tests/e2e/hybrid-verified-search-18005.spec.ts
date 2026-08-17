@@ -1,0 +1,165 @@
+import { expect, test, type Page, type Request } from "@playwright/test";
+
+import {
+	cleanupProvisionedTerminalCashier,
+	ensureAuthoritativeTerminalUnlock,
+} from "./helpers/terminalAuth";
+
+const ENABLED = process.env.POSA_HYBRID_VERIFIED_E2E === "1";
+const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
+const PROFILE =
+	process.env.POSA_COUNTER_GRID_POS_PROFILE || "MedPlus POS 1 - Supervisor";
+const ITEM_CODE = process.env.POSA_HYBRID_VERIFIED_ITEM || "AI167";
+
+test.skip(
+	!ENABLED,
+	"Set POSA_HYBRID_VERIFIED_E2E=1 to run Hybrid Verified live acceptance.",
+);
+
+function isMethodRequest(request: Request, method: string) {
+	return request.url().includes(method);
+}
+
+async function startZeroBalanceShiftIfNeeded(page: Page) {
+	const openingDialog = page.getByTestId("opening-shift-dialog");
+	const counterGrid = page.getByTestId("counter-grid-pos");
+	await expect
+		.poll(
+			async () =>
+				(await openingDialog.isVisible().catch(() => false)) ||
+				(await counterGrid.isVisible().catch(() => false)),
+			{ timeout: 90_000 },
+		)
+		.toBe(true);
+	if (!(await openingDialog.isVisible().catch(() => false))) return;
+
+	const amountInputs = openingDialog.locator(
+		'[data-testid^="opening-shift-amount-"] input',
+	);
+	for (let index = 0; index < (await amountInputs.count()); index += 1) {
+		await amountInputs.nth(index).fill("0");
+	}
+	const responsePromise = page.waitForResponse(
+		(response) =>
+			isMethodRequest(response.request(), "create_opening_voucher") &&
+			response.status() === 200,
+		{ timeout: 45_000 },
+	);
+	await openingDialog.getByTestId("opening-shift-submit").click();
+	const response = await responsePromise;
+	const body = await response.json();
+	expect(
+		body?.message?.pos_opening_shift?.name || body?.message?.name,
+	).toBeTruthy();
+	await expect(openingDialog).toBeHidden({ timeout: 45_000 });
+}
+
+async function readProfileFlags(page: Page) {
+	return page.evaluate(async (profileName) => {
+		const response = await (window as any).frappe.call({
+			method: "frappe.client.get",
+			args: { doctype: "POS Profile", name: profileName },
+		});
+		const profile = response?.message || {};
+		return {
+			fastCounter: Number(profile.posa_fast_counter_mode || 0),
+			localStorage: Number(profile.posa_local_storage || 0),
+			forceServer: Number(profile.posa_force_server_items || 0),
+		};
+	}, PROFILE);
+}
+
+test("local candidate is immediate, then live stock and price are verified in place", async ({
+	page,
+}) => {
+	test.setTimeout(5 * 60_000);
+	const liveRequests: Request[] = [];
+	const serverSearchRequests: Request[] = [];
+	page.on("request", (request) => {
+		if (isMethodRequest(request, "get_live_item_state")) {
+			liveRequests.push(request);
+		}
+		if (
+			isMethodRequest(
+				request,
+				"posawesome.posawesome.api.items.get_items",
+			)
+		) {
+			serverSearchRequests.push(request);
+		}
+	});
+
+	await page.goto(POS_PATH, { waitUntil: "domcontentloaded" });
+	if (/\/login/.test(page.url())) {
+		throw new Error("Hybrid Verified acceptance requires POSA_SMOKE_SID.");
+	}
+	await startZeroBalanceShiftIfNeeded(page);
+	await expect(page.locator('[data-test="pos-navbar"]')).toHaveAttribute(
+		"data-pos-profile",
+		PROFILE,
+		{ timeout: 45_000 },
+	);
+	await ensureAuthoritativeTerminalUnlock(page);
+	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
+		timeout: 90_000,
+	});
+	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
+		timeout: 90_000,
+	});
+
+	expect(await readProfileFlags(page)).toEqual({
+		fastCounter: 1,
+		localStorage: 1,
+		forceServer: 0,
+	});
+
+	const entry = page.getByTestId("counter-grid-item-entry");
+	await expect(entry).toBeFocused({ timeout: 30_000 });
+	await entry.fill(ITEM_CODE);
+	const startedAt = performance.now();
+	await entry.press("Enter");
+	const searchSurface = page.locator(".items-selector-shell--counter-dialog");
+	await expect(searchSurface).toHaveAttribute(
+		"data-search-ready-query",
+		ITEM_CODE,
+		{ timeout: 10_000 },
+	);
+	const candidateLatencyMs = performance.now() - startedAt;
+	const itemRow = searchSurface
+		.locator(`[data-item-code="${ITEM_CODE}"]`)
+		.first();
+	await expect(itemRow).toBeVisible({ timeout: 10_000 });
+	const firstVisibleCode = await searchSurface
+		.locator("[data-item-code]")
+		.first()
+		.getAttribute("data-item-code");
+
+	await expect(
+		itemRow.locator(
+			'.live-state-verified[title="Live stock and price verified"]',
+		),
+	).toBeVisible({ timeout: 15_000 });
+	await expect
+		.poll(() => liveRequests.length, { timeout: 15_000 })
+		.toBeGreaterThan(0);
+	expect(
+		await searchSurface
+			.locator("[data-item-code]")
+			.first()
+			.getAttribute("data-item-code"),
+	).toBe(firstVisibleCode);
+	expect(candidateLatencyMs).toBeLessThan(2_000);
+
+	await page.getByTestId(`pos-item-search`).locator("input").press("Enter");
+	await expect(page.getByTestId(`cart-row-${ITEM_CODE}`).first()).toBeVisible(
+		{
+			timeout: 20_000,
+		},
+	);
+	expect(liveRequests.length).toBeGreaterThan(0);
+	expect(serverSearchRequests.length).toBeLessThanOrEqual(1);
+});
+
+test.afterEach(async ({ page }) => {
+	await cleanupProvisionedTerminalCashier(page).catch(() => undefined);
+});
