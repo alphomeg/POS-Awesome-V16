@@ -63,7 +63,40 @@ Rules:
 
 ---
 
-## 3. Cart Contract
+## 3. Hybrid Verified Item Search Contract
+
+Hybrid Verified search is linked with:
+
+- Hot-catalog and IndexedDB candidate search
+- Server candidate search
+- Authoritative item, price, batch, serial, and POS-aware stock reads
+- Realtime stock events
+- Cart validation and final invoice submission
+- Online and signed-offline sale policy
+
+Rules:
+
+- Cached rows are candidates, not authority. Online visible results must be
+  hydrated through the cache-bypassing live-state endpoint.
+- Local candidates render immediately. Server candidates run in parallel and
+  merge without moving already-visible rows, preserving keyboard selection.
+- Live-state reads resolve the authenticated user's canonical POS Profile and
+  item permissions server-side; client-supplied profile configuration is not
+  authoritative.
+- Realtime stock events carry warehouse epoch/version tokens. Older events are
+  ignored; a sequence gap or epoch change triggers a visible-item snapshot.
+- Online add-to-cart waits for a recent verified state when Hybrid Verified mode
+  is active. Offline operation must continue through the existing durable,
+  signed offline-sale policy and must never be presented as remotely fresh.
+- The final sale boundary remains authoritative. Ordered Item/Bin row locks and
+  a stock recheck must be held through submit so simultaneous terminals cannot
+  both accept the same last unit.
+- Classic and Counter Grid presentations must consume the same store, live-state
+  service, version coordinator, cart validation, and submission path.
+
+---
+
+## 4. Cart Contract
 
 Cart is linked with:
 
@@ -94,7 +127,7 @@ Rules:
 
 ---
 
-## 4. Offline Cache Contract
+## 5. Offline Cache Contract
 
 Offline cache is linked with:
 
@@ -128,7 +161,7 @@ Rules:
 
 ---
 
-## 5. Printing Contract
+## 6. Printing Contract
 
 Printing is linked with:
 
@@ -155,7 +188,7 @@ Rules:
 
 ---
 
-## 6. Customer Contract
+## 7. Customer Contract
 
 Customer selection is linked with:
 
@@ -177,7 +210,7 @@ Rules:
 
 ---
 
-## 7. UOM Contract
+## 8. UOM Contract
 
 UOM is linked with:
 
@@ -200,7 +233,7 @@ Rules:
 
 ---
 
-## 8. POS Profile Contract
+## 9. POS Profile Contract
 
 POS Profile is linked with:
 
@@ -238,7 +271,7 @@ Rules:
 
 ---
 
-## 9. Sale Submission Recovery Contract
+## 10. Sale Submission Recovery Contract
 
 Sale submission recovery is linked with:
 

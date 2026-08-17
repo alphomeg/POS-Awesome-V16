@@ -112,8 +112,15 @@
 				</div>
 			</template>
 			<template v-slot:item.actual_qty="{ item }">
-				<span class="golden--text" :class="{ 'negative-number': isNegative(item.actual_qty) }">
+				<span class="golden--text live-stock-cell" :class="{ 'negative-number': isNegative(item.actual_qty) }">
 					{{ formatActualQty(item.actual_qty) }}
+					<v-icon
+						:size="14"
+						:color="liveStateColor(item)"
+						:title="liveStateTitle(item)"
+					>
+						{{ liveStateIcon(item) }}
+					</v-icon>
 				</span>
 			</template>
 		</v-data-table-virtual>
@@ -151,6 +158,30 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["row-click", "list-scroll", "toggle-selection", "select-all"]);
+
+function liveStateIcon(item) {
+	const status = item?._posa_live_state_status;
+	if (status === "verified") return "mdi-check-decagram";
+	if (status === "verifying") return "mdi-sync";
+	if (status === "unavailable") return "mdi-block-helper";
+	return "mdi-cloud-clock-outline";
+}
+
+function liveStateColor(item) {
+	const status = item?._posa_live_state_status;
+	if (status === "verified") return "success";
+	if (status === "verifying") return "warning";
+	if (status === "unavailable") return "error";
+	return "grey";
+}
+
+function liveStateTitle(item) {
+	const status = item?._posa_live_state_status;
+	if (status === "verified") return "Live stock and price verified";
+	if (status === "verifying") return "Verifying live stock and price";
+	if (status === "unavailable") return "No longer available for sale";
+	return "Showing last known stock and price";
+}
 
 const effectiveHeaders = computed(() => {
 	if (!props.multiSelect) return props.headers;

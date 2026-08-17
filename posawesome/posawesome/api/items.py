@@ -37,6 +37,7 @@ from posawesome.posawesome.api.item_processing.details import (
     get_item_attributes,
     get_item_optional_attributes,
 )
+from posawesome.posawesome.api.item_processing.live_state import get_live_item_state
 from posawesome.posawesome.api.item_processing.price import update_price_list_rate, get_price_for_uom
 from posawesome.posawesome.api.item_processing.search import (
     get_items,

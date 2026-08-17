@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 const itemServiceMocks = vi.hoisted(() => ({
 	getItemsData: vi.fn(),
 	getHotItemsData: vi.fn(),
+	getLiveItemStateData: vi.fn(),
 }));
 
 const offlineMocks = vi.hoisted(() => ({
@@ -40,6 +41,7 @@ vi.mock("../src/posapp/services/itemService", () => ({
 	default: {
 		getItemsData: itemServiceMocks.getItemsData,
 		getHotItemsData: itemServiceMocks.getHotItemsData,
+		getLiveItemStateData: itemServiceMocks.getLiveItemStateData,
 		getItemGroupsData: vi.fn(async () => []),
 		getItemsFromBarcodeData: vi.fn(async () => null),
 	},
@@ -232,6 +234,22 @@ describe("itemsStore loadItems", () => {
 			(_term: string, items: any[]) => items,
 		);
 		itemServiceMocks.getHotItemsData.mockResolvedValue([]);
+		itemServiceMocks.getLiveItemStateData.mockImplementation(
+			async ({ item_codes }: { item_codes: string[] }) => ({
+				items: item_codes.map((item_code) => ({
+					item_code,
+					actual_qty: 7,
+					rate: 120,
+					price_list_rate: 120,
+				})),
+				unavailable_item_codes: [],
+				as_of: "2026-08-17 12:00:00",
+				stock_versions: {},
+				catalog_version: null,
+				price_version: null,
+				verified: true,
+			}),
+		);
 		itemServiceMocks.getItemsData.mockResolvedValue([
 			{
 				item_code: "ITEM-1",
@@ -886,7 +904,7 @@ describe("itemsStore loadItems", () => {
 		}
 	});
 
-	it("debounces server fallback after a local search miss", async () => {
+	it("uses a short debounce before server fallback after a local miss", async () => {
 		vi.useFakeTimers();
 		try {
 			const store = useItemsStore();
@@ -905,7 +923,7 @@ describe("itemsStore loadItems", () => {
 
 			const searchPromise = store.searchItems("typo");
 
-			await vi.advanceTimersByTimeAsync(449);
+			await vi.advanceTimersByTimeAsync(39);
 			expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
 
 			await vi.advanceTimersByTimeAsync(1);

@@ -1,11 +1,16 @@
 import stockCoordinator from "./stockCoordinator";
 import { bus } from "../bus";
+import {
+	evaluateStockVersion,
+	type StockVersionToken,
+} from "./liveStateVersions";
 
 export interface RealtimeStockItem {
 	item_code: string;
 	warehouse: string | null;
 	company: string | null;
 	actual_qty: number | null;
+	stock_version: StockVersionToken | null;
 }
 
 export interface RealtimeStockPayload {
@@ -14,6 +19,8 @@ export interface RealtimeStockPayload {
 	warehouses: string[];
 	companies: string[];
 	source_doctype: string | null;
+	stock_versions: Record<string, StockVersionToken>;
+	has_version_gap: boolean;
 }
 
 type DispatchDeps = {
@@ -66,6 +73,7 @@ export function normalizeRealtimeStockPayload(
 				actual_qty: normalizeQty(
 					row?.actual_qty ?? row?.actualQty ?? row?.available_qty,
 				),
+				stock_version: row?.stock_version || null,
 			};
 		})
 		.filter((row): row is RealtimeStockItem => !!row);
@@ -74,20 +82,45 @@ export function normalizeRealtimeStockPayload(
 		return null;
 	}
 
-	const item_codes = Array.from(new Set(items.map((row) => row.item_code)));
-	const warehouses = Array.from(
-		new Set(items.map((row) => row.warehouse).filter(Boolean) as string[]),
-	);
-	const companies = Array.from(
-		new Set(items.map((row) => row.company).filter(Boolean) as string[]),
-	);
+	const stock_versions =
+		input?.stock_versions && typeof input.stock_versions === "object"
+			? input.stock_versions
+			: {};
+	let has_version_gap = false;
+	const acceptedItems = items.filter((row) => {
+		const token =
+			row.stock_version ||
+			(row.warehouse ? stock_versions[row.warehouse] : null);
+		const decision = evaluateStockVersion(row.warehouse, token);
+		if (decision.gap) has_version_gap = true;
+		return decision.accept;
+	});
+	if (!acceptedItems.length && !has_version_gap) {
+		return null;
+	}
 
 	return {
-		items,
-		item_codes,
-		warehouses,
-		companies,
+		items: acceptedItems,
+		item_codes: Array.from(
+			new Set(acceptedItems.map((row) => row.item_code)),
+		),
+		warehouses: Array.from(
+			new Set(
+				acceptedItems
+					.map((row) => row.warehouse)
+					.filter(Boolean) as string[],
+			),
+		),
+		companies: Array.from(
+			new Set(
+				acceptedItems
+					.map((row) => row.company)
+					.filter(Boolean) as string[],
+			),
+		),
 		source_doctype: normalizeString(input?.source_doctype),
+		stock_versions,
+		has_version_gap,
 	};
 }
 
@@ -123,5 +156,8 @@ export function dispatchRealtimeStockPayload(
 	}
 
 	emit("remote_stock_adjustment", payload);
+	if (payload.has_version_gap) {
+		emit("stock_version_gap", payload);
+	}
 	return payload;
 }

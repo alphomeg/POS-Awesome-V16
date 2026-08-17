@@ -173,6 +173,7 @@ def _install_dependency_stubs():
     stock_module = types.ModuleType("posawesome.posawesome.api.invoice_processing.stock")
     stock_module._strip_client_freebies_from_payload = lambda *_args, **_kwargs: None
     stock_module._validate_stock_on_invoice = lambda *_args, **_kwargs: None
+    stock_module._lock_stock_rows_for_invoice = lambda *_args, **_kwargs: []
     stock_module._apply_item_name_overrides = lambda *_args, **_kwargs: None
     stock_module._deduplicate_free_items = lambda *_args, **_kwargs: None
     stock_module._merge_duplicate_taxes = lambda *_args, **_kwargs: None

@@ -69,6 +69,14 @@
 						{{ formattedActualQty }}
 					</span>
 					<span class="stock-uom">{{ item.stock_uom || "" }}</span>
+					<v-icon
+						v-if="liveStateIcon"
+						:size="14"
+						:class="['live-state-icon', `live-state-${liveStateStatus}`]"
+						:title="liveStateTitle"
+					>
+						{{ liveStateIcon }}
+					</v-icon>
 				</div>
 			</div>
 		</div>
@@ -170,6 +178,24 @@ const formattedActualQty = computed(() => {
 	return props.formatNumber(numericQty, 4);
 });
 
+const liveStateStatus = computed(
+	() => props.item._posa_live_state_status || "last_known",
+);
+
+const liveStateIcon = computed(() => {
+	if (liveStateStatus.value === "verified") return "mdi-check-decagram";
+	if (liveStateStatus.value === "verifying") return "mdi-sync";
+	if (liveStateStatus.value === "unavailable") return "mdi-block-helper";
+	return "mdi-cloud-clock-outline";
+});
+
+const liveStateTitle = computed(() => {
+	if (liveStateStatus.value === "verified") return "Live stock and price verified";
+	if (liveStateStatus.value === "verifying") return "Verifying live stock and price";
+	if (liveStateStatus.value === "unavailable") return "No longer available for sale";
+	return "Showing last known stock and price";
+});
+
 const onClick = (event) => {
 	emit("click", event, props.item);
 };
@@ -213,6 +239,30 @@ const onDragEnd = (event) => {
 	backface-visibility: hidden;
 	transform: translate3d(0, 0, 0);
 	position: relative;
+}
+
+.live-state-icon {
+	margin-left: 0.2rem;
+}
+
+.live-state-verified {
+	color: var(--pos-success, #16855b);
+}
+
+.live-state-verifying {
+	color: var(--pos-warning, #b26a00);
+	animation: posa-live-spin 0.9s linear infinite;
+}
+
+.live-state-last_known,
+.live-state-unavailable {
+	color: var(--pos-text-muted, #6b7280);
+}
+
+@keyframes posa-live-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 .card-item-card:hover {

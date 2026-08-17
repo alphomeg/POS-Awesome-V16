@@ -88,6 +88,7 @@ def _flush_stock_change_queue():
     from posawesome.posawesome.api.item_processing.stock import (
         get_stock_availability,
     )
+    from posawesome.posawesome.stock_version import increment_stock_version
 
     items = list(queue.values())
     try:
@@ -103,12 +104,20 @@ def _flush_stock_change_queue():
         )
         return
 
+    versions = {}
+    for warehouse in sorted({row["warehouse"] for row in items}):
+        versions[warehouse] = increment_stock_version(warehouse)
+
+    for row in items:
+        row["stock_version"] = versions.get(row["warehouse"])
+
     source_doctypes = sorted({row.pop("source_doctype", None) for row in items if row.get("source_doctype")})
     payload = {
         "items": items,
         "item_codes": sorted({row["item_code"] for row in items}),
         "warehouses": sorted({row["warehouse"] for row in items}),
         "companies": sorted({row["company"] for row in items if row.get("company")}),
+        "stock_versions": versions,
         "source_doctype": (source_doctypes[0] if len(source_doctypes) == 1 else "Stock Availability"),
     }
     frappe.publish_realtime(STOCK_CHANGE_EVENT, payload)
