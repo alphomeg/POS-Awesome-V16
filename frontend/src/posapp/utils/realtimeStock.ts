@@ -23,6 +23,11 @@ export interface RealtimeStockPayload {
 	has_version_gap: boolean;
 }
 
+// A browser event survives a transient duplicate module graph during a
+// versioned POS asset transition. The in-memory bus remains the normal fast
+// path; consumers deduplicate the shared payload when they observe both.
+export const REMOTE_STOCK_ADJUSTMENT_EVENT = "posa:remote-stock-adjustment";
+
 type DispatchDeps = {
 	emit?: (_event: string, _payload: RealtimeStockPayload) => void;
 	setLastStockAdjustment?: (_payload: RealtimeStockPayload) => void;
@@ -156,6 +161,11 @@ export function dispatchRealtimeStockPayload(
 	}
 
 	emit("remote_stock_adjustment", payload);
+	if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+		window.dispatchEvent(
+			new CustomEvent(REMOTE_STOCK_ADJUSTMENT_EVENT, { detail: payload }),
+		);
+	}
 	if (payload.has_version_gap) {
 		emit("stock_version_gap", payload);
 	}

@@ -93,23 +93,27 @@ async function preparePos(page: Page) {
 	if (/\/login/.test(page.url())) {
 		throw new Error("Hybrid Verified acceptance requires POSA_SMOKE_SID.");
 	}
-	await startZeroBalanceShiftIfNeeded(page);
 	await expect(page.locator('[data-test="pos-navbar"]')).toHaveAttribute(
 		"data-pos-profile",
 		PROFILE,
 		{ timeout: 45_000 },
 	);
+	// Finish the first cold catalogue cycle before terminal test provisioning.
+	// Provisioning deliberately reloads the terminal and a reload during this
+	// initial request can strand the harness at its 67% readiness milestone.
+	// This is a test-order constraint, not a POS runtime workaround.
+	await hotCatalogueReady;
 	await ensureAuthoritativeTerminalUnlock(page);
+	await startZeroBalanceShiftIfNeeded(page);
 	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
 		timeout: 90_000,
 	});
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
-	// A brand-new browser has no local candidates. Wait for the purpose-built
-	// hot catalogue, not the much larger background/offline catalogue. The
-	// terminal must already be unlocked so this readiness cycle is not reloaded.
-	await hotCatalogueReady;
+	// A brand-new browser has no local candidates. The hot catalogue above is
+	// the purpose-built cold-start readiness signal, rather than the much larger
+	// background/offline catalogue.
 }
 
 test("local candidate is immediate, then live stock and price are verified in place", async ({
