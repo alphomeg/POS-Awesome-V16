@@ -341,6 +341,7 @@ import { useToastStore } from "../../../stores/toastStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useInvoiceStore } from "../../../stores/invoiceStore";
 import { useEmployeeStore } from "../../../stores/employeeStore";
+import { isOffline } from "../../../../offline/index";
 
 import { parseBooleanSetting } from "../../../utils/stock";
 import { createItemSearchFocusClearGuard } from "../../../utils/itemSearchFocusClearGuard";
@@ -959,6 +960,32 @@ const add_item = async (item, optionsOrQty: any = {}) => {
 		requestedQty =
 			requestedQty === "" || requestedQty == null ? 1 : Math.abs(parseFloat(requestedQty) || 1);
 
+		const verifiedAt = Date.parse(
+			String(item?._posa_live_state_as_of || "").replace(" ", "T"),
+		);
+		const liveStateIsRecent =
+			item?._posa_live_state_status === "verified" &&
+			Number.isFinite(verifiedAt) &&
+			Date.now() - verifiedAt < 3000;
+		if (
+			itemsIntegration.hybridVerifiedEnabled.value &&
+			!isOffline() &&
+			!liveStateIsRecent
+		) {
+			await itemsIntegration.hydrateLiveItems([item], {
+				reason: "add-to-cart",
+				force: true,
+			});
+			if (item?._posa_live_state_status !== "verified") {
+				toastStore.show({
+					title: __("Live stock and price could not be verified"),
+					detail: __("Please check the connection and try this item again."),
+					color: "warning",
+				});
+				return null;
+			}
+		}
+
 		item = { ...item };
 		if (parseBooleanSetting(item.retailmind_locked_for_sale)) {
 			toastStore.show({
@@ -1306,6 +1333,12 @@ const applyItemSettings = (settings) => {
 
 const handleRemoteStockAdjustment = (payload: unknown) => {
 	itemAvailability.handleInvoiceStockAdjusted(payload);
+	if ((payload as any)?.has_version_gap) {
+		void itemsIntegration.hydrateLiveItems(activeResultItems.value, {
+			reason: "realtime-version-gap",
+			force: true,
+		});
+	}
 };
 
 onMounted(async () => {

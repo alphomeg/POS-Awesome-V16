@@ -93,3 +93,19 @@ Normalized repositories currently cover:
 
 The IndexedDB schema and persistence worker must always declare the same latest
 Dexie version.
+
+## Hybrid Verified Search Data Planes
+
+Item search deliberately separates three data planes:
+
+1. The candidate plane ranks cached hot-catalog/IndexedDB rows immediately and
+   merges fresh server candidates without replacing or reordering visible rows.
+2. The live-state plane verifies the visible window with uncached authoritative
+   stock, price, sellability, batch, and serial data. Redis epoch/version tokens
+   order realtime projections; MariaDB remains the source of truth.
+3. The transaction plane acquires deterministic Item/Bin row locks, rechecks
+   POS-aware availability, and holds the locks through invoice submission.
+
+Redis loss starts a new epoch and forces browser resnapshot; it never becomes a
+stock authority. Offline terminals use their last durable generation and the
+signed offline-sale policy, and the UI must not label that state as live.

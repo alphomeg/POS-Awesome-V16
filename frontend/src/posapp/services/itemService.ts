@@ -36,6 +36,28 @@ export interface GetHotItemsArgs {
 	item_groups?: string[];
 }
 
+export interface StockVersionToken {
+	epoch: string | null;
+	version: number | null;
+}
+
+export interface GetLiveItemStateArgs {
+	pos_profile: string;
+	item_codes: string[] | string;
+	price_list?: string;
+	customer?: string | null;
+}
+
+export interface LiveItemStateResponse {
+	items: Item[];
+	unavailable_item_codes: string[];
+	as_of: string;
+	stock_versions: Record<string, StockVersionToken>;
+	catalog_version: string | null;
+	price_version: string | null;
+	verified: boolean;
+}
+
 export interface BarcodeLookupArgs {
 	selling_price_list: string;
 	currency: string;
@@ -198,6 +220,24 @@ const itemService = {
 		signal?: AbortSignal,
 	): Promise<Item[]> {
 		return unwrapApiResult(await this.getHotItems(args, signal));
+	},
+
+	getLiveItemState(
+		args: GetLiveItemStateArgs,
+		signal?: AbortSignal,
+	): Promise<ApiEnvelope<LiveItemStateResponse>> {
+		return api.callEnvelope(
+			"posawesome.posawesome.api.items.get_live_item_state",
+			args,
+			{ signal, timeoutMs: 8000 },
+		);
+	},
+
+	async getLiveItemStateData(
+		args: GetLiveItemStateArgs,
+		signal?: AbortSignal,
+	): Promise<LiveItemStateResponse> {
+		return unwrapApiResult(await this.getLiveItemState(args, signal));
 	},
 
 	getItemsCount(

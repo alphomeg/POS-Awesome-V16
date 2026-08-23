@@ -24,6 +24,7 @@ from posawesome.posawesome.api.invoice_processing.stock import (
     _merge_duplicate_taxes,
     _auto_set_return_batches,
     _collect_stock_errors,
+    _lock_stock_rows_for_invoice,
 )
 from posawesome.posawesome.api.tax_contracts import apply_pos_tax_inclusion_contract
 from posawesome.posawesome.api.payment_processing.utils import get_bank_cash_account as get_bank_account
@@ -2517,6 +2518,7 @@ def submit_invoice(
     #     set_batch_nos(invoice_doc, "warehouse", throw=True)
     set_batch_nos_for_bundels(invoice_doc, "warehouse", throw=True)
 
+    _lock_stock_rows_for_invoice(invoice_doc)
     _validate_stock_on_invoice(invoice_doc)
     validate_invoice_item_sale_controls(invoice_doc)
     _validate_invoice_payment_modes(invoice_doc, profile_doc)
@@ -2732,6 +2734,7 @@ def submit_in_background_job(kwargs):
         frappe.flags.ignore_account_permission = True
 
         # Re-run validations that may be impacted while queued (stock, credit limits)
+        _lock_stock_rows_for_invoice(invoice_doc)
         _validate_stock_on_invoice(invoice_doc)
         validate_invoice_item_sale_controls(invoice_doc)
         if hasattr(invoice_doc, "validate_credit_limit"):

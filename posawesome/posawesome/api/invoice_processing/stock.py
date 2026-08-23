@@ -4,6 +4,7 @@ from frappe import _
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 from posawesome.posawesome.api.items import get_bulk_stock_availability, get_stock_availability
 from posawesome.posawesome.api.invoice_processing.utils import _sanitize_item_name
+from posawesome.posawesome.api.item_processing.stock import _get_stock_warehouses
 
 
 def _is_stock_item(item):
@@ -181,6 +182,69 @@ def _validate_stock_on_invoice(invoice_doc):
     blocking_errors = [row for row in errors if row.get("policy") == "block"]
     if blocking_errors:
         frappe.throw(frappe.as_json({"errors": blocking_errors}), frappe.ValidationError)
+
+
+def _lock_stock_rows_for_invoice(invoice_doc):
+    """Serialize authoritative POS stock checks for the invoice transaction.
+
+    Candidate and live-search state are advisory.  The sale boundary must still
+    prevent two terminals from both accepting the same last unit.  Item rows are
+    locked first in deterministic order, followed by the relevant Bin rows.
+    This also covers unconsolidated POS Invoices, whose reservation is stored in
+    submitted invoice rows rather than immediately reducing Bin.actual_qty.
+    """
+
+    if invoice_doc.doctype == "Sales Invoice" and not cint(
+        getattr(invoice_doc, "update_stock", 0)
+    ):
+        return []
+
+    rows = [d.as_dict() for d in invoice_doc.items]
+    if hasattr(invoice_doc, "packed_items"):
+        rows.extend([d.as_dict() for d in invoice_doc.packed_items])
+
+    targets = set()
+    for row in rows:
+        if flt(row.get("qty")) < 0 or not _is_stock_item(row):
+            continue
+        item_code = cstr(row.get("item_code")).strip()
+        warehouse = cstr(row.get("warehouse")).strip()
+        if item_code and warehouse:
+            targets.add((item_code, warehouse))
+
+    if not targets:
+        return []
+
+    item_codes = sorted({item_code for item_code, _warehouse in targets})
+    placeholders = ", ".join(["%s"] * len(item_codes))
+    frappe.db.sql(
+        f"SELECT name FROM `tabItem` WHERE name IN ({placeholders}) ORDER BY name FOR UPDATE",
+        tuple(item_codes),
+    )
+
+    locked_bins = []
+    for item_code, warehouse in sorted(targets):
+        warehouses = sorted(set(_get_stock_warehouses(warehouse)))
+        if not warehouses:
+            continue
+        warehouse_placeholders = ", ".join(["%s"] * len(warehouses))
+        rows = frappe.db.sql(
+            f"""
+            SELECT name, warehouse
+            FROM `tabBin`
+            WHERE item_code = %s
+              AND warehouse IN ({warehouse_placeholders})
+            ORDER BY warehouse, name
+            FOR UPDATE
+            """,
+            tuple([item_code, *warehouses]),
+            as_dict=True,
+        )
+        locked_bins.extend(
+            (item_code, row.get("warehouse")) for row in rows if row.get("warehouse")
+        )
+
+    return locked_bins
 
 
 def _auto_set_return_batches(invoice_doc):

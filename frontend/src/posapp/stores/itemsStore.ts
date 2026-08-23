@@ -25,9 +25,11 @@ import {
 	type LoadItemsOptions,
 } from "./items/loadItemsRequest";
 import { resetItemLoadingCoordinator } from "../modules/items/itemLoadingCoordinator";
+import stockCoordinator from "../utils/stockCoordinator";
+import { installStockVersionSnapshot } from "../utils/liveStateVersions";
 
 export const useItemsStore = defineStore("items", () => {
-	const SERVER_SEARCH_FALLBACK_DEBOUNCE_MS = 450;
+	const SERVER_SEARCH_FALLBACK_DEBOUNCE_MS = 40;
 	const SERVER_SEARCH_MISS_CACHE_TTL_MS = 30 * 1000;
 	const SERVER_SEARCH_RESULT_CACHE_TTL_MS = 60 * 1000;
 	const SERVER_SEARCH_FALLBACK_MIN_LENGTH = 2;
@@ -35,6 +37,8 @@ export const useItemsStore = defineStore("items", () => {
 	const HOT_CATALOG_DEFAULT_LIMIT = 5000;
 	const HOT_CATALOG_MAX_LIMIT = 10000;
 	const HOT_CATALOG_DAYS = 120;
+	const LIVE_HYDRATION_LIMIT = 20;
+	const LIVE_HYDRATION_DEBOUNCE_MS = 20;
 	type OfflineModule = Record<string, any>;
 	let offlineApiPromise: Promise<OfflineModule> | null = null;
 	let serverSearchFallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -42,6 +46,9 @@ export const useItemsStore = defineStore("items", () => {
 		null;
 	let serverSearchFallbackToken = 0;
 	let lastRecoveryAt = 0;
+	let liveHydrationTimer: ReturnType<typeof setTimeout> | null = null;
+	let liveHydrationController: AbortController | null = null;
+	let liveHydrationToken = 0;
 	const serverSearchMissCache = new Map<string, number>();
 	const serverSearchResultCache = new Map<
 		string,
@@ -160,6 +167,8 @@ export const useItemsStore = defineStore("items", () => {
 	const hotItemsLoaded = ref(false);
 	const hotItemsLoading = ref(false);
 	const hotCatalogScopeKey = ref("");
+	const lastLiveVerificationAt = ref<string | null>(null);
+	const liveVerificationInFlight = ref(false);
 	let hotCatalogRequestToken = 0;
 
 	// Composables Initialization
@@ -280,6 +289,13 @@ export const useItemsStore = defineStore("items", () => {
 	const shouldPersistItems = () =>
 		isCatalogPersistenceConfigured() && isOfflineStorageReady();
 
+	const hybridVerifiedEnabled = computed(
+		() =>
+			fastCounterEnabled.value &&
+			shouldPersistItems() &&
+			!normalizeBooleanSetting(posProfile.value?.posa_force_server_items),
+	);
+
 	const shouldUseIndexedSearch = () => {
 		if (limitSearchEnabled.value || !shouldPersistItems()) {
 			return false;
@@ -298,9 +314,172 @@ export const useItemsStore = defineStore("items", () => {
 	const normalizeSearchScope = (value: unknown) =>
 		typeof value === "string" ? value.trim().toLowerCase() : "";
 
+	const mergeItemsPreservingOrder = (
+		current: Item[],
+		incoming: Item[],
+		limit = resolvePageSize(),
+	) => {
+		const incomingByCode = new Map(
+			(incoming || [])
+				.filter((item) => item?.item_code)
+				.map((item) => [item.item_code, item]),
+		);
+		const seen = new Set<string>();
+		const merged: Item[] = [];
+		for (const item of current || []) {
+			if (!item?.item_code || seen.has(item.item_code)) continue;
+			const update = incomingByCode.get(item.item_code);
+			if (update) Object.assign(item, update);
+			seen.add(item.item_code);
+			merged.push(item);
+		}
+		for (const item of incoming || []) {
+			if (!item?.item_code || seen.has(item.item_code)) continue;
+			seen.add(item.item_code);
+			merged.push(item);
+		}
+		return merged.slice(0, limit);
+	};
+
+	const applyLiveItemState = (
+		response: any,
+		requestedItems: Item[],
+		searchScope: string,
+	) => {
+		installStockVersionSnapshot(response?.stock_versions || {});
+		const details = Array.isArray(response?.items) ? response.items : [];
+		const detailByCode = new Map<string, Item>(
+			details
+				.filter((item: Item) => item?.item_code)
+				.map((item: Item) => [item.item_code, item]),
+		);
+		const unavailable = new Set<string>(
+			Array.isArray(response?.unavailable_item_codes)
+				? response.unavailable_item_codes
+				: [],
+		);
+		const targets = [items.value, hotItems.value, filteredItems.value];
+		const seenTargets = new Set<Item>();
+		for (const targetList of targets) {
+			for (const item of targetList) {
+				if (!item?.item_code || seenTargets.has(item)) continue;
+				seenTargets.add(item);
+				const detail = detailByCode.get(item.item_code);
+				if (detail) {
+					Object.assign(item, detail, {
+						original_rate:
+							detail.price_list_rate ??
+							detail.rate ??
+							item.original_rate,
+						original_currency:
+							detail.currency || item.original_currency,
+						_posa_live_state_status: response?.verified
+							? "verified"
+							: "last_known",
+						_posa_live_state_as_of: response?.as_of || null,
+						_posa_stock_versions: response?.stock_versions || {},
+					});
+				} else if (unavailable.has(item.item_code)) {
+					item._posa_live_state_status = "unavailable";
+				}
+			}
+		}
+
+		stockCoordinator.updateBaseQuantities(details, {
+			source: "hybrid-live-state",
+		});
+		lastLiveVerificationAt.value = response?.as_of || new Date().toISOString();
+
+		if (normalizeSearchScope(filteredItemsSearchTerm.value) === searchScope) {
+			filteredItems.value = filteredItems.value.filter(
+				(item) => !unavailable.has(item.item_code),
+			);
+			filteredItems.value = [...filteredItems.value];
+		}
+		for (const item of requestedItems) {
+			if (
+				item?._posa_live_state_status === "verifying" &&
+				!detailByCode.has(item.item_code) &&
+				!unavailable.has(item.item_code)
+			) {
+				item._posa_live_state_status = "last_known";
+			}
+		}
+	};
+
+	const hydrateLiveItems = async (
+		candidateItems: Item[] = filteredItems.value,
+		options: { reason?: string; force?: boolean } = {},
+	) => {
+		const unique = mergeItemsPreservingOrder([], candidateItems, LIVE_HYDRATION_LIMIT);
+		if (!unique.length || !posProfile.value?.name) return [];
+		if (isOffline()) {
+			unique.forEach((item) => {
+				item._posa_live_state_status = "last_known";
+			});
+			return unique;
+		}
+
+		const requestToken = ++liveHydrationToken;
+		if (liveHydrationController) liveHydrationController.abort();
+		liveHydrationController = new AbortController();
+		const searchScope = normalizeSearchScope(searchTerm.value);
+		unique.forEach((item) => {
+			item._posa_live_state_status = "verifying";
+		});
+		filteredItems.value = [...filteredItems.value];
+		liveVerificationInFlight.value = true;
+
+		try {
+			const response = await itemService.getLiveItemStateData(
+				{
+					pos_profile: posProfile.value.name,
+					item_codes: unique.map((item) => item.item_code),
+					price_list: activePriceList.value,
+					customer: customer.value,
+				},
+				liveHydrationController.signal,
+			);
+			if (requestToken !== liveHydrationToken) return [];
+			applyLiveItemState(response, unique, searchScope);
+			return response.items || [];
+		} catch (error: any) {
+			if (error?.name !== "AbortError") {
+				console.warn(
+					`Live item verification failed (${options.reason || "search"})`,
+					error,
+				);
+				unique.forEach((item) => {
+					item._posa_live_state_status = "last_known";
+				});
+				filteredItems.value = [...filteredItems.value];
+			}
+			return [];
+		} finally {
+			if (requestToken === liveHydrationToken) {
+				liveVerificationInFlight.value = false;
+				liveHydrationController = null;
+			}
+		}
+	};
+
+	const scheduleLiveHydration = (
+		candidateItems: Item[],
+		reason = "search",
+	) => {
+		if (liveHydrationTimer) clearTimeout(liveHydrationTimer);
+		liveHydrationTimer = setTimeout(() => {
+			liveHydrationTimer = null;
+			void hydrateLiveItems(candidateItems, { reason });
+		}, LIVE_HYDRATION_DEBOUNCE_MS);
+	};
+
 	const setFilteredItems = (nextItems: Item[], searchScope = "") => {
 		filteredItems.value = Array.isArray(nextItems) ? nextItems : [];
 		filteredItemsSearchTerm.value = normalizeSearchScope(searchScope);
+		if (hybridVerifiedEnabled.value && filteredItems.value.length) {
+			scheduleLiveHydration(filteredItems.value, "visible-results");
+		}
 	};
 
 	const isLargeCatalogWindow = () =>
@@ -504,8 +683,15 @@ export const useItemsStore = defineStore("items", () => {
 						if (serverResults.length === 0) {
 							markServerSearchMiss(scopeKey);
 						}
-						setFilteredItems(serverResults, normalizedTerm);
-						resolve(serverResults);
+						const mergedResults = mergeItemsPreservingOrder(
+							filteredItemsSearchTerm.value === normalizedTerm
+								? filteredItems.value
+								: [],
+							serverResults,
+							options.resultLimit || resolvePageSize(),
+						);
+						setFilteredItems(mergedResults, normalizedTerm);
+						resolve(mergedResults);
 					} catch (error: any) {
 						if (error?.name !== "AbortError") {
 							console.error(
@@ -537,8 +723,15 @@ export const useItemsStore = defineStore("items", () => {
 							resolve([]);
 							return;
 						}
-						setFilteredItems(offlineResults, normalizedTerm);
-						resolve(offlineResults);
+						const mergedResults = mergeItemsPreservingOrder(
+							filteredItemsSearchTerm.value === normalizedTerm
+								? filteredItems.value
+								: [],
+							offlineResults,
+							options.resultLimit || resolvePageSize(),
+						);
+						setFilteredItems(mergedResults, normalizedTerm);
+						resolve(mergedResults);
 					}
 				},
 				Math.max(
@@ -1256,6 +1449,9 @@ export const useItemsStore = defineStore("items", () => {
 			);
 			cancelPendingServerSearchFallback(exactResults);
 			setFilteredItems(exactResults, term);
+			if (hybridVerifiedEnabled.value && !isOffline()) {
+				void scheduleServerSearchFallback(term, itemGroup.value, options);
+			}
 			performanceMetrics.value.searchHits++;
 			return exactResults;
 		}
@@ -1290,6 +1486,9 @@ export const useItemsStore = defineStore("items", () => {
 				);
 				cancelPendingServerSearchFallback(exactResults);
 				setFilteredItems(exactResults, term);
+				if (hybridVerifiedEnabled.value && !isOffline()) {
+					void scheduleServerSearchFallback(term, itemGroup.value, options);
+				}
 				performanceMetrics.value.searchHits++;
 				return exactResults;
 			}
@@ -1311,6 +1510,12 @@ export const useItemsStore = defineStore("items", () => {
 				: getCachedServerSearchResult(serverResultCacheKey);
 			if (cachedServerResults && !shouldPreferStoredOfflineCatalog) {
 				setFilteredItems(cachedServerResults, term);
+				if (hybridVerifiedEnabled.value) {
+					void scheduleServerSearchFallback(term, normalizedGroup, {
+						...options,
+						forceServer: true,
+					});
+				}
 				performanceMetrics.value.searchHits++;
 				return cachedServerResults;
 			}
@@ -1338,6 +1543,14 @@ export const useItemsStore = defineStore("items", () => {
 			}
 			if (hotSearchResults.length > 0) {
 				setFilteredItems(hotSearchResults, term);
+				if (hybridVerifiedEnabled.value) {
+					void scheduleServerSearchFallback(term, normalizedGroup, {
+						...options,
+						forceServer: shouldForceServerSearch,
+					});
+					performanceMetrics.value.searchHits++;
+					return hotSearchResults;
+				}
 			}
 			try {
 				const serverResults = await scheduleServerSearchFallback(
@@ -1379,6 +1592,9 @@ export const useItemsStore = defineStore("items", () => {
 			: null;
 		if (cached) {
 			setFilteredItems(cached, term);
+			if (hybridVerifiedEnabled.value && !isOffline()) {
+				void scheduleServerSearchFallback(term, itemGroup.value, options);
+			}
 			performanceMetrics.value.searchHits++;
 			return cached;
 		}
@@ -1420,6 +1636,12 @@ export const useItemsStore = defineStore("items", () => {
 					) {
 						return [];
 					}
+				} else if (hybridVerifiedEnabled.value && !isOffline()) {
+					void scheduleServerSearchFallback(
+						term,
+						normalizedGroup,
+						options,
+					);
 				} else {
 					cancelPendingServerSearchFallback(searchResults);
 				}
@@ -1457,6 +1679,12 @@ export const useItemsStore = defineStore("items", () => {
 					) {
 						return [];
 					}
+				} else if (hybridVerifiedEnabled.value && !isOffline()) {
+					void scheduleServerSearchFallback(
+						term,
+						itemGroup.value,
+						options,
+					);
 				} else {
 					cancelPendingServerSearchFallback(searchResults);
 				}
@@ -2001,6 +2229,8 @@ export const useItemsStore = defineStore("items", () => {
 		itemGroup,
 		lastSearch,
 		lastItemCatalogSyncTime,
+		lastLiveVerificationAt,
+		liveVerificationInFlight,
 		posProfile,
 		customer,
 		customerPriceList,
@@ -2015,6 +2245,7 @@ export const useItemsStore = defineStore("items", () => {
 		// Computed
 		activePriceList,
 		fastCounterEnabled,
+		hybridVerifiedEnabled,
 		itemStats,
 		cacheStats,
 
@@ -2038,6 +2269,7 @@ export const useItemsStore = defineStore("items", () => {
 		addScannedItem,
 		upsertCatalogItem,
 		refreshModifiedItems,
+		hydrateLiveItems,
 		clearLimitSearchResults,
 		clearAllCaches,
 		clearSearchCache,

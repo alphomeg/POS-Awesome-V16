@@ -1,12 +1,14 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 const ENABLED = process.env.POSA_MULTI_TERMINAL_E2E === "1";
+const STOCK_RACE_ENABLED = process.env.POSA_DISTINCT_STOCK_RACE_E2E === "1";
 const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const ITEM_CODE = process.env.POSA_COUNTER_GRID_PERF_ITEM || "02017";
 const EXPECTED_PROFILE =
 	process.env.POSA_COUNTER_GRID_POS_PROFILE || "POS Awesome - MedPlus";
 const CASHIER_PIN = process.env.POSA_E2E_CASHIER_PIN || "";
 const SUBMIT_METHOD = "posawesome.posawesome.api.invoices.submit_invoice";
+const WAREHOUSE = process.env.POSA_COUNTER_GRID_WAREHOUSE || "Main Store - MP";
 
 test.skip(
 	!ENABLED,
@@ -118,7 +120,7 @@ async function addSingleItem(page: Page) {
 }
 
 async function captureSubmissionPayload(page: Page) {
-	await page.getByTestId("payment-submit").click();
+	await page.locator('[data-testid="payment-submit"]:visible').click();
 	const signingDialog = page.getByTestId("cashier-sale-signing-dialog");
 	await expect(signingDialog).toBeVisible({ timeout: 15_000 });
 	const pinInput = signingDialog
@@ -128,13 +130,14 @@ async function captureSubmissionPayload(page: Page) {
 	const paymentMethods = signingDialog.getByTestId(
 		"cashier-sale-payment-method",
 	);
-	const labels = await paymentMethods.locator("span").allTextContents();
-	const cashIndex = labels.indexOf("Cash");
-	expect(
-		cashIndex,
+	const cashMethod = paymentMethods
+		.filter({ hasText: /^\s*1?\s*Cash\s*$/ })
+		.first();
+	await expect(
+		cashMethod,
 		`${EXPECTED_PROFILE} must expose the exact Cash payment method.`,
-	).toBeGreaterThanOrEqual(0);
-	await paymentMethods.nth(cashIndex).click();
+	).toBeVisible();
+	await cashMethod.click();
 	await pinInput.fill(CASHIER_PIN);
 	await pinInput.focus();
 
@@ -301,6 +304,39 @@ async function cancelInvoicesByRequestId(
 	}
 }
 
+async function readAvailableQty(page: Page) {
+	const result = await callFrappe<[number, boolean, boolean]>(
+		page,
+		"erpnext.accounts.doctype.pos_invoice.pos_invoice.get_stock_availability",
+		{
+			item_code: ITEM_CODE,
+			warehouse: WAREHOUSE,
+		},
+	);
+	return Number(result?.[0] || 0);
+}
+
+function withRequestId(payload: SubmissionPayload, requestId: string) {
+	const next: SubmissionPayload = JSON.parse(JSON.stringify(payload));
+	next.invoice.posa_client_request_id = requestId;
+	next.data.client_request_id = requestId;
+	next.data.idempotency_key = requestId;
+	return next;
+}
+
+async function submitOnce(page: Page, payload: SubmissionPayload) {
+	return withTimeout(
+		callFrappe<SubmissionResponse>(page, SUBMIT_METHOD, {
+			invoice: payload.invoice,
+			data: payload.data,
+			submit_in_background: 0,
+			cashier_pin: payload.cashier_pin,
+		}),
+		45_000,
+		"Distinct-request stock-race submission timed out",
+	);
+}
+
 test("two terminals resolve one canonical invoice without duplicates", async ({
 	browser,
 	page,
@@ -315,10 +351,14 @@ test("two terminals resolve one canonical invoice without duplicates", async ({
 	await waitForPos(page);
 	await addSingleItem(page);
 	await page.getByTestId("invoice-action-pay").click();
-	await expect(page.getByTestId("payment-root")).toBeVisible({
+	await expect(
+		page.locator('[data-testid="payment-root"]:visible'),
+	).toBeVisible({
 		timeout: 30_000,
 	});
-	await expect(page.getByTestId("payment-submit")).toBeEnabled({
+	await expect(
+		page.locator('[data-testid="payment-submit"]:visible'),
+	).toBeEnabled({
 		timeout: 15_000,
 	});
 
@@ -395,6 +435,134 @@ test("two terminals resolve one canonical invoice without duplicates", async ({
 					capturedRequestId,
 				);
 			}
+		}
+		await Promise.all([firstContext.close(), secondContext.close()]);
+	}
+});
+
+test("two distinct terminal requests cannot sell the same remaining stock", async ({
+	browser,
+	page,
+}) => {
+	test.skip(
+		!STOCK_RACE_ENABLED,
+		"Set POSA_DISTINCT_STOCK_RACE_E2E=1 to run the live stock race.",
+	);
+	test.setTimeout(5 * 60_000);
+	if (!CASHIER_PIN) {
+		throw new Error("Distinct stock race requires POSA_E2E_CASHIER_PIN.");
+	}
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await waitForPos(page);
+	const startingQty = await readAvailableQty(page);
+	expect(startingQty).toBeGreaterThan(0);
+	expect(Number.isInteger(startingQty)).toBe(true);
+
+	await addSingleItem(page);
+	const qtyInput = page
+		.getByTestId(`cart-row-${ITEM_CODE}`)
+		.first()
+		.locator('[data-pos-keyboard-target="cart-qty"] input');
+	await qtyInput.fill(String(startingQty));
+	await qtyInput.press("Enter");
+	await expect(qtyInput).toHaveValue(String(startingQty), {
+		timeout: 15_000,
+	});
+
+	await page.getByTestId("invoice-action-pay").click();
+	await expect(
+		page.locator('[data-testid="payment-root"]:visible'),
+	).toBeVisible({
+		timeout: 30_000,
+	});
+	const captured = await captureSubmissionPayload(page);
+	const capturedRequestId = String(
+		captured.invoice?.posa_client_request_id ||
+			captured.data?.client_request_id ||
+			"",
+	);
+	if (capturedRequestId) {
+		await removeOutboxEntry(page, capturedRequestId);
+	}
+
+	const requestPrefix = `e2e-stock-race-${Date.now()}-${Math.random()
+		.toString(36)
+		.slice(2, 10)}`;
+	const firstRequestId = `${requestPrefix}-a`;
+	const secondRequestId = `${requestPrefix}-b`;
+	const firstPayload = withRequestId(captured, firstRequestId);
+	const secondPayload = withRequestId(captured, secondRequestId);
+	const storageState = await page.context().storageState();
+	const firstContext = await browser.newContext({ storageState });
+	const secondContext = await browser.newContext({ storageState });
+	let cleanupPage: Page | null = null;
+	let authoritativeDoctype = String(
+		captured.invoice.doctype || "Sales Invoice",
+	);
+
+	try {
+		const [firstTerminal, secondTerminal] = await Promise.all([
+			openTerminal(firstContext),
+			openTerminal(secondContext),
+		]);
+		cleanupPage = firstTerminal;
+		const results = await Promise.allSettled([
+			submitOnce(firstTerminal, firstPayload),
+			submitOnce(secondTerminal, secondPayload),
+		]);
+		const fulfilled = results.filter(
+			(result): result is PromiseFulfilledResult<SubmissionResponse> =>
+				result.status === "fulfilled",
+		);
+		const rejected = results.filter(
+			(result): result is PromiseRejectedResult =>
+				result.status === "rejected",
+		);
+		expect(fulfilled).toHaveLength(1);
+		expect(rejected).toHaveLength(1);
+		expect(fulfilled[0].value.docstatus).toBe(1);
+		authoritativeDoctype =
+			fulfilled[0].value.doctype || authoritativeDoctype;
+
+		const [firstInvoices, secondInvoices] = await Promise.all([
+			findInvoicesByRequestId(
+				firstTerminal,
+				authoritativeDoctype,
+				firstRequestId,
+			),
+			findInvoicesByRequestId(
+				firstTerminal,
+				authoritativeDoctype,
+				secondRequestId,
+			),
+		]);
+		const submitted = [...firstInvoices, ...secondInvoices].filter(
+			(row) => Number(row.docstatus) === 1,
+		);
+		expect(submitted).toHaveLength(1);
+		expect(await readAvailableQty(firstTerminal)).toBe(0);
+	} finally {
+		if (cleanupPage) {
+			await cancelInvoicesByRequestId(
+				cleanupPage,
+				authoritativeDoctype,
+				firstRequestId,
+			);
+			await cancelInvoicesByRequestId(
+				cleanupPage,
+				authoritativeDoctype,
+				secondRequestId,
+			);
+			if (capturedRequestId) {
+				await cancelInvoicesByRequestId(
+					cleanupPage,
+					authoritativeDoctype,
+					capturedRequestId,
+				);
+			}
+			await expect
+				.poll(() => readAvailableQty(cleanupPage!), { timeout: 30_000 })
+				.toBe(startingQty);
 		}
 		await Promise.all([firstContext.close(), secondContext.close()]);
 	}
