@@ -482,6 +482,35 @@ export const useItemsStore = defineStore("items", () => {
 		}
 	};
 
+	/**
+	 * Reconcile a catalog refresh with the active result set.  A server fallback
+	 * can legitimately return an item that has not reached the local catalog
+	 * yet.  Refreshing from the local catalog alone would then make that item
+	 * disappear while the user is looking at it.
+	 */
+	const refreshActiveSearchFromCatalog = () => {
+		if (!searchTerm.value) {
+			setFilteredItems(filterItemsByGroup(items.value, itemGroup.value));
+			return;
+		}
+
+		const normalizedTerm = normalizeSearchScope(searchTerm.value);
+		const localResults = performLocalSearch(
+			searchTerm.value,
+			items.value,
+			itemGroup.value,
+		);
+		const visibleResults =
+			filteredItemsSearchTerm.value === normalizedTerm
+				? filteredItems.value
+				: [];
+
+		setFilteredItems(
+			mergeItemsPreservingOrder(visibleResults, localResults),
+			searchTerm.value,
+		);
+	};
+
 	const isLargeCatalogWindow = () =>
 		cachedPagination.value.enabled ||
 		totalItemCount.value > LARGE_CATALOG_THRESHOLD;
@@ -1885,18 +1914,7 @@ export const useItemsStore = defineStore("items", () => {
 		}
 		clearSearchCache();
 
-		if (searchTerm.value) {
-			setFilteredItems(
-				performLocalSearch(
-					searchTerm.value,
-					items.value,
-					itemGroup.value,
-				),
-				searchTerm.value,
-			);
-		} else {
-			setFilteredItems(filterItemsByGroup(items.value, itemGroup.value));
-		}
+		refreshActiveSearchFromCatalog();
 	};
 
 	const refreshItems = async () => {
@@ -2190,18 +2208,7 @@ export const useItemsStore = defineStore("items", () => {
 		}
 
 		clearSearchCache();
-		if (searchTerm.value) {
-			setFilteredItems(
-				performLocalSearch(
-					searchTerm.value,
-					items.value,
-					itemGroup.value,
-				),
-				searchTerm.value,
-			);
-		} else {
-			setFilteredItems(filterItemsByGroup(items.value, itemGroup.value));
-		}
+		refreshActiveSearchFromCatalog();
 	};
 
 	// Watchers

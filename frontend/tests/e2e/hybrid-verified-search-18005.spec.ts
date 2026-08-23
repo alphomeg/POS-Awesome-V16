@@ -219,6 +219,13 @@ test("warmed exact-code search remains immediate offline and is labelled last kn
 	await expect(entry).toBeFocused({ timeout: 15_000 });
 
 	await context.setOffline(true);
+	// Playwright blocks requests but Chromium does not consistently dispatch the
+	// browser offline event. Mirror the real browser transition so this exercise
+	// covers the POS runtime's offline state rather than a driver quirk.
+	await page.evaluate(() => {
+		(window as any).serverOnline = false;
+		window.dispatchEvent(new Event("offline"));
+	});
 	const requestsBeforeOfflineSearch = liveRequestCount;
 	await entry.fill(ITEM_CODE);
 	const startedAt = performance.now();

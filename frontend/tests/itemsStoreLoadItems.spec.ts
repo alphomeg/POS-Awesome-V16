@@ -34,6 +34,11 @@ const itemsSearchMocks = vi.hoisted(() => ({
 
 const itemsSyncMocks = vi.hoisted(() => ({
 	primeItemDetailsCache: vi.fn(),
+	refreshModifiedItems: vi.fn(async () => ({
+		size: 0,
+		count: 0,
+		items: [],
+	})),
 	backgroundSyncItems: vi.fn(async () => []),
 }));
 
@@ -170,11 +175,7 @@ vi.mock("../src/posapp/composables/pos/items/store/useItemsSync", () => ({
 		persistItemsToStorage: vi.fn(async () => {}),
 		primeItemDetailsCache: itemsSyncMocks.primeItemDetailsCache,
 		cancelBackgroundSync: vi.fn(),
-		refreshModifiedItems: vi.fn(async () => ({
-			size: 0,
-			count: 0,
-			items: [],
-		})),
+		refreshModifiedItems: itemsSyncMocks.refreshModifiedItems,
 		backgroundSyncItems: itemsSyncMocks.backgroundSyncItems,
 	}),
 }));
@@ -233,6 +234,11 @@ describe("itemsStore loadItems", () => {
 		itemsSearchMocks.performLocalSearch.mockImplementation(
 			(_term: string, items: any[]) => items,
 		);
+		itemsSyncMocks.refreshModifiedItems.mockImplementation(async () => ({
+			size: 0,
+			count: 0,
+			items: [],
+		}));
 		itemServiceMocks.getHotItemsData.mockResolvedValue([]);
 		itemServiceMocks.getLiveItemStateData.mockImplementation(
 			async ({ item_codes }: { item_codes: string[] }) => ({
@@ -899,6 +905,69 @@ describe("itemsStore loadItems", () => {
 				offset: 0,
 				scope: "POS-COUNTER_Main Store",
 			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps a server-only result visible while a background catalog delta arrives", async () => {
+		vi.useFakeTimers();
+		try {
+			const store = useItemsStore();
+			const profile = {
+				name: "POS-COUNTER",
+				warehouse: "Main Store",
+				selling_price_list: "Retail",
+				currency: "PKR",
+				item_groups: [],
+				posa_use_limit_search: 1,
+				posa_force_server_items: 1,
+			} as any;
+			await store.initialize(profile);
+
+			itemsSearchMocks.performLocalSearch.mockImplementation(
+				(term: string, candidates: any[]) =>
+					candidates.filter((item) =>
+						item.item_code.toLowerCase().includes(term.toLowerCase()),
+					),
+			);
+			itemServiceMocks.getItemsData.mockResolvedValue([
+				{
+					item_code: "AI167",
+					item_name: "Server-only Item",
+					item_group: "Medicines",
+					actual_qty: 11428,
+					price_list_rate: 3.63505,
+				},
+			]);
+
+			const searchPromise = store.searchItems("AI167", {
+				serverFallbackDelayMs: 0,
+				resultLimit: 20,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await searchPromise;
+			expect(store.filteredItems.map((item) => item.item_code)).toEqual([
+				"AI167",
+			]);
+
+			itemsSyncMocks.refreshModifiedItems.mockImplementation(
+				async (_profile, _priceList, _customer, _scope, onUpdates) => {
+					onUpdates([
+						{
+							item_code: "ITEM-1",
+							actual_qty: 6,
+						},
+					]);
+					return { size: 1, count: 1, items: [] };
+				},
+			);
+
+			await store.refreshModifiedItems();
+
+			expect(store.filteredItems.map((item) => item.item_code)).toEqual([
+				"AI167",
+			]);
 		} finally {
 			vi.useRealTimers();
 		}
