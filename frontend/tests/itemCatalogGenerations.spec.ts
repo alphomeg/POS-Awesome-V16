@@ -100,6 +100,75 @@ describe("generation-safe item catalog persistence", () => {
 		expect(await db.table("items").count()).toBe(0);
 	});
 
+	it("uses scoped indexes for exact cached item-code and barcode searches", async () => {
+		const otherScope = "POS-COUNTER_Second Store";
+		const primary = await beginItemCatalogGeneration(scope);
+		await stageItemCatalogRows(
+			[
+				{
+					item_code: "01009",
+					item_name: "Primary Exact Code",
+					item_group: "Medicines",
+				},
+				{
+					item_code: "BARCODE-ONLY",
+					item_name: "Primary Exact Barcode",
+					item_group: "Medicines",
+					barcode: "scan-900",
+				},
+			],
+			scope,
+			primary.generation,
+		);
+		await promoteItemCatalogGeneration(scope, primary.generation, {
+			expectedCount: 2,
+		});
+
+		const secondary = await beginItemCatalogGeneration(otherScope);
+		await stageItemCatalogRows(
+			[
+				{
+					item_code: "OTHER-01009",
+					item_name: "Other Terminal Barcode",
+					item_group: "Medicines",
+					item_barcode: [{ barcode: "scan-900" }],
+				},
+			],
+			otherScope,
+			secondary.generation,
+		);
+		await promoteItemCatalogGeneration(otherScope, secondary.generation, {
+			expectedCount: 1,
+		});
+
+		const catalogIndexes = db.table("item_catalog_rows").schema.idxByName;
+		expect(
+			catalogIndexes[
+				"[profile_scope+catalog_generation+item_code_lc]"
+			],
+		).toBeDefined();
+		expect(catalogIndexes.barcodes_lc).toBeDefined();
+
+		expect(
+			(await searchStoredItems({ search: "01009", scope, limit: 1 })).map(
+				(item) => item.item_code,
+			),
+		).toEqual(["01009"]);
+		expect(
+			(await searchStoredItems({ search: "SCAN-900", scope })).map(
+				(item) => item.item_code,
+			),
+		).toEqual(["BARCODE-ONLY"]);
+		expect(
+			(
+				await searchStoredItems({
+					search: "scan-900",
+					scope: otherScope,
+				})
+			).map((item) => item.item_code),
+		).toEqual(["OTHER-01009"]);
+	});
+
 	it("retains the last complete generation when replacement validation fails", async () => {
 		const activeGeneration = await seedActiveCatalog();
 		const { generation } = await beginItemCatalogGeneration(scope);

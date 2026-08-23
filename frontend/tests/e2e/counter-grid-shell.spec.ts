@@ -101,6 +101,11 @@ async function addKnownItemFromCounterSearch(
 	);
 }
 
+async function lastEditableColumnKey(cartRow: Locator) {
+	const rateInput = cartRow.locator('[data-column-key="rate"] input');
+	return (await rateInput.count()) > 0 ? "rate" : "discount_amount";
+}
+
 test.describe("Counter Grid shell", () => {
 	test("uses Counter Grid at certified desktop widths and Classic below 1024px", async ({
 		page,
@@ -263,15 +268,28 @@ test.describe("Counter Grid shell", () => {
 		).toBeFocused();
 
 		await page.keyboard.press("Enter");
+		const lastEditableColumn = await lastEditableColumnKey(cartRow);
+		if (lastEditableColumn === "rate") {
+			await expect(cartRow).toHaveAttribute(
+				"data-active-cell-key",
+				"rate",
+			);
+			await expect(
+				cartRow.locator('[data-column-key="rate"] input'),
+			).toBeFocused();
+			await page.keyboard.press("Enter");
+		}
 		const entry = page.getByTestId("counter-grid-item-entry");
 		await expect(entry).toBeFocused({ timeout: 15_000 });
 		await page.keyboard.press("Shift+Tab");
 		await expect(cartRow).toHaveAttribute(
 			"data-active-cell-key",
-			"discount_amount",
+			lastEditableColumn,
 		);
 		await expect(
-			cartRow.locator('[data-column-key="discount_amount"] input'),
+			cartRow.locator(
+				`[data-column-key="${lastEditableColumn}"] input`,
+			),
 		).toBeFocused();
 
 		await page.keyboard.press("Enter");
@@ -921,12 +939,15 @@ test.describe("Counter Grid shell", () => {
 		await page.keyboard.press("Tab");
 		await expect(page.getByTestId("counter-grid-item-entry")).toBeFocused();
 		await page.keyboard.press("Shift+Tab");
+		const lastEditableColumn = await lastEditableColumnKey(secondRow);
 		await expect(secondRow).toHaveAttribute(
 			"data-active-cell-key",
-			"discount_amount",
+			lastEditableColumn,
 		);
 		await expect(
-			secondRow.locator('[data-column-key="discount_amount"] input'),
+			secondRow.locator(
+				`[data-column-key="${lastEditableColumn}"] input`,
+			),
 		).toBeFocused();
 
 		await page.keyboard.press("Home");
@@ -934,7 +955,7 @@ test.describe("Counter Grid shell", () => {
 		await expect(secondQty).toBeFocused({ timeout: 15_000 });
 		await page.keyboard.press("Shift+Enter");
 		const firstRowLastEditable = firstRow.locator(
-			'[data-column-key="discount_amount"] input',
+			`[data-column-key="${lastEditableColumn}"] input`,
 		);
 		await expect(firstRowLastEditable).toBeFocused({ timeout: 15_000 });
 	});

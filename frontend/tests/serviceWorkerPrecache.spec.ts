@@ -14,15 +14,25 @@ class FakeResponse {
 	ok: boolean;
 	status: number;
 	type: string;
+	redirected: boolean;
+	url: string;
 
 	constructor(
 		body = "",
-		options: { ok?: boolean; status?: number; type?: string } = {},
+		options: {
+			ok?: boolean;
+			status?: number;
+			type?: string;
+			redirected?: boolean;
+			url?: string;
+		} = {},
 	) {
 		this.body = body;
 		this.ok = options.ok ?? true;
 		this.status = options.status ?? (this.ok ? 200 : 500);
 		this.type = options.type || "basic";
+		this.redirected = options.redirected ?? false;
+		this.url = options.url || "";
 	}
 
 	async json() {
@@ -34,6 +44,8 @@ class FakeResponse {
 			ok: this.ok,
 			status: this.status,
 			type: this.type,
+			redirected: this.redirected,
+			url: this.url,
 		});
 	}
 
@@ -103,6 +115,7 @@ function createServiceWorkerHarness() {
 	};
 
 	let failedUrl: string | null = null;
+	let errorResponseUrl: string | null = null;
 	const versionPayload = {
 		version: "build-2000",
 		assets: {
@@ -114,6 +127,9 @@ function createServiceWorkerHarness() {
 	};
 	const fetch = vi.fn(async (input: string | { url: string }) => {
 		const url = typeof input === "string" ? input : input.url;
+		if (normalizeKey(input) === errorResponseUrl) {
+			return FakeResponse.error();
+		}
 		if (url.includes("version.json")) {
 			return new FakeResponse(JSON.stringify(versionPayload));
 		}
@@ -162,7 +178,27 @@ function createServiceWorkerHarness() {
 		fail(url: string | null) {
 			failedUrl = url;
 		},
+		returnError(url: string) {
+			errorResponseUrl = normalizeKey(url);
+		},
 	};
+}
+
+async function dispatchFetch(
+	harness: ReturnType<typeof createServiceWorkerHarness>,
+	request: { method: string; url: string; mode: string; destination: string },
+) {
+	let responsePromise: Promise<FakeResponse> | null = null;
+	harness.listeners.get("fetch")?.({
+		request,
+		respondWith(response: Promise<FakeResponse>) {
+			responsePromise = Promise.resolve(response);
+		},
+	});
+	if (!responsePromise) {
+		throw new Error("Service worker did not handle the request");
+	}
+	return responsePromise;
 }
 
 describe("service worker precache", () => {
@@ -196,6 +232,55 @@ describe("service worker precache", () => {
 				"build-2000",
 			),
 		).toBe(true);
+	});
+
+	it("uses the direct Desk shell when an offline POS navigation returns Response.error", async () => {
+		const harness = createServiceWorkerHarness();
+		const activeCacheName = await harness.api.prepareAndActivateCache(
+			harness.versionPayload,
+			{ forceNew: true },
+		);
+		const activeCache = await harness.caches.open(activeCacheName);
+
+		expect(await activeCache.match("/desk/posapp")).toBeTruthy();
+		expect(await activeCache.match("/app/posapp")).toBeFalsy();
+		expect(
+			await activeCache.match("/assets/posawesome/dist/js/version.json"),
+		).toBeTruthy();
+		harness.returnError("/app/posapp");
+
+		const response = await dispatchFetch(harness, {
+			method: "GET",
+			url: "https://pos.example.test/app/posapp",
+			mode: "navigate",
+			destination: "document",
+		});
+
+		expect(response.ok).toBe(true);
+		expect(response.body).toBe("/desk/posapp");
+	});
+
+	it("rejects a redirect response as a complete POS shell", async () => {
+		const harness = createServiceWorkerHarness();
+		const activeCacheName = await harness.api.prepareAndActivateCache(
+			harness.versionPayload,
+			{ forceNew: true },
+		);
+		const activeCache = await harness.caches.open(activeCacheName);
+		await activeCache.put(
+			"/desk/posapp",
+			new FakeResponse("login", {
+				redirected: true,
+				url: "https://pos.example.test/login",
+			}),
+		);
+
+		expect(
+			await harness.api.isCompleteVersionCache(
+				activeCacheName,
+				"build-2000",
+			),
+		).toBe(false);
 	});
 
 	it("never deletes the active cache when a same-version refresh candidate fails", async () => {

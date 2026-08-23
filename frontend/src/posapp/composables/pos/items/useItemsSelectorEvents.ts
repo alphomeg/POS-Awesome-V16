@@ -1,5 +1,7 @@
 import type { Ref } from "vue";
 
+import { REMOTE_STOCK_ADJUSTMENT_EVENT } from "../../../utils/realtimeStock";
+
 type EventBusLike = {
 	on?: (_event: string, _handler: (..._args: any[]) => void) => void;
 	off?: (_event: string, _handler?: (..._args: any[]) => void) => void;
@@ -94,12 +96,30 @@ export function registerItemsSelectorEvents({
 		}
 	};
 
+	const seenRemotePayloads = new WeakSet<object>();
+	const handleRemoteStockAdjustmentOnce = (payload: unknown) => {
+		if (isObjectPayload(payload)) {
+			if (seenRemotePayloads.has(payload)) return;
+			seenRemotePayloads.add(payload);
+		}
+		handleRemoteStockAdjustment(payload);
+	};
+	const handleBrowserRemoteStockAdjustment = (event: Event) => {
+		handleRemoteStockAdjustmentOnce((event as CustomEvent<unknown>).detail);
+	};
+
 	eventBus.on("update_currency", handleCurrencyUpdate);
 	eventBus.on("update_customer_price_list", handleCustomerPriceListUpdate);
 	eventBus.on("update_buying_price_list", handleBuyingPriceListUpdate);
 	eventBus.on("focus_item_search", requestItemSearchFocus);
 	eventBus.on("cart_quantities_updated", handleCartQuantitiesUpdated);
-	eventBus.on("remote_stock_adjustment", handleRemoteStockAdjustment);
+	eventBus.on("remote_stock_adjustment", handleRemoteStockAdjustmentOnce);
+	if (typeof window !== "undefined") {
+		window.addEventListener(
+			REMOTE_STOCK_ADJUSTMENT_EVENT,
+			handleBrowserRemoteStockAdjustment,
+		);
+	}
 
 	return () => {
 		eventBus.off?.("update_currency", handleCurrencyUpdate);
@@ -107,6 +127,12 @@ export function registerItemsSelectorEvents({
 		eventBus.off?.("update_buying_price_list", handleBuyingPriceListUpdate);
 		eventBus.off?.("focus_item_search", requestItemSearchFocus);
 		eventBus.off?.("cart_quantities_updated", handleCartQuantitiesUpdated);
-		eventBus.off?.("remote_stock_adjustment", handleRemoteStockAdjustment);
+		eventBus.off?.("remote_stock_adjustment", handleRemoteStockAdjustmentOnce);
+		if (typeof window !== "undefined") {
+			window.removeEventListener(
+				REMOTE_STOCK_ADJUSTMENT_EVENT,
+				handleBrowserRemoteStockAdjustment,
+			);
+		}
 	};
 }

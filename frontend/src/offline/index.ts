@@ -33,6 +33,7 @@ export * from "./writeQueue";
 export * from "./stock";
 export * from "./invoices";
 export * from "./invoiceOutbox";
+export * from "./offlineSaleAuthorizations";
 export * from "./customers";
 export * from "./payments";
 export * from "./cash_movements";

@@ -85,22 +85,28 @@ describe("offline key map parity", () => {
 		expect(workerSource).toContain(leanCatalogSchema);
 	});
 
-	it("opens the lean V18 catalog schema", async () => {
+	it("opens the V20 catalog, scanner, and outbox-ownership schema", async () => {
 		await db.open();
 
-		expect(db.verno).toBe(18);
+		expect(db.verno).toBe(20);
 		expect(
 			db.table("items").schema.indexes.map((index) => index.name),
-		).toEqual(["profile_scope"]);
+		).toEqual(["profile_scope", "item_code_lc", "barcodes_lc"]);
 		expect(
 			db
 				.table("item_catalog_rows")
 				.schema.indexes.map((index) => index.name),
 		).toEqual([
 			"[profile_scope+catalog_generation]",
+			"[profile_scope+catalog_generation+item_code_lc]",
 			"profile_scope",
 			"item_code",
+			"item_code_lc",
+			"barcodes_lc",
 		]);
+		expect(
+			db.table("invoice_outbox").schema.indexes.map((index) => index.name),
+		).toContain("[owner_user+pos_profile+company+status]");
 	});
 
 	it("keeps worker persistence table-grouped and bulk-written", () => {

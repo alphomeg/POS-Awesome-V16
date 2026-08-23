@@ -385,7 +385,7 @@ def get_terminal_employees(pos_profile=None):
     return employees
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def verify_terminal_employee_pin(pos_profile=None, user=None, pin=None):
     redact_cashier_pin_request_context()
     profile_doc = get_authorized_pos_profile(pos_profile)
@@ -450,7 +450,7 @@ def resolve_cashier_by_pin(pos_profile=None, pin=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def validate_cashier_signature(pos_profile=None, pin=None):
     """Validate a transient sale-signing PIN before dispatching an invoice.
 
@@ -501,7 +501,7 @@ def get_cashier_pin_status(pos_profile=None, user=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_cashier_pin(pos_profile=None, user=None, new_pin=None, current_pin=None):
     redact_cashier_pin_request_context()
     profile_name = _authorize_terminal_profile(pos_profile)

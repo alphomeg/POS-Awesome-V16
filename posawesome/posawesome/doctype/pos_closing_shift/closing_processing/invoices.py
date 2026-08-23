@@ -121,7 +121,38 @@ def delete_draft_invoices(pos_opening_shift, pos_profile):
         )
 
         for invoice in data:
-            frappe.delete_doc(doctype, invoice.name, force=1)
+            savepoint = f"posa_delete_draft_{frappe.generate_hash(length=10)}"
+            frappe.db.savepoint(savepoint)
+            try:
+                frappe.delete_doc(doctype, invoice.name, force=1)
+            except frappe.QueryTimeoutError:
+                # Draft cleanup is housekeeping, not part of the financial
+                # close. A browser autosave or recovery worker may briefly own
+                # an unprinted draft; leave it attached to the closed opening
+                # for later maintenance instead of rolling back the shift.
+                frappe.db.rollback(save_point=savepoint)
+                frappe.log_error(
+                    title="POS Closing Shift Deferred Draft Cleanup",
+                    message=_(
+                        "Draft {0} for opening shift {1} was busy and was left unchanged."
+                    ).format(invoice.name, pos_opening_shift),
+                )
+
+
+def enqueue_draft_invoice_cleanup(pos_opening_shift, pos_profile):
+    """Delete disposable drafts only after the financial close commits."""
+
+    if not frappe.get_value("POS Profile", pos_profile, "posa_allow_delete"):
+        return
+    frappe.enqueue(
+        delete_draft_invoices,
+        queue="short",
+        timeout=300,
+        enqueue_after_commit=True,
+        job_name=f"POS draft cleanup {pos_opening_shift}",
+        pos_opening_shift=pos_opening_shift,
+        pos_profile=pos_profile,
+    )
 
 
 def _get_cancelled_return_against(invoice_doc, doctype):

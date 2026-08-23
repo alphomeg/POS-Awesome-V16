@@ -129,6 +129,14 @@
 								ratePrecision(resolveRetailPrice(item)),
 							)
 						}}
+						<v-icon
+							:size="14"
+							:class="['pharmacy-live-state-icon', liveStateClass(item)]"
+							:color="liveStateColor(item)"
+							:title="liveStateTitle(item)"
+						>
+							{{ liveStateIcon(item) }}
+						</v-icon>
 					</span>
 				</template>
 				<template #item.rack="{ item }">
@@ -222,6 +230,34 @@ const tableRef = ref<any>(null);
 const tableItems = computed<Record<string, any>[]>(() =>
 	Array.isArray(props.displayedItems) ? (props.displayedItems as Record<string, any>[]) : [],
 );
+
+function liveStateIcon(item: Record<string, any>) {
+	const status = item?._posa_live_state_status;
+	if (status === "verified") return "mdi-check-decagram";
+	if (status === "verifying") return "mdi-sync";
+	if (status === "unavailable") return "mdi-block-helper";
+	return "mdi-cloud-clock-outline";
+}
+
+function liveStateClass(item: Record<string, any>) {
+	return `live-state-${item?._posa_live_state_status || "last_known"}`;
+}
+
+function liveStateColor(item: Record<string, any>) {
+	const status = item?._posa_live_state_status;
+	if (status === "verified") return "success";
+	if (status === "verifying") return "warning";
+	if (status === "unavailable") return "error";
+	return "grey";
+}
+
+function liveStateTitle(item: Record<string, any>) {
+	const status = item?._posa_live_state_status;
+	if (status === "verified") return "Live stock and price verified";
+	if (status === "verifying") return "Verifying live stock and price";
+	if (status === "unavailable") return "No longer available for sale";
+	return "Showing last known stock and price";
+}
 
 const resolveRowItem = (candidate: any): Record<string, any> | null => {
 	if (!candidate || typeof candidate !== "object") return null;
@@ -739,8 +775,16 @@ defineExpose({ tableRef, syncRenderedHighlight, focusActiveResult });
 }
 
 .pharmacy-rate-cell {
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 4px;
 	font-weight: 700;
 	color: #10263b;
+}
+
+.pharmacy-live-state-icon {
+	flex: 0 0 auto;
 }
 
 @media (max-width: 1100px) {

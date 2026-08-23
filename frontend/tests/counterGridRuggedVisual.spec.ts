@@ -53,6 +53,30 @@ describe("Counter Grid RetailMind Fresh Operations visual contract", () => {
 		expect(contrastRatio("#2563eb", "#ffffff")).toBeGreaterThanOrEqual(3);
 	});
 
+	it("uses AA text for muted identity labels on teal item dialogs", () => {
+		const history = source(
+			"components",
+			"pos",
+			"invoice",
+			"ItemSalesHistoryModal.vue",
+		);
+		const quickEdit = source(
+			"components",
+			"pos",
+			"items",
+			"ItemQuickEditDialog.vue",
+		);
+
+		expect(history).not.toContain("#e4f4f0");
+		expect(quickEdit).not.toContain("#e4f4f0");
+		expect(history).toContain(
+			".posa-item-history-header__identity .text-subtitle-2 {\n\tcolor: #ffffff !important;",
+		);
+		expect(quickEdit).toContain(
+			".item-quick-edit__identity .text-caption {",
+		);
+	});
+
 	it("uses the green-led brand palette, light data headers, and semantic actions", () => {
 		const shell = source("components", "pos", "shell", "Pos.vue");
 		const navbar = source("components", "navbar", "NavbarAppBar.vue");

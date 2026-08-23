@@ -10,6 +10,33 @@ const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const READINESS_TIMEOUT_MS = Number(
 	process.env.POSA_TERMINAL_RELOAD_TIMEOUT_MS || 120_000,
 );
+const LOCAL_DIRECT_BENCH_ORIGIN = new URL(
+	process.env.POSA_SMOKE_BASE_URL || "http://127.0.0.1:8000",
+).origin;
+const ALLOW_DIRECT_BENCH_SOCKETIO_404 =
+	process.env.POSA_ALLOW_DIRECT_BENCH_SOCKETIO_404 === "1";
+
+function isExpectedDirectBenchSocketIoError(
+	message: import("@playwright/test").ConsoleMessage,
+) {
+	// `bench serve` exposes the web process directly on :8000. Realtime is
+	// normally reverse-proxied in a deployed stack, so its `/socket.io` route is
+	// deliberately absent on the direct local endpoint. Keep this exception
+	// precise: production/proxy runs and every non-socket resource error remain
+	// test failures.
+	if (!ALLOW_DIRECT_BENCH_SOCKETIO_404) {
+		return false;
+	}
+	const location = message.location().url;
+	const text = message.text();
+	return (
+		(location.startsWith(`${LOCAL_DIRECT_BENCH_ORIGIN}/socket.io/`) &&
+			text ===
+				"Failed to load resource: the server responded with a status of 404 (NOT FOUND)") ||
+		(location.startsWith(`${LOCAL_DIRECT_BENCH_ORIGIN}/assets/frappe/`) &&
+			text === "Error connecting to socket.io: xhr poll error")
+	);
+}
 
 test.skip(
 	!ENABLED,
@@ -82,7 +109,10 @@ test("terminal activation and consecutive reloads restore bootstrap readiness", 
 	const errors: string[] = [];
 	page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
 	page.on("console", (message) => {
-		if (message.type() === "error") {
+		if (
+			message.type() === "error" &&
+			!isExpectedDirectBenchSocketIoError(message)
+		) {
 			errors.push(`console.error: ${message.text()}`);
 		}
 	});

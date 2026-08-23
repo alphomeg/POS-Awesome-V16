@@ -82,6 +82,23 @@ export const resolveReturnDefaultAmount = (
 	return -Math.min(Math.abs(total), Math.max(0, toNumber(refundable)));
 };
 
+/**
+ * Resolve the amount displayed by an immediately opened cashier-signing
+ * dialog. A keyboard shortcut captures the invoice total before its async
+ * payment host finishes hydrating, so that captured value is the safe fallback
+ * when the host's reactive document still reports zero.
+ */
+export const resolveImmediateSigningAmount = (
+	documentAmount: unknown,
+	shortcutAmount: unknown,
+): number => {
+	const resolvedDocumentAmount = Math.abs(toNumber(documentAmount));
+	if (resolvedDocumentAmount > 0) {
+		return resolvedDocumentAmount;
+	}
+	return Math.abs(toNumber(shortcutAmount));
+};
+
 export const resolvePreferredPaymentLine = (
 	doc: PaymentInitDoc | null | undefined,
 	isCashLikePayment: (_payment: PaymentLine) => boolean,

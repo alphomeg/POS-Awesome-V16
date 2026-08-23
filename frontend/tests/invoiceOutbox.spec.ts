@@ -12,10 +12,12 @@ import {
 	enqueueInvoiceOutboxEntry,
 	enqueueWriteQueueEntry,
 	finalizeAcknowledgedInvoiceOutboxEntry,
+	getInvoiceOutboxReauthorizationCommand,
 	getInvoiceOutboxMode,
 	getInvoiceOutboxRows,
 	getLastSyncTotals,
 	getOfflineInvoices,
+	markInvoiceOutboxManualBackofficeReview,
 	getPendingInvoiceOutboxCount,
 	getPendingInvoiceRecoveryCount,
 	getPendingOfflineInvoiceCount,
@@ -26,6 +28,7 @@ import {
 	recordCoordinatorInvoiceOutboxResult,
 	refreshQueueMemory,
 	removeInvoiceOutboxEntry,
+	replaceInvoiceOutboxOfflineSaleAuthorization,
 	resetCoordinatorInvoiceOutboxAccountingForTests,
 	saveOfflineCustomer,
 	saveOfflineInvoice,
@@ -48,6 +51,9 @@ function makeInvoiceEntry(
 	} = {},
 ) {
 	return {
+		owner_user: "test-cashier@example.com",
+		pos_profile: "Main POS",
+		company: "Test Company",
 		invoice: {
 			doctype: "Sales Invoice",
 			name: `OFFLINE-${clientRequestId}`,
@@ -70,6 +76,19 @@ function journalStorageKey(clientRequestId: string) {
 	return `posa_invoice_intent_${encodeURIComponent(clientRequestId)}`;
 }
 
+const TEST_OUTBOX_SCOPE = {
+	owner_user: "test-cashier@example.com",
+	pos_profile: "Main POS",
+	company: "Test Company",
+};
+
+function syncTestInvoiceOutbox(callOfflineSyncMethod: any) {
+	return syncInvoiceOutboxResource(
+		callOfflineSyncMethod,
+		TEST_OUTBOX_SCOPE,
+	);
+}
+
 describe("invoice outbox sync resource", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -77,6 +96,15 @@ describe("invoice outbox sync resource", () => {
 	});
 
 	beforeEach(async () => {
+		vi.stubGlobal("frappe", {
+			session: { user: TEST_OUTBOX_SCOPE.owner_user },
+			boot: {
+				pos_profile: {
+					name: TEST_OUTBOX_SCOPE.pos_profile,
+					company: TEST_OUTBOX_SCOPE.company,
+				},
+			},
+		});
 		await initPromise;
 		await db.table("write_queue").clear();
 		await db.table("queue").clear();
@@ -114,6 +142,636 @@ describe("invoice outbox sync resource", () => {
 				status: "pending",
 			}),
 		]);
+	});
+
+	it("captures immutable owner, POS profile, and company routing metadata", async () => {
+		const requestId = "outbox-owner-scope-001";
+		const ownerScope = {
+			owner_user: "cashier-a@example.com",
+			pos_profile: "Main POS",
+			company: "Test Company",
+		};
+		const intent = {
+			...makeInvoiceEntry(requestId),
+			...ownerScope,
+		};
+
+		await expect(enqueueInvoiceOutboxEntry(intent)).resolves.toEqual(
+			expect.objectContaining({
+				owner_scope_version: 1,
+				...ownerScope,
+			}),
+		);
+		await expect(
+			enqueueInvoiceOutboxEntry({
+				...intent,
+				owner_user: "cashier-b@example.com",
+			}),
+		).rejects.toThrow("owner scope collision");
+	});
+
+	it.each([
+		["cashier", { ...TEST_OUTBOX_SCOPE, owner_user: "cashier-b@example.com" }],
+		["POS profile", { ...TEST_OUTBOX_SCOPE, pos_profile: "Other POS" }],
+		["company", { ...TEST_OUTBOX_SCOPE, company: "Other Company" }],
+	])(
+		"does not claim a routed outbox sale under a different %s scope",
+		async (_label, activeScope) => {
+			const requestId = `outbox-scope-${String(_label).replace(/\s+/g, "-")}-001`;
+			await enqueueInvoiceOutboxEntry({
+				...makeInvoiceEntry(requestId),
+				...TEST_OUTBOX_SCOPE,
+			});
+			const submitCall = vi.fn();
+
+			const result = await syncInvoiceOutboxResource(
+				submitCall,
+				activeScope,
+			);
+
+			expect(submitCall).not.toHaveBeenCalled();
+			expect(result).toMatchObject({
+				status: "stale",
+				pendingCount: 1,
+				nextRetryAt: null,
+			});
+			expect(result.lastError).toContain("waiting for its owner session");
+			expect(await getInvoiceOutboxRows()).toEqual([
+				expect.objectContaining({
+					status: "waiting_owner",
+					retry_count: 0,
+					next_retry_at: null,
+					nextAttemptAt: null,
+				}),
+			]);
+		},
+	);
+
+	it("does not retry a waiting-owner sale and resumes it for its exact owner", async () => {
+		const requestId = "outbox-owner-resume-001";
+		await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			...TEST_OUTBOX_SCOPE,
+		});
+		const submitCall = vi.fn(async () => ({
+			acknowledged: true,
+			client_request_id: requestId,
+			invoice: {
+				name: "SINV-OWNER-RESUME-001",
+				doctype: "Sales Invoice",
+				docstatus: 1,
+			},
+		}));
+
+		await syncInvoiceOutboxResource(submitCall, {
+			...TEST_OUTBOX_SCOPE,
+			owner_user: "cashier-b@example.com",
+		});
+		await syncInvoiceOutboxResource(submitCall, {
+			...TEST_OUTBOX_SCOPE,
+			owner_user: "cashier-b@example.com",
+		});
+		expect(submitCall).not.toHaveBeenCalled();
+		expect(await getInvoiceOutboxRows()).toEqual([
+			expect.objectContaining({
+				status: "waiting_owner",
+				retry_count: 0,
+			}),
+		]);
+
+		await syncTestInvoiceOutbox(submitCall);
+		expect(submitCall).toHaveBeenCalledTimes(1);
+		expect(await getInvoiceOutboxRows({ includeTerminal: true })).toEqual([
+			expect.objectContaining({
+				status: "acknowledged",
+				invoice_name: "SINV-OWNER-RESUME-001",
+			}),
+		]);
+	});
+
+	it("keeps legacy non-ticket outbox rows replayable for compatibility", async () => {
+		const requestId = "outbox-legacy-unscoped-001";
+		const legacyIntent = makeInvoiceEntry(requestId);
+		const timestamp = new Date().toISOString();
+		await db.table("invoice_outbox").add({
+			client_request_id: requestId,
+			resource: "invoice_outbox",
+			status: "pending",
+			invoice: legacyIntent.invoice,
+			data: legacyIntent.data,
+			created_at: timestamp,
+			updated_at: timestamp,
+			next_retry_at: null,
+			nextAttemptAt: null,
+			retry_count: 0,
+			last_error: null,
+			invoice_name: null,
+			acknowledged_at: null,
+		});
+		const submitCall = vi.fn(async () => ({
+			acknowledged: true,
+			client_request_id: requestId,
+			invoice: {
+				name: "SINV-LEGACY-UNSCOPED-001",
+				doctype: "Sales Invoice",
+				docstatus: 1,
+			},
+		}));
+
+		await syncInvoiceOutboxResource(submitCall, {
+			owner_user: "different-cashier@example.com",
+			pos_profile: "Other POS",
+			company: "Other Company",
+		});
+
+		expect(submitCall).toHaveBeenCalledTimes(1);
+		expect(await getInvoiceOutboxRows({ includeTerminal: true })).toEqual([
+			expect.objectContaining({ status: "acknowledged" }),
+		]);
+	});
+
+	it("fails closed for a bearer-backed row that predates owner metadata", async () => {
+		const requestId = "outbox-unscoped-bearer-001";
+		const legacyIntent = makeInvoiceEntry(requestId);
+		const timestamp = new Date().toISOString();
+		await db.table("invoice_outbox").add({
+			client_request_id: requestId,
+			resource: "invoice_outbox",
+			status: "pending",
+			invoice: legacyIntent.invoice,
+			data: legacyIntent.data,
+			offline_sale_authorization: "signed-ticket-secret",
+			created_at: timestamp,
+			updated_at: timestamp,
+			next_retry_at: null,
+			nextAttemptAt: null,
+			retry_count: 0,
+			last_error: null,
+			invoice_name: null,
+			acknowledged_at: null,
+		});
+		const submitCall = vi.fn();
+
+		await syncInvoiceOutboxResource(submitCall, {
+			...TEST_OUTBOX_SCOPE,
+			owner_user: "cashier-a@example.com",
+		});
+
+		expect(submitCall).not.toHaveBeenCalled();
+		expect(await getInvoiceOutboxRows()).toEqual([
+			expect.objectContaining({ status: "waiting_owner" }),
+		]);
+	});
+
+	it("routes coordinator outbox claims through the active resource-runner scope", async () => {
+		const requestId = "outbox-resource-runner-scope-001";
+		await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			...TEST_OUTBOX_SCOPE,
+			owner_user: "cashier-a@example.com",
+		});
+		const resource = getSyncResourceDefinitions().find(
+			(entry) => entry.id === "invoice_outbox",
+		);
+		const submitCall = vi.fn(async () => ({
+			acknowledged: true,
+			client_request_id: requestId,
+			invoice: {
+				name: "SINV-RESOURCE-RUNNER-SCOPE-001",
+				doctype: "Sales Invoice",
+				docstatus: 1,
+			},
+		}));
+		const run = (sessionUser: string) =>
+			runSupportedOfflineSyncResource({
+				resource: resource as any,
+				posProfile: {
+					name: "Main POS",
+					company: "Test Company",
+				},
+				sessionUser,
+				schemaVersion: "2026-08-01",
+				getPersistedState: vi.fn(async () => null),
+				callOfflineSyncMethod: submitCall,
+			});
+
+		await run("cashier-b@example.com");
+		expect(submitCall).not.toHaveBeenCalled();
+		expect(await getInvoiceOutboxRows()).toEqual([
+			expect.objectContaining({ status: "waiting_owner" }),
+		]);
+
+		await run("cashier-a@example.com");
+		expect(submitCall).toHaveBeenCalledTimes(1);
+		expect(await getInvoiceOutboxRows({ includeTerminal: true })).toEqual([
+			expect.objectContaining({ status: "acknowledged" }),
+		]);
+	});
+
+	it.each([
+		["requires_reauthorization", "requiresReauthorizationCount"],
+		["requires_supervisor_review", "requiresSupervisorReviewCount"],
+	] as const)(
+		"pauses a typed %s result without consuming retry budget or replaying it",
+		async (resolution, countField) => {
+			const requestId = `outbox-${resolution}-001`;
+			await enqueueInvoiceOutboxEntry({
+				...makeInvoiceEntry(requestId),
+				offline_sale_authorization: "signed-ticket-before-pause",
+			});
+			const submitCall = vi.fn(async () => ({
+				acknowledged: false,
+				definitive_rejection: true,
+				client_request_id: requestId,
+				resolution,
+				// The client deliberately does not retain arbitrary server text in
+				// its durable recovery row.
+				message: "must-not-persist-or-display-server-details",
+			}));
+
+			const firstResult = await syncTestInvoiceOutbox(submitCall);
+			expect(firstResult).toMatchObject({
+				status: "stale",
+				pendingCount: 1,
+				[countField]: 1,
+			});
+			expect(await getInvoiceOutboxRows()).toEqual([
+				expect.objectContaining({
+					status: resolution,
+					retry_count: 0,
+					next_retry_at: null,
+					nextAttemptAt: null,
+					last_error: expect.not.stringContaining(
+						"must-not-persist-or-display-server-details",
+					),
+				}),
+			]);
+
+			await syncInvoiceOutboxResource(submitCall, {
+				...TEST_OUTBOX_SCOPE,
+				owner_user: "different-cashier@example.com",
+			});
+			expect(await getInvoiceOutboxRows()).toEqual([
+				expect.objectContaining({ status: resolution }),
+			]);
+			await syncTestInvoiceOutbox(submitCall);
+			expect(submitCall).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("persists a typed current-policy rejection as durable back-office review", async () => {
+		const requestId = "outbox-current-policy-review-001";
+		await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: "signed-ticket-current-policy",
+		});
+		const submitCall = vi.fn(async () => ({
+			acknowledged: false,
+			definitive_rejection: true,
+			client_request_id: requestId,
+			resolution: "requires_supervisor_review",
+			reason: "current_policy_rejects_command",
+			message: "must-not-persist-server-policy-diagnostic",
+		}));
+
+		await syncTestInvoiceOutbox(submitCall);
+		const [stored] = await getInvoiceOutboxRows();
+		expect(stored).toMatchObject({
+			status: "requires_supervisor_review",
+			recovery_action: "manual_backoffice_review",
+			last_error: "Offline cash sale requires back-office supervisor review before it can be resolved.",
+		});
+		expect(stored.last_error).not.toContain("must-not-persist-server-policy-diagnostic");
+
+		const [redacted] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+		expect(redacted).toMatchObject({
+			offline_sale_authorization: null,
+			has_offline_sale_authorization: true,
+			recovery_action: "manual_backoffice_review",
+		});
+		expect(JSON.stringify(redacted)).not.toContain(
+			"signed-ticket-current-policy",
+		);
+	});
+
+	it("never persists or displays a ticket bearer echoed by a generic sync error", async () => {
+		const requestId = "outbox-bearer-diagnostic-001";
+		const bearer = "signed-ticket-must-not-escape-diagnostic";
+		await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: bearer,
+		});
+		const submitCall = vi.fn(async () => {
+			throw new Error(
+				`network diagnostic echoed args: {"offline_sale_authorization":"${bearer}"}`,
+			);
+		});
+
+		await syncTestInvoiceOutbox(submitCall);
+		const [stored] = await getInvoiceOutboxRows();
+		expect(stored).toMatchObject({
+			status: "retrying",
+			last_error:
+				"Offline cash sale could not sync. It remains queued and will retry when the connection is available.",
+		});
+		expect(stored.last_error).not.toContain(bearer);
+
+		const [redacted] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+		expect(JSON.stringify(redacted)).not.toContain(bearer);
+		expect(redacted.last_error).not.toContain(bearer);
+	});
+
+	it("durably records a manual review decision for a paused ticket without mutating its command", async () => {
+		const requestId = "outbox-manual-backoffice-mark-001";
+		const original = await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: "signed-ticket-manual-mark",
+		});
+		await db.table("invoice_outbox").put({
+			...original,
+			status: "requires_reauthorization",
+		});
+		const [redacted] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+
+		const marked = await markInvoiceOutboxManualBackofficeReview(
+			requestId,
+			redacted,
+		);
+		expect(marked).toMatchObject({
+			status: "requires_supervisor_review",
+			recovery_action: "manual_backoffice_review",
+		});
+		expect(marked.invoice).toEqual(original.invoice);
+		expect(marked.data).toEqual(original.data);
+	});
+
+	it("replaces only a paused sale bearer before replaying the exact immutable command", async () => {
+		const requestId = "outbox-reauthorize-exact-command-001";
+		const original = {
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: "signed-ticket-before-reauthorization",
+		};
+		await enqueueInvoiceOutboxEntry(original);
+		const submitCall = vi
+			.fn()
+			.mockResolvedValueOnce({
+				acknowledged: false,
+				definitive_rejection: true,
+				client_request_id: requestId,
+				resolution: "requires_reauthorization",
+			})
+			.mockResolvedValueOnce({
+				acknowledged: true,
+				client_request_id: requestId,
+				invoice: {
+					name: "SINV-REAUTHORIZED-OFFLINE-001",
+					doctype: "Sales Invoice",
+					docstatus: 1,
+				},
+			});
+
+		await syncTestInvoiceOutbox(submitCall);
+		const [paused] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+		expect(paused).toMatchObject({
+			status: "requires_reauthorization",
+			offline_sale_authorization: null,
+		});
+
+		await expect(
+			replaceInvoiceOutboxOfflineSaleAuthorization(
+				requestId,
+				{
+					...paused,
+					invoice: { ...paused.invoice, customer: "CUST-TAMPERED" },
+				},
+				"signed-ticket-before-reauthorization",
+				"signed-ticket-after-reauthorization",
+				TEST_OUTBOX_SCOPE.owner_user,
+			),
+		).rejects.toThrow("invoice or data changed");
+		await expect(
+			replaceInvoiceOutboxOfflineSaleAuthorization(
+				requestId,
+				{ ...paused, owner_user: "other-cashier@example.com" },
+				"signed-ticket-before-reauthorization",
+				"signed-ticket-after-reauthorization",
+				TEST_OUTBOX_SCOPE.owner_user,
+			),
+		).rejects.toThrow("owner, POS profile, or company changed");
+		await expect(
+			replaceInvoiceOutboxOfflineSaleAuthorization(
+				requestId,
+				{ ...paused, offline_sale_authorization: "stale-signed-ticket" },
+				"signed-ticket-before-reauthorization",
+				"signed-ticket-after-reauthorization",
+				TEST_OUTBOX_SCOPE.owner_user,
+			),
+		).rejects.toThrow("requires a redacted recovery row");
+		const command = await getInvoiceOutboxReauthorizationCommand(
+			requestId,
+			paused,
+		);
+		expect(command).toMatchObject({
+			client_request_id: requestId,
+			document_type: "Sales Invoice",
+			offline_sale_authorization:
+				"signed-ticket-before-reauthorization",
+		});
+		await expect(
+			replaceInvoiceOutboxOfflineSaleAuthorization(
+				requestId,
+				paused,
+				command.offline_sale_authorization,
+				command.offline_sale_authorization,
+				TEST_OUTBOX_SCOPE.owner_user,
+			),
+		).rejects.toThrow("newly issued authorization");
+
+		const replaced = await replaceInvoiceOutboxOfflineSaleAuthorization(
+			requestId,
+			paused,
+			command.offline_sale_authorization,
+			"signed-ticket-after-reauthorization",
+			TEST_OUTBOX_SCOPE.owner_user,
+		);
+		expect(replaced).toMatchObject({
+			status: "pending",
+			offline_sale_authorization: "signed-ticket-after-reauthorization",
+			retry_count: 0,
+			next_retry_at: null,
+			nextAttemptAt: null,
+			last_error: null,
+			owner_user: original.owner_user,
+			pos_profile: original.pos_profile,
+			company: original.company,
+			recovery_owner_user: TEST_OUTBOX_SCOPE.owner_user,
+		});
+		expect(replaced.invoice).toEqual(original.invoice);
+		expect(replaced.data).toEqual(original.data);
+
+		await syncTestInvoiceOutbox(submitCall);
+		expect(submitCall).toHaveBeenCalledTimes(2);
+		expect(submitCall).toHaveBeenLastCalledWith(
+			expect.any(String),
+			expect.objectContaining({
+				offline_sale_authorization:
+					"signed-ticket-after-reauthorization",
+			}),
+		);
+		expect(await getInvoiceOutboxRows({ includeTerminal: true })).toEqual([
+			expect.objectContaining({
+				status: "acknowledged",
+				offline_sale_authorization: null,
+				invoice_name: "SINV-REAUTHORIZED-OFFLINE-001",
+			}),
+		]);
+	});
+
+	it("replays a supervisor-reauthorized row as the fresh ticket owner while preserving original provenance", async () => {
+		const requestId = "outbox-supervisor-recovery-owner-001";
+		const originalOwner = "cashier-a@example.com";
+		const recoveryOwner = "supervisor@example.com";
+		const created = await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			owner_user: originalOwner,
+			offline_sale_authorization: "expired-cashier-a-ticket",
+		});
+		await db.table("invoice_outbox").put({
+			...created,
+			status: "requires_supervisor_review",
+			last_error: "Supervisor reauthorization is required.",
+		});
+		const [paused] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+
+		// The backend independently verifies that this session/PIN is a
+		// supervisor before it issues the fresh ticket. The client may only use
+		// the returned owner while its own authenticated session matches it.
+		(globalThis as any).frappe.session.user = recoveryOwner;
+		const command = await getInvoiceOutboxReauthorizationCommand(
+			requestId,
+			paused,
+		);
+		const replacement = await replaceInvoiceOutboxOfflineSaleAuthorization(
+			requestId,
+			paused,
+			command.offline_sale_authorization,
+			"supervisor-replacement-ticket",
+			recoveryOwner,
+		);
+		expect(replacement).toMatchObject({
+			owner_user: originalOwner,
+			recovery_owner_user: recoveryOwner,
+			pos_profile: TEST_OUTBOX_SCOPE.pos_profile,
+			company: TEST_OUTBOX_SCOPE.company,
+			status: "pending",
+		});
+
+		const submitCall = vi.fn(async () => ({
+			acknowledged: true,
+			client_request_id: requestId,
+			invoice: {
+				name: "SINV-SUPERVISOR-RECOVERY-001",
+				doctype: "Sales Invoice",
+				docstatus: 1,
+			},
+		}));
+		await syncInvoiceOutboxResource(submitCall, {
+			...TEST_OUTBOX_SCOPE,
+			owner_user: recoveryOwner,
+		});
+		expect(submitCall).toHaveBeenCalledTimes(1);
+		expect(await getInvoiceOutboxRows({ includeTerminal: true })).toEqual([
+			expect.objectContaining({
+				owner_user: originalOwner,
+				recovery_owner_user: recoveryOwner,
+				status: "acknowledged",
+			}),
+		]);
+	});
+
+	it("redacts paused rows and exposes a bearer only through an exact transient command", async () => {
+		const requestId = "outbox-redacted-reauthorization-command-001";
+		const created = await enqueueInvoiceOutboxEntry({
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: "stored-ticket-not-for-reactive-ui",
+		});
+		await db.table("invoice_outbox").put({
+			...created,
+			status: "requires_reauthorization",
+			last_error: "Offline cash-sale authorization must be refreshed.",
+		});
+
+		const [redacted] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+		expect(redacted).toMatchObject({
+			client_request_id: requestId,
+			status: "requires_reauthorization",
+			offline_sale_authorization: null,
+		});
+		expect(JSON.stringify(redacted)).not.toContain(
+			"stored-ticket-not-for-reactive-ui",
+		);
+
+		const command = await getInvoiceOutboxReauthorizationCommand(
+			requestId,
+			redacted,
+		);
+		expect(command).toMatchObject({
+			client_request_id: requestId,
+			document_type: "Sales Invoice",
+			offline_sale_authorization: "stored-ticket-not-for-reactive-ui",
+			invoice: created.invoice,
+			data: created.data,
+		});
+		expect(command.invoice).not.toBe(created.invoice);
+		expect(command.data).not.toBe(created.data);
+
+		await expect(
+			getInvoiceOutboxReauthorizationCommand(requestId, {
+				...redacted,
+				data: { ...redacted.data, customer_note: "tampered command" },
+			}),
+		).rejects.toThrow("invoice or data changed");
+		await expect(
+			getInvoiceOutboxReauthorizationCommand(requestId, {
+				...redacted,
+				offline_sale_authorization: "must-never-be-in-reactive-state",
+			}),
+		).rejects.toThrow("requires a redacted recovery row");
+
+		// A command is only valid for the exact durable bearer it observed. A
+		// concurrent recovery flow cannot be overwritten by this stale command.
+		await db.table("invoice_outbox").put({
+			...created,
+			status: "requires_reauthorization",
+			offline_sale_authorization: "newer-ticket-after-race",
+		});
+		await expect(
+			replaceInvoiceOutboxOfflineSaleAuthorization(
+				requestId,
+				redacted,
+				command.offline_sale_authorization,
+				"fresh-ticket-after-race",
+				TEST_OUTBOX_SCOPE.owner_user,
+			),
+		).rejects.toThrow("authorization changed before replacement");
+		const [stillRedacted] = await getInvoiceOutboxRows({
+			redactOfflineSaleAuthorization: true,
+		});
+		expect(JSON.stringify(stillRedacted)).not.toContain(
+			"newer-ticket-after-race",
+		);
 	});
 
 	it("copies legacy invoices before activating coordinator mode", async () => {
@@ -315,7 +973,16 @@ describe("invoice outbox sync resource", () => {
 			}
 			throw new Error(`Unexpected legacy call: ${method}`);
 		});
-		vi.stubGlobal("frappe", { call: submitCall });
+		vi.stubGlobal("frappe", {
+			session: { user: TEST_OUTBOX_SCOPE.owner_user },
+			boot: {
+				pos_profile: {
+					name: "Main POS",
+					company: "Test Company",
+				},
+			},
+			call: submitCall,
+		});
 
 		const totals = await syncOfflineInvoices();
 
@@ -413,6 +1080,7 @@ describe("invoice outbox sync resource", () => {
 		await runSupportedOfflineSyncResource({
 			resource: resource as any,
 			posProfile: { name: "Main POS", company: "Test Company" },
+			sessionUser: TEST_OUTBOX_SCOPE.owner_user,
 			schemaVersion: "2026-04-09",
 			getPersistedState: vi.fn(async () => null),
 			callOfflineSyncMethod: outboxCall,
@@ -464,8 +1132,8 @@ describe("invoice outbox sync resource", () => {
 			throw new Error("late competing failure");
 		});
 
-		const first = syncInvoiceOutboxResource(firstCaller);
-		const second = syncInvoiceOutboxResource(secondCaller);
+		const first = syncTestInvoiceOutbox(firstCaller);
+		const second = syncTestInvoiceOutbox(secondCaller);
 
 		expect(second).toBe(first);
 		await vi.waitFor(() => expect(firstCaller).toHaveBeenCalledTimes(1));
@@ -504,7 +1172,7 @@ describe("invoice outbox sync resource", () => {
 			data: { idempotency_key: "outbox-no-ack-001" },
 		});
 
-		const result = await syncInvoiceOutboxResource(async () => ({
+		const result = await syncTestInvoiceOutbox(async () => ({
 			name: "SINV-NO-ACK-1",
 			invoice: { name: "SINV-NO-ACK-1", docstatus: 1 },
 		}));
@@ -546,7 +1214,7 @@ describe("invoice outbox sync resource", () => {
 		});
 		const submitCall = vi.fn();
 
-		const result = await syncInvoiceOutboxResource(submitCall);
+		const result = await syncTestInvoiceOutbox(submitCall);
 
 		expect(submitCall).not.toHaveBeenCalled();
 		expect(result).toMatchObject({
@@ -585,7 +1253,7 @@ describe("invoice outbox sync resource", () => {
 		});
 		const submitCall = vi.fn();
 
-		const result = await syncInvoiceOutboxResource(submitCall);
+		const result = await syncTestInvoiceOutbox(submitCall);
 
 		expect(submitCall).not.toHaveBeenCalled();
 		expect(result).toMatchObject({
@@ -719,7 +1387,7 @@ describe("invoice outbox sync resource", () => {
 		});
 		const submitCall = vi.fn();
 
-		const result = await syncInvoiceOutboxResource(submitCall);
+		const result = await syncTestInvoiceOutbox(submitCall);
 
 		expect(submitCall).not.toHaveBeenCalled();
 		expect(result).toMatchObject({
@@ -812,7 +1480,7 @@ describe("invoice outbox sync resource", () => {
 		setInvoiceOutboxMode("dual_write");
 		await saveOfflineInvoice(makeInvoiceEntry("invalid-ack-001"));
 
-		const result = await syncInvoiceOutboxResource(async () => response);
+		const result = await syncTestInvoiceOutbox(async () => response);
 
 		expect(result).toMatchObject({
 			status: "error",
@@ -1468,6 +2136,66 @@ describe("invoice outbox sync resource", () => {
 		expect(localStorage.getItem(journalStorageKey(requestId))).toBeNull();
 	});
 
+	it("clears an offline-sale bearer after its exact request is acknowledged", async () => {
+		const requestId = "offline-bearer-clear-001";
+		const intent = {
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: "signed-ticket-secret",
+		};
+		await enqueueInvoiceOutboxEntry(intent);
+
+		await finalizeAcknowledgedInvoiceOutboxEntry(requestId, intent, {
+			acknowledged: true,
+			client_request_id: requestId,
+			invoice: {
+				name: "SINV-OFFLINE-BEARER-CLEAR-001",
+				doctype: "Sales Invoice",
+				docstatus: 1,
+			},
+		});
+
+		expect(await getInvoiceOutboxRows({ includeTerminal: true })).toEqual([
+			expect.objectContaining({
+				status: "acknowledged",
+				offline_sale_authorization: null,
+			}),
+		]);
+	});
+
+	it("keeps a bearer-backed acknowledgement idempotent after redacting the bearer", async () => {
+		const requestId = "offline-bearer-idempotent-001";
+		const intent = {
+			...makeInvoiceEntry(requestId),
+			offline_sale_authorization: "signed-ticket-secret",
+		};
+		const acknowledgement = {
+			acknowledged: true as const,
+			client_request_id: requestId,
+			invoice: {
+				name: "SINV-OFFLINE-BEARER-IDEMPOTENT-001",
+				doctype: "Sales Invoice" as const,
+				docstatus: 1,
+			},
+		};
+		await enqueueInvoiceOutboxEntry(intent);
+
+		await finalizeAcknowledgedInvoiceOutboxEntry(
+			requestId,
+			intent,
+			acknowledgement,
+		);
+		await expect(
+			finalizeAcknowledgedInvoiceOutboxEntry(
+				requestId,
+				intent,
+				acknowledgement,
+			),
+		).resolves.toMatchObject({
+			status: "acknowledged",
+			offline_sale_authorization: null,
+		});
+	});
+
 	it("keeps a direct acknowledgement terminal when a stale coordinator failure completes", async () => {
 		const requestId = "direct-ack-race-001";
 		const intent = makeInvoiceEntry(requestId);
@@ -1480,7 +2208,7 @@ describe("invoice outbox sync resource", () => {
 					rejectCoordinator = reject;
 				}),
 		);
-		const coordinatorSync = syncInvoiceOutboxResource(coordinatorCall);
+		const coordinatorSync = syncTestInvoiceOutbox(coordinatorCall);
 		await vi.waitFor(async () => {
 			expect(
 				(await getInvoiceOutboxRows({ includeTerminal: true }))[0]
@@ -1537,7 +2265,7 @@ describe("invoice outbox sync resource", () => {
 				originalRemoveItem.call(this, key);
 			});
 
-		await expect(syncInvoiceOutboxResource(submitCall)).rejects.toThrow(
+		await expect(syncTestInvoiceOutbox(submitCall)).rejects.toThrow(
 			"could not be removed",
 		);
 		expect(submitCall).toHaveBeenCalledTimes(1);
@@ -1552,7 +2280,7 @@ describe("invoice outbox sync resource", () => {
 
 		removeSpy.mockRestore();
 		await expect(
-			syncInvoiceOutboxResource(submitCall),
+			syncTestInvoiceOutbox(submitCall),
 		).resolves.toMatchObject({
 			status: "fresh",
 			pendingCount: 0,

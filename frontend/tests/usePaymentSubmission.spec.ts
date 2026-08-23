@@ -4,6 +4,7 @@ import { ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePaymentSubmission } from "../src/posapp/composables/pos/payments/usePaymentSubmission";
+import { isOffline } from "../src/offline/index";
 import {
 	buildInvoiceRecoveryCartFingerprint,
 	claimInvoiceRecoveryClientEffects,
@@ -17,17 +18,21 @@ import { ApiEnvelopeError } from "../src/posapp/services/api";
 
 vi.mock("../src/offline/index", () => ({
 	enqueueInvoiceOutboxEntry: vi.fn(async () => ({})),
+	consumeOfflineCashSaleAuthorization: vi.fn(async () => true),
 	finalizeAcknowledgedInvoiceOutboxEntry: vi.fn(async () => ({
 		status: "acknowledged",
 	})),
+	getOfflineCustomers: vi.fn(() => []),
 	getInvoiceOutboxRows: vi.fn(async () => []),
 	isOffline: vi.fn(() => false),
 	persistInvoiceIntentJournal: vi.fn(() => "test-request-id"),
 	removeInvoiceIntentJournal: vi.fn(),
 	removeInvoiceIntentJournalStrict: vi.fn(),
 	removeInvoiceOutboxEntry: vi.fn(async () => 1),
+	releaseOfflineCashSaleAuthorization: vi.fn(async () => true),
 	saveOfflineInvoice: vi.fn(),
 	updateLocalStock: vi.fn(),
+	validateStockForOfflineInvoice: vi.fn(() => ({ isValid: true })),
 }));
 
 vi.mock("../src/posapp/services/invoiceService", () => ({
@@ -74,6 +79,9 @@ const persistScopedRecovery = (
 describe("usePaymentSubmission", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Individual regression cases toggle reachability. Reset it here so an
+		// expected offline rejection cannot leak into the following online case.
+		vi.mocked(isOffline).mockReturnValue(false);
 		resetInvoiceRecoveryStateForTests();
 		vi.stubGlobal("__", (value: string, args?: any[]) => {
 			if (!args?.length) return value;
@@ -3696,7 +3704,7 @@ describe("usePaymentSubmission", () => {
 			submitInvoice(false, {
 				onFinishNavigation: vi.fn(),
 			}),
-		).rejects.toThrow("cashier PIN verification");
+		).rejects.toThrow("No prepared offline cash-sale authorization");
 
 		expect(offlineModule.saveOfflineInvoice).not.toHaveBeenCalled();
 
@@ -3759,11 +3767,141 @@ describe("usePaymentSubmission", () => {
 			submitInvoice(false, {
 				onFinishNavigation: vi.fn(),
 			}),
-		).rejects.toThrow("cashier PIN verification");
+		).rejects.toThrow("No prepared offline cash-sale authorization");
 
 		expect(offlineModule.saveOfflineInvoice).not.toHaveBeenCalled();
 
 		(offlineModule.isOffline as any).mockReturnValue(false);
+	});
+
+	it("queues one prepared cash-only ticket offline without persisting a PIN", async () => {
+		const offlineModule = await import("../src/offline/index");
+		(offlineModule.isOffline as any).mockReturnValue(true);
+		const invoiceService = (
+			await import("../src/posapp/services/invoiceService")
+		).default;
+		const onSuccess = vi.fn();
+		const onFinishNavigation = vi.fn();
+		const invoiceDoc = ref<any>({
+			doctype: "Sales Invoice",
+			is_pos: 1,
+			is_return: 0,
+			pos_profile: "Main POS",
+			company: "Test Company",
+			company_currency: "PKR",
+			currency: "PKR",
+			items: [{ item_code: "ITEM-OFFLINE", qty: 1 }],
+			payments: [
+				{ mode_of_payment: "Cash", amount: 125, base_amount: 125, type: "Cash" },
+			],
+			base_rounded_total: 125,
+			rounded_total: 125,
+			grand_total: 125,
+		});
+		const { submitInvoice } = usePaymentSubmission({
+			invoiceDoc,
+			posProfile: ref({
+				name: "Main POS",
+				company: "Test Company",
+				create_pos_invoice_instead_of_sales_invoice: 0,
+				posa_allow_submissions_in_background_job: 0,
+			}),
+			stockSettings: ref({}),
+			invoiceType: ref("Invoice"),
+			formatFloat: (value) => Number(value || 0),
+			stores: {
+				toastStore: { show: vi.fn() },
+				uiStore: { setLastStockAdjustment: vi.fn() },
+				invoiceStore: { items: invoiceDoc.value.items },
+			},
+			isCashback: ref(true),
+			paidChange: ref(0),
+			creditChange: ref(0),
+			redeemedCustomerCredit: ref(0),
+			customerCreditDict: ref([]),
+			diff_payment: ref(0),
+		});
+		const ticket = {
+			authorization: "signed-offline-ticket",
+			client_request_id: "offline-ticket-request-001",
+			owner_user: "cashier@example.test",
+			expires_at: new Date(Date.now() + 60_000).toISOString(),
+			cashier: "cashier@example.test",
+			cash_mode_of_payment: "Cash",
+			maximum_amount: "500",
+			company_currency: "PKR",
+			document_type: "Sales Invoice" as const,
+		};
+		await expect(
+			submitInvoice(
+				false,
+				{ onSuccess, onFinishNavigation },
+				{
+					cashierSignature: {
+						cashierPin: "",
+						offlineSaleAuthorization: {
+							...ticket,
+							owner_user: "other-cashier@example.test",
+						},
+					},
+				},
+			),
+		).rejects.toThrow("different signed-in user");
+		expect(offlineModule.enqueueInvoiceOutboxEntry).not.toHaveBeenCalled();
+		invoiceDoc.value.customer = "TEMP CUSTOMER OFFLINE";
+		(offlineModule.getOfflineCustomers as any).mockReturnValue([
+			{ args: { customer_name: "TEMP CUSTOMER OFFLINE" } },
+		]);
+		await expect(
+			submitInvoice(
+				false,
+				{ onSuccess, onFinishNavigation },
+				{ cashierSignature: { cashierPin: "", offlineSaleAuthorization: ticket } },
+			),
+		).rejects.toThrow("cannot use a customer created while offline");
+		expect(offlineModule.enqueueInvoiceOutboxEntry).not.toHaveBeenCalled();
+		delete invoiceDoc.value.customer;
+		(offlineModule.getOfflineCustomers as any).mockReturnValue([]);
+
+		await expect(
+			submitInvoice(
+				false,
+				{ onSuccess, onFinishNavigation },
+				{ cashierSignature: { cashierPin: "", offlineSaleAuthorization: ticket } },
+			),
+		).resolves.toMatchObject({ queued: true, offline: true });
+
+		expect(invoiceDoc.value.posa_client_request_id).toBe(
+			"offline-ticket-request-001",
+		);
+		expect(offlineModule.enqueueInvoiceOutboxEntry).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offline_sale_authorization: "signed-offline-ticket",
+				invoice: expect.not.objectContaining({
+					offline_sale_authorization: expect.anything(),
+					cashier_pin: expect.anything(),
+				}),
+				data: expect.not.objectContaining({
+					offline_sale_authorization: expect.anything(),
+					cashier_pin: expect.anything(),
+				}),
+			}),
+		);
+		expect(offlineModule.consumeOfflineCashSaleAuthorization).toHaveBeenCalledWith(
+			expect.objectContaining({
+				posProfile: "Main POS",
+				company: "Test Company",
+			}),
+			"offline-ticket-request-001",
+		);
+		expect(invoiceService.submitInvoice).not.toHaveBeenCalled();
+		expect(onSuccess).toHaveBeenCalledWith(
+			expect.objectContaining({
+				queued: true,
+				client_request_id: "offline-ticket-request-001",
+			}),
+		);
+		expect(onFinishNavigation).toHaveBeenCalledWith(true);
 	});
 
 	it("submits gift card redemptions without requiring a gift card payment row", async () => {

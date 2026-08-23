@@ -67,6 +67,17 @@ class ControlledWorker extends AcknowledgingWorker {
 			} as MessageEvent);
 		});
 	}
+
+	acknowledgeBatch(message: WorkerMessage) {
+		queueMicrotask(() => {
+			this.onmessage?.({
+				data: {
+					type: "persisted_batch",
+					batchId: message.batchId,
+				},
+			} as MessageEvent);
+		});
+	}
 }
 
 describe("offline persistence batching", () => {
@@ -210,7 +221,31 @@ describe("offline persistence batching", () => {
 		});
 	});
 
-	it("replays all in-flight worker batches in order after a later batch fails", async () => {
+	it("posts only one worker batch at a time so queued batches cannot time out early", async () => {
+		vi.stubGlobal("Worker", ControlledWorker);
+		const { flushPersistQueue, persist } = await import("../src/offline/db");
+
+		persist("item_details_cache", { version: 1 });
+		const firstFlush = flushPersistQueue();
+		await vi.waitFor(() => {
+			expect(ControlledWorker.instances[0]?.messages).toHaveLength(1);
+		});
+
+		persist("item_details_cache", { version: 2 });
+		const secondFlush = flushPersistQueue();
+		await Promise.resolve();
+		expect(ControlledWorker.instances[0]?.messages).toHaveLength(1);
+
+		const worker = ControlledWorker.instances[0] as ControlledWorker;
+		worker.acknowledgeBatch(worker.messages[0] as WorkerMessage);
+		await vi.waitFor(() => {
+			expect(worker.messages).toHaveLength(2);
+		});
+		worker.acknowledgeBatch(worker.messages[1] as WorkerMessage);
+		await Promise.all([firstFlush, secondFlush]);
+	});
+
+	it("replays a failed worker batch before later queued writes", async () => {
 		vi.stubGlobal("Worker", ControlledWorker);
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const { db, flushPersistQueue, persist } = await import("../src/offline/db");
@@ -219,15 +254,16 @@ describe("offline persistence batching", () => {
 
 		persist("item_details_cache", { version: 1 });
 		const firstFlush = flushPersistQueue();
-		await Promise.resolve();
+		await vi.waitFor(() => {
+			expect(ControlledWorker.instances[0]?.messages).toHaveLength(1);
+		});
 		persist("item_details_cache", { version: 2 });
 		const secondFlush = flushPersistQueue();
-		await vi.waitFor(() => {
-			expect(ControlledWorker.instances[0]?.messages).toHaveLength(2);
-		});
+		await Promise.resolve();
 
 		const worker = ControlledWorker.instances[0] as ControlledWorker;
-		worker.rejectBatch(worker.messages[1] as WorkerMessage);
+		expect(worker.messages).toHaveLength(1);
+		worker.rejectBatch(worker.messages[0] as WorkerMessage);
 		await Promise.all([firstFlush, secondFlush]);
 
 		expect(await db.table("cache").get("item_details_cache")).toEqual({

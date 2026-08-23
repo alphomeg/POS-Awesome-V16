@@ -87,9 +87,16 @@
 							<div class="table-header mb-4">
 								<h4 class="text-h6 text-grey-darken-2 mb-1">{{ __("Pending Invoices") }}</h4>
 								<p class="text-body-2 text-grey">
-									{{ __("These invoices will be synced when connection is restored") }}
+									{{
+										__(
+											"Queued sales remain here until they sync or a supervisor resolves them. Reauthorization never changes a queued sale.",
+										)
+									}}
 								</p>
 							</div>
+							<v-alert v-if="outboxLoadError" type="warning" variant="tonal" class="mb-4">
+								{{ outboxLoadError }}
+							</v-alert>
 
 							<v-data-table
 								:headers="headers"
@@ -99,13 +106,24 @@
 								:items-per-page-options="[15, 25, 50]"
 							>
 								<template #item.customer="{ item }">
-									<div class="customer-cell">
+									<div v-if="isProtectedRecoveryItem(item)" class="customer-cell">
+										<v-avatar size="32" color="grey" class="mr-3">
+											<v-icon size="18" color="white">mdi-shield-lock-outline</v-icon>
+										</v-avatar>
+										<div>
+											<div class="font-weight-medium text-grey-darken-2">
+												{{ __("Protected queued sale") }}
+											</div>
+											<div class="text-caption text-grey">{{ __("Supervisor access required") }}</div>
+										</div>
+									</div>
+									<div v-else class="customer-cell">
 										<v-avatar size="32" color="primary" class="mr-3">
 											<v-icon size="18" color="white">mdi-account</v-icon>
 										</v-avatar>
 										<div>
 											<div class="font-weight-medium text-grey-darken-2">
-												{{ item.invoice.customer_name || item.invoice.customer }}
+												{{ dataTableItem(item)?.invoice?.customer_name || dataTableItem(item)?.invoice?.customer }}
 											</div>
 											<div class="text-caption text-grey">{{ __("Customer") }}</div>
 										</div>
@@ -113,19 +131,25 @@
 								</template>
 
 								<template #item.posting_date="{ item }">
-									<v-chip size="small" color="info" variant="tonal" class="date-chip">
+									<span v-if="isProtectedRecoveryItem(item)" class="text-caption text-grey">
+										{{ __("Not shown on this terminal") }}
+									</span>
+									<v-chip v-else size="small" color="info" variant="tonal" class="date-chip">
 										<v-icon start size="14">mdi-calendar</v-icon>
-										{{ item.invoice.posting_date }}
+										{{ dataTableItem(item)?.invoice?.posting_date }}
 									</v-chip>
 								</template>
 
 								<template #item.grand_total="{ item }">
-									<div class="amount-cell text-right">
+									<div v-if="isProtectedRecoveryItem(item)" class="amount-cell text-right">
+										<div class="text-caption text-grey">{{ __("Amount protected") }}</div>
+									</div>
+									<div v-else class="amount-cell text-right">
 										<div class="text-h6 font-weight-bold text-success">
-											{{ currencySymbol(item.invoice.currency) }}
+											{{ currencySymbol(dataTableItem(item)?.invoice?.currency) }}
 											{{
 												formatCurrency(
-													item.invoice.grand_total || item.invoice.rounded_total,
+													dataTableItem(item)?.invoice?.grand_total || dataTableItem(item)?.invoice?.rounded_total,
 												)
 											}}
 										</div>
@@ -133,14 +157,35 @@
 									</div>
 								</template>
 
-								<template #item.actions="{ index }">
+								<template #item.status="{ item }">
+									<v-chip size="small" :color="recoveryStatusColor(item)" variant="tonal">
+										{{ recoveryStatusLabel(item) }}
+									</v-chip>
+								</template>
+
+								<template #item.actions="{ item }">
 									<v-btn
-										v-if="posProfile.posa_allow_delete_offline_invoice"
+										v-if="canReauthorize(item)"
+										color="primary"
+										size="small"
+										variant="tonal"
+										prepend-icon="mdi-key-outline"
+										class="mr-2"
+										@click="openReauthorization(item)"
+									>
+										{{
+											requiresSupervisorReauthorization(item)
+												? __("Supervisor Reauthorize")
+												: __("Reauthorize")
+										}}
+									</v-btn>
+									<v-btn
+										v-if="canDelete(item)"
 										icon
 										color="error"
 										size="small"
 										variant="text"
-										@click="removeInvoice(index)"
+										@click="removeInvoice(item.legacy_index)"
 										class="delete-btn"
 										:aria-label="__('Delete offline invoice')"
 									>
@@ -192,13 +237,36 @@
 				</v-card-actions>
 			</v-card>
 		</v-dialog>
+		<OfflineCashSaleReauthorizationDialog
+			v-model="reauthorizationDialog"
+			:pos-profile="posProfile"
+			:entry="selectedRecoveryEntry"
+			:force-supervisor="selectedRecoveryForceSupervisor"
+			:resolve-protected-entry="resolveProtectedRecoveryEntry"
+			@reauthorized="handleReauthorized"
+			@manual-review="handleManualReview"
+		/>
 	</v-row>
 </template>
 
 <script setup>
 import { ref, watch } from "vue";
 import { formatUtils } from "../format";
-import { getOfflineInvoices, deleteOfflineInvoice, getPendingOfflineInvoiceCount } from "../../offline/index";
+import {
+	deleteOfflineInvoice,
+	getInvoiceOutboxRows,
+	getOfflineInvoices,
+	getPendingOfflineInvoiceCount,
+	hasInvoiceOutboxOfflineSaleAuthorization,
+	isInvoiceOutboxOwnedByScope,
+	resolveInvoiceOutboxOwnerScope,
+} from "../../offline/index";
+import OfflineCashSaleReauthorizationDialog from "./offline/OfflineCashSaleReauthorizationDialog.vue";
+import {
+	clearProtectedRecoveryVault,
+	resolveProtectedRecoveryEntry,
+	storeProtectedRecoveryEntry,
+} from "./offline/protectedRecoveryVault";
 
 defineOptions({
 	name: "OfflineInvoicesDialog",
@@ -219,6 +287,11 @@ const currency_precision = ref(2);
 
 const dialog = ref(props.modelValue);
 const invoices = ref([]);
+const outboxLoadError = ref("");
+const reauthorizationDialog = ref(false);
+const selectedRecoveryEntry = ref(null);
+const selectedRecoveryForceSupervisor = ref(false);
+let loadGeneration = 0;
 const headers = [
 	{
 		title: __("Customer"),
@@ -236,13 +309,19 @@ const headers = [
 		title: __("Amount"),
 		value: "grand_total",
 		align: "end",
-		width: "25%",
+		width: "20%",
+	},
+	{
+		title: __("Status"),
+		value: "status",
+		align: "center",
+		width: "15%",
 	},
 	{
 		title: __("Actions"),
 		value: "actions",
 		align: "center",
-		width: "20%",
+		width: "25%",
 		sortable: false,
 	},
 ];
@@ -252,12 +331,18 @@ watch(
 	(val) => {
 		dialog.value = val;
 		if (val) {
-			loadInvoices();
+			void loadInvoices();
 		}
 	},
 );
 
 watch(dialog, (val) => {
+	if (!val) {
+		reauthorizationDialog.value = false;
+		selectedRecoveryEntry.value = null;
+		selectedRecoveryForceSupervisor.value = false;
+		clearProtectedRecoveryVault();
+	}
 	emit("update:modelValue", val);
 });
 
@@ -287,16 +372,186 @@ function currencySymbol(currency) {
 	return get_currency_symbol?.(currency);
 }
 
-function loadInvoices() {
-	invoices.value = getOfflineInvoices();
+function dataTableItem(item) {
+	return item?.raw || item;
+}
+
+function isRecoveryItem(item) {
+	const row = dataTableItem(item);
+	return row?.queue_source === "invoice_outbox";
+}
+
+function isProtectedRecoveryItem(item) {
+	return Boolean(dataTableItem(item)?.protected_recovery);
+}
+
+function activeOutboxOwnerScope() {
+	return resolveInvoiceOutboxOwnerScope({
+		pos_profile: props.posProfile?.name,
+		company: props.posProfile?.company,
+	});
+}
+
+function requiresManualBackofficeReview(item) {
+	return dataTableItem(item)?.recovery_action === "manual_backoffice_review";
+}
+
+function canReauthorize(item) {
+	const row = dataTableItem(item);
+	return (
+		isRecoveryItem(row) &&
+		!requiresManualBackofficeReview(row) &&
+		["requires_reauthorization", "requires_supervisor_review"].includes(row?.status)
+	);
+}
+
+function requiresSupervisorReauthorization(item) {
+	const row = dataTableItem(item);
+	return Boolean(row?.protected_recovery) || row?.status === "requires_supervisor_review";
+}
+
+function canDelete(item) {
+	const row = dataTableItem(item);
+	return (
+		!isRecoveryItem(row) &&
+		Boolean(props.posProfile?.posa_allow_delete_offline_invoice) &&
+		Number.isInteger(row?.legacy_index)
+	);
+}
+
+function recoveryStatusColor(item) {
+	const row = dataTableItem(item);
+	if (requiresManualBackofficeReview(row) || row?.status === "dead_letter") return "error";
+	if (row?.status === "requires_supervisor_review") return "error";
+	if (row?.status === "requires_reauthorization") return "warning";
+	if (["retrying", "waiting_owner"].includes(row?.status)) return "warning";
+	return "info";
+}
+
+function recoveryStatusLabel(item) {
+	const row = dataTableItem(item);
+	if (requiresManualBackofficeReview(row) || row?.status === "dead_letter") {
+		return __("Back-office review required");
+	}
+	if (row?.protected_recovery && ["requires_reauthorization", "requires_supervisor_review"].includes(row?.status)) {
+		return __("Supervisor recovery required");
+	}
+	if (row?.status === "requires_supervisor_review") {
+		return __("Supervisor review");
+	}
+	if (row?.status === "requires_reauthorization") {
+		return __("Cashier reauthorization");
+	}
+	if (row?.status === "waiting_owner") {
+		return __("Waiting for original cashier");
+	}
+	if (row?.status === "retrying") {
+		return __("Waiting to retry");
+	}
+	if (row?.status === "syncing") {
+		return __("Sync in progress");
+	}
+	return __("Pending sync");
+}
+
+function makeRecoveryDisplayRow(entry) {
+	const protectedRecovery = !isInvoiceOutboxOwnedByScope(
+		entry,
+		activeOutboxOwnerScope(),
+	);
+	if (!protectedRecovery) {
+		return {
+			...entry,
+			queue_source: "invoice_outbox",
+			legacy_index: null,
+			protected_recovery: false,
+		};
+	}
+
+	// The opaque key exists only for this render. It is deliberately unrelated
+	// to the immutable client request ID so a shared terminal does not display a
+	// different cashier's sales identity alongside its protected status.
+	const recoveryEntryId = storeProtectedRecoveryEntry(entry);
+	return {
+		queue_source: "invoice_outbox",
+		legacy_index: null,
+		status: entry.status,
+		recovery_action: entry.recovery_action || null,
+		protected_recovery: true,
+		recovery_entry_id: recoveryEntryId,
+		invoice: {},
+	};
+}
+
+async function loadInvoices() {
+	const generation = ++loadGeneration;
+	outboxLoadError.value = "";
+	const legacyInvoices = getOfflineInvoices().map((entry, legacyIndex) => ({
+		...entry,
+		queue_source: "legacy",
+		legacy_index: legacyIndex,
+		status: entry?.status || "pending",
+	}));
+	let recoveryRows = [];
+	try {
+		recoveryRows = (
+			await getInvoiceOutboxRows({
+				redactOfflineSaleAuthorization: true,
+			})
+		).filter((entry) => hasInvoiceOutboxOfflineSaleAuthorization(entry));
+	} catch {
+		outboxLoadError.value = __(
+			"Queued sale recovery could not be read. Do not retry a sale; ask a POS supervisor to check the terminal.",
+		);
+	}
+	if (generation !== loadGeneration) return;
+	clearProtectedRecoveryVault();
+	invoices.value = [
+		...legacyInvoices,
+		...recoveryRows.map((entry) => makeRecoveryDisplayRow(entry)),
+	];
+}
+
+function openReauthorization(item) {
+	const row = dataTableItem(item);
+	if (!canReauthorize(row)) return;
+	if (
+		row?.protected_recovery &&
+		!resolveProtectedRecoveryEntry(row.recovery_entry_id)
+	) {
+		outboxLoadError.value = __(
+			"The protected queued sale changed. Reload this list before asking a supervisor to recover it.",
+		);
+		return;
+	}
+	// Never place a different cashier's full redacted row in reactive UI state.
+	// The dialog receives this sanitized opaque handle and resolves the exact
+	// entry only in a lexical variable while it submits a supervisor PIN.
+	selectedRecoveryEntry.value = row;
+	selectedRecoveryForceSupervisor.value =
+		Boolean(row?.protected_recovery) || requiresSupervisorReauthorization(row);
+	reauthorizationDialog.value = true;
+}
+
+async function handleReauthorized() {
+	reauthorizationDialog.value = false;
+	selectedRecoveryEntry.value = null;
+	selectedRecoveryForceSupervisor.value = false;
+	clearProtectedRecoveryVault();
+	await loadInvoices();
+	emit("sync-all");
+}
+
+async function handleManualReview() {
+	await loadInvoices();
 }
 
 async function removeInvoice(index) {
-	if (!props.posProfile.posa_allow_delete_offline_invoice) {
+	if (!props.posProfile.posa_allow_delete_offline_invoice || !Number.isInteger(index)) {
 		return;
 	}
 	await deleteOfflineInvoice(index);
-	loadInvoices();
+	await loadInvoices();
 	emit("deleted", getPendingOfflineInvoiceCount());
 }
 </script>

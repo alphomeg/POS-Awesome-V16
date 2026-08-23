@@ -12,9 +12,11 @@
  * the address shape returned by both paths.
  *
  * **Sales persons**
- * If the POS profile pre-defines sales persons they are used as-is; otherwise
- * `getSalesPersonsStorage` supplies the session list. The `SalesPerson` interface
- * is exported for callers that render the selector.
+ * Cached sales persons are scoped to the active POS profile. The payment view
+ * applies that cache synchronously and never starts a network request while
+ * offline. Profile-defined choices remain a safe fallback when no display-name
+ * cache is available. The `SalesPerson` interface is exported for callers that
+ * render the selector.
  *
  * **Date inputs**
  * - `delivery_date` / `po_date`: straightforward date pickers on the invoice.
@@ -25,12 +27,17 @@
 import { ref, unref, type Ref } from "vue";
 import { formatUtils, normalizeDateForBackend } from "../../../format";
 import {
-	getSalesPersonsStorage,
 	getCachedCustomerAddresses,
 	isOffline,
 	saveCustomerAddressesCache,
-	setSalesPersonsStorage,
 } from "../../../../offline/index";
+import {
+	getCachedSalesPersonOptions,
+	getProfileSalesPersonOptions,
+	getSalesPersonProfileScope,
+	loadSalesPersonOptions,
+	type SalesPersonOption,
+} from "../../../services/salesPersonService";
 
 declare const frappe: any;
 declare const __: (_str: string, _args?: any[]) => string;
@@ -58,33 +65,7 @@ export interface Address {
 	display_title?: string;
 }
 
-export interface SalesPerson {
-	name: string;
-	sales_person_name: string;
-	value: string;
-	title: string;
-}
-
-const buildSalesPersonOptionsFromProfile = (profile: any): SalesPerson[] => {
-	const rows = Array.isArray(profile?.posa_sales_persons) ? profile.posa_sales_persons : [];
-	const seen = new Set<string>();
-
-	return rows
-		.map((row: any) => String(row?.sales_person || "").trim())
-		.filter((salesPersonName: string) => {
-			if (!salesPersonName || seen.has(salesPersonName)) {
-				return false;
-			}
-			seen.add(salesPersonName);
-			return true;
-		})
-		.map((salesPersonName: string) => ({
-			value: salesPersonName,
-			title: salesPersonName,
-			sales_person_name: salesPersonName,
-			name: salesPersonName,
-		}));
-};
+export type SalesPerson = SalesPersonOption;
 
 export function useInvoiceDetails(options: InvoiceDetailsOptions) {
 	const {
@@ -252,41 +233,29 @@ export function useInvoiceDetails(options: InvoiceDetailsOptions) {
 
 	// --- Sales Person Logic ---
 
-	const get_sales_person_names = () => {
+	const get_sales_person_names = async () => {
 		const profile = unref(posProfile);
-		const profileSalesPersons = buildSalesPersonOptionsFromProfile(profile);
-		if (profile?.posa_local_storage && getSalesPersonsStorage().length) {
-			try {
-				sales_persons.value = getSalesPersonsStorage();
-			} catch (e) {
-				console.error(e);
-			}
-		} else if (profileSalesPersons.length) {
-			sales_persons.value = profileSalesPersons;
+		const profileScope = getSalesPersonProfileScope(profile);
+		const cached = getCachedSalesPersonOptions(profile);
+		const immediate = cached.length
+			? cached
+			: getProfileSalesPersonOptions(profile);
+		sales_persons.value = immediate;
+
+		// A payment screen must be immediately usable while offline. In
+		// particular, do not let a failed RPC replace a valid scoped cache with
+		// an empty profile fallback.
+		if (isOffline()) {
+			return sales_persons.value;
 		}
 
-		frappe.call({
-			method: "posawesome.posawesome.api.utilities.get_sales_person_names",
-			callback: function (r: any) {
-				if (r.message && r.message.length > 0) {
-					sales_persons.value = r.message.map((sp: any) => ({
-						value: sp.name,
-						title: sp.sales_person_name,
-						sales_person_name: sp.sales_person_name,
-						name: sp.name,
-					}));
-					if (profile?.posa_local_storage) {
-						setSalesPersonsStorage(sales_persons.value);
-					}
-				} else {
-					sales_persons.value = profileSalesPersons;
-				}
-			},
-			error: function (error: any) {
-				console.error("Failed to fetch sales persons", error);
-				sales_persons.value = profileSalesPersons;
-			},
-		});
+		const resolved = await loadSalesPersonOptions(profile);
+		// A terminal can switch profile while the optional refresh is in flight.
+		// Ignore the stale completion rather than showing another profile's list.
+		if (profileScope === getSalesPersonProfileScope(unref(posProfile))) {
+			sales_persons.value = resolved;
+		}
+		return resolved;
 	};
 
 	// --- Dates Logic ---

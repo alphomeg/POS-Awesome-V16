@@ -46,10 +46,7 @@
 				{{ __("Check Sale Status") }}
 			</v-btn>
 			<v-btn
-				v-if="
-					submissionRecovery.phase === 'manual_review' &&
-					submissionRecoveryCanReauthorizeCashier
-				"
+				v-if="submissionRecovery.phase === 'manual_review' && submissionRecoveryCanReauthorizeCashier"
 				color="warning"
 				variant="flat"
 				data-testid="cashier-signing-retry"
@@ -332,7 +329,7 @@
 		/>
 		<CashierSaleSigningDialog
 			v-model="cashierSigningDialogOpen"
-			:payments="signingPaymentMethods"
+			:payments="cashierSigningPaymentMethods"
 			:amount="cashierSigningAmount"
 			:currency="invoice_doc?.currency || pos_profile?.currency || ''"
 			:format-currency="formatCurrency"
@@ -340,14 +337,20 @@
 			:error-message="cashierSigningPinError"
 			:preferred-mode="cashierSigningPreferredMode"
 			:customer-name="cashierSigningCustomerName"
-			:credit-eligible="cashierSigningCreditEligible"
-			:credit-reason="cashierSigningCreditReason"
+			:credit-eligible="
+				cashierSigningOfflineAuthorizationMetadata ? false : cashierSigningCreditEligible
+			"
+			:credit-reason="
+				cashierSigningOfflineAuthorizationMetadata ? 'OFFLINE_CASH_ONLY' : cashierSigningCreditReason
+			"
 			:credit-context="cashierSigningCreditContext"
 			:credit-context-loading="cashierSigningCreditContextLoading"
 			:initial-credit-sale="is_credit_sale"
 			:initial-received-amount="cashierSigningReceivedAmount"
 			:initial-due-date="invoice_doc?.due_date || ''"
 			:posting-date="invoice_doc?.posting_date || ''"
+			:require-cashier-pin="!cashierSigningOfflineAuthorizationMetadata"
+			:offline-authorization-message="cashierSigningOfflineAuthorizationMessage"
 			@submit="handleCashierSigningSubmit"
 			@pin-change="cashierSigningPinError = ''"
 			@cancel="handleCashierSigningCancel"
@@ -405,6 +408,9 @@ import { useInvoiceDetails } from "../../composables/pos/invoice/useInvoiceDetai
 import { useFormat } from "../../format";
 import {
 	isOffline,
+	releaseOfflineCashSaleAuthorization,
+	reserveOfflineCashSaleAuthorization,
+	saveOfflineCashSaleAuthorizations,
 	getStoredCustomer,
 	getCachedGiftCardSnapshot,
 	saveGiftCardSnapshot,
@@ -414,6 +420,7 @@ import {
 	applyPreferredPaymentAmount,
 	initializePaymentLinesForDialog,
 	rebalancePreferredPaymentLine,
+	resolveImmediateSigningAmount,
 	resolvePreferredPaymentLine,
 	resolveReturnDefaultAmount,
 	shouldApplyReturnRefundCap,
@@ -425,7 +432,16 @@ import { parseBooleanSetting } from "../../utils/stock";
 import { toCompanyCurrency } from "../../utils/erpnextCurrency";
 import { focusFirstKeyboardTarget } from "../../utils/keyboardNavigation";
 import { getActiveInvoiceSubmissionRecovery } from "../../composables/pos/payments/recoveryState";
-import { validateCashierSignature } from "../../services/cashierSignatureService";
+import {
+	prepareOfflineCashSaleAuthorizations,
+	validateCashierSignature,
+} from "../../services/cashierSignatureService";
+import {
+	clearTransientCashSaleAuthorization,
+	createTransientCashSaleAuthorizationSlot,
+	getTransientCashSaleAuthorization,
+	storeTransientCashSaleAuthorization,
+} from "./payments/transientCashSaleAuthorizationVault";
 
 // Components
 import PaymentSummary from "./payments/PaymentSummary.vue";
@@ -530,15 +546,23 @@ const giftCardError = ref("");
 const giftCardRedemptions = ref([]);
 const cashierSigningDialogOpen = ref(false);
 const cashierSigningAmount = ref(0);
+const shortcutSigningAmountOverride = ref(null);
 const cashierSigningCreditContext = ref({});
 const cashierSigningCreditContextLoading = ref(false);
 const cashierSigningCreditContextError = ref("");
 const cashierSigningPinValidating = ref(false);
 const cashierSigningPinError = ref("");
+// The bearer ticket never enters Vue reactivity or component props. The dialog
+// needs only this display-safe metadata; the exact ticket lives in a
+// module-private vault until the sale is queued or its reservation is released.
+const cashierSigningOfflineAuthorizationMetadata = ref(null);
+const cashierSigningOfflineAuthorizationSlot = createTransientCashSaleAuthorizationSlot();
+const cashierSigningOfflineAuthorizationScope = ref(null);
 const manualRecoveryDialogOpen = ref(false);
 let cashierSigningResolver = null;
 let shortcutPreparation = null;
 let shortcutPreparationAbortController = null;
+let offlineAuthorizationPreparationSequence = 0;
 
 // Computed Properties
 const invoice_doc = computed({
@@ -634,7 +658,29 @@ const signingPaymentMethods = computed(() => {
 	return Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : [];
 });
 
+const cashierSigningPaymentMethods = computed(() => {
+	const authorization = cashierSigningOfflineAuthorizationMetadata.value;
+	if (!authorization) return signingPaymentMethods.value;
+	return signingPaymentMethods.value.filter(
+		(payment) =>
+			String(payment?.mode_of_payment || "").trim() ===
+			String(authorization.cash_mode_of_payment || "").trim(),
+	);
+});
+
+const cashierSigningOfflineAuthorizationMessage = computed(() => {
+	const authorization = cashierSigningOfflineAuthorizationMetadata.value;
+	if (!authorization) return "";
+	return __(
+		"Prepared by {0}: cash-only sale up to {1}, valid until {2}. Cashier PIN is not requested while offline.",
+		[authorization.cashier, authorization.maximum_amount, authorization.expires_at],
+	);
+});
+
 const cashierSigningPreferredMode = computed(() => {
+	if (cashierSigningOfflineAuthorizationMetadata.value?.cash_mode_of_payment) {
+		return cashierSigningOfflineAuthorizationMetadata.value.cash_mode_of_payment;
+	}
 	const paymentRows = Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : [];
 	const positivePayment = paymentRows.find(
 		(payment) => flt(payment?.amount || 0, currency_precision.value) > 0,
@@ -642,10 +688,10 @@ const cashierSigningPreferredMode = computed(() => {
 	if (positivePayment?.mode_of_payment) {
 		return positivePayment.mode_of_payment;
 	}
-	const defaultPayment = signingPaymentMethods.value.find(
+	const defaultPayment = cashierSigningPaymentMethods.value.find(
 		(payment) => payment?.default === 1 || payment?.default === true,
 	);
-	return defaultPayment?.mode_of_payment || signingPaymentMethods.value[0]?.mode_of_payment || "";
+	return defaultPayment?.mode_of_payment || cashierSigningPaymentMethods.value[0]?.mode_of_payment || "";
 });
 
 const request_payment_field = computed(() => {
@@ -905,14 +951,13 @@ const giftCardAppliedAmount = computed(() =>
 	),
 );
 
-const cashierSigningCustomerName = computed(
-	() =>
-		String(
-			invoice_doc.value?.customer_name ||
-				customer_info.value?.customer_name ||
-				invoice_doc.value?.customer ||
-				"",
-		).trim(),
+const cashierSigningCustomerName = computed(() =>
+	String(
+		invoice_doc.value?.customer_name ||
+			customer_info.value?.customer_name ||
+			invoice_doc.value?.customer ||
+			"",
+	).trim(),
 );
 
 const cashierSigningCreditBaseReason = computed(() => {
@@ -945,8 +990,7 @@ const cashierSigningCreditReason = computed(
 );
 const cashierSigningReceivedAmount = computed(() =>
 	(Array.isArray(invoice_doc.value?.payments) ? invoice_doc.value.payments : []).reduce(
-		(sum, payment) =>
-			sum + Math.max(flt(payment?.amount || 0, currency_precision.value), 0),
+		(sum, payment) => sum + Math.max(flt(payment?.amount || 0, currency_precision.value), 0),
 		0,
 	),
 );
@@ -2001,10 +2045,7 @@ const applySigningReceivedAmount = (modeOfPayment, amount) => {
 	const doc = invoice_doc.value;
 	if (!doc || !Array.isArray(doc.payments)) return;
 
-	const normalizedAmount = Math.max(
-		flt(amount || 0, currency_precision.value),
-		0,
-	);
+	const normalizedAmount = Math.max(flt(amount || 0, currency_precision.value), 0);
 	const selectedPayment = doc.payments.find(
 		(payment) => String(payment?.mode_of_payment || "").trim() === mode,
 	);
@@ -2047,8 +2088,7 @@ const loadCashierSigningCreditContext = async () => {
 		});
 		if (requestSequence !== creditContextRequestSequence) return;
 		cashierSigningCreditContext.value = response?.message || {};
-		cashierSigningCreditContextError.value =
-			cashierSigningCreditContext.value?.reason_code || "";
+		cashierSigningCreditContextError.value = cashierSigningCreditContext.value?.reason_code || "";
 	} catch (error) {
 		if (requestSequence !== creditContextRequestSequence) return;
 		cashierSigningCreditContextError.value = "CONTEXT_UNAVAILABLE";
@@ -2062,30 +2102,95 @@ const loadCashierSigningCreditContext = async () => {
 
 const settleCashierSigning = (result) => {
 	const resolver = cashierSigningResolver;
+	const offlineAuthorization = clearTransientCashSaleAuthorization(cashierSigningOfflineAuthorizationSlot);
+	const offlineScope = cashierSigningOfflineAuthorizationScope.value;
 	cashierSigningResolver = null;
 	cashierSigningPinValidating.value = false;
 	cashierSigningPinError.value = "";
+	if (!result && offlineAuthorization && offlineScope) {
+		void releaseOfflineCashSaleAuthorization(offlineScope, offlineAuthorization.client_request_id).catch(
+			() => false,
+		);
+	}
+	cashierSigningOfflineAuthorizationMetadata.value = null;
+	cashierSigningOfflineAuthorizationScope.value = null;
 	cashierSigningDialogOpen.value = false;
 	uiStore.setCashierSigningOpen?.(false);
 	resolver?.(result);
 };
 
-const requestCashierSigning = () => {
+const getOfflineCashSaleAuthorizationScope = () => ({
+	posProfile: String(invoice_doc.value?.pos_profile || pos_profile.value?.name || "").trim(),
+	company: String(invoice_doc.value?.company || pos_profile.value?.company || "").trim(),
+	user: String(frappe?.session?.user || "").trim(),
+});
+
+const toCashierSigningOfflineAuthorizationMetadata = (authorization) => {
+	if (!authorization) return null;
+	return {
+		client_request_id: String(authorization.client_request_id || "").trim(),
+		owner_user: String(authorization.owner_user || "").trim(),
+		expires_at: String(authorization.expires_at || "").trim(),
+		cashier: String(authorization.cashier || "").trim(),
+		cash_mode_of_payment: String(authorization.cash_mode_of_payment || "").trim(),
+		maximum_amount: String(authorization.maximum_amount || "").trim(),
+		company_currency: String(authorization.company_currency || "").trim(),
+		document_type: String(authorization.document_type || "").trim(),
+	};
+};
+
+const requestCashierSigning = async () => {
 	if (!requiresCashierSigning()) {
-		return Promise.resolve(null);
+		return null;
 	}
-	if (isOffline()) {
-		return Promise.reject(
-			new Error(
-				__(
-					"Final sale submission requires an online connection for cashier PIN verification. The cart is still available for retry.",
-				),
-			),
-		);
-	}
-	cashierSigningAmount.value = resolveSigningPaymentAmount();
+	cashierSigningAmount.value = resolveImmediateSigningAmount(
+		resolveSigningPaymentAmount(),
+		shortcutSigningAmountOverride.value,
+	);
+	shortcutSigningAmountOverride.value = null;
 	cashierSigningPinError.value = "";
-	void loadCashierSigningCreditContext();
+	if (isOffline()) {
+		const scope = getOfflineCashSaleAuthorizationScope();
+		const documentType = resolvePosDocumentDoctype({
+			invoiceType: invoiceType.value,
+			posProfile: pos_profile.value,
+		});
+		if (!["Sales Invoice", "POS Invoice"].includes(documentType)) {
+			throw new Error(__("Offline signed sales only support invoices, not orders or quotations."));
+		}
+		let authorization = null;
+		try {
+			authorization = await reserveOfflineCashSaleAuthorization(
+				scope,
+				documentType,
+				String(invoice_doc.value?.posa_client_request_id || "").trim(),
+			);
+		} catch (error) {
+			console.warn("Unable to open offline cash-sale authorization storage", error);
+			throw new Error(
+				__("Offline cash-sale storage is unavailable. Reconnect before submitting this sale."),
+			);
+		}
+		if (!authorization) {
+			throw new Error(
+				__(
+					"No prepared offline cash-sale authorization is available. Reconnect and have a cashier sign a sale before working offline.",
+				),
+			);
+		}
+		storeTransientCashSaleAuthorization(cashierSigningOfflineAuthorizationSlot, authorization);
+		cashierSigningOfflineAuthorizationMetadata.value =
+			toCashierSigningOfflineAuthorizationMetadata(authorization);
+		cashierSigningOfflineAuthorizationScope.value = scope;
+		cashierSigningCreditContext.value = {};
+		cashierSigningCreditContextError.value = "OFFLINE_CASH_ONLY";
+		cashierSigningCreditContextLoading.value = false;
+	} else {
+		clearTransientCashSaleAuthorization(cashierSigningOfflineAuthorizationSlot);
+		cashierSigningOfflineAuthorizationMetadata.value = null;
+		cashierSigningOfflineAuthorizationScope.value = null;
+		void loadCashierSigningCreditContext();
+	}
 	uiStore.setCashierSigningOpen?.(true);
 	cashierSigningDialogOpen.value = true;
 	return new Promise((resolve) => {
@@ -2141,12 +2246,38 @@ const applyCashierSigningSettlement = async (payload) => {
 };
 
 const handleCashierSigningSubmit = async (payload) => {
-	if (!payload?.cashierPin || cashierSigningPinValidating.value) {
+	if (cashierSigningPinValidating.value) {
 		return;
 	}
-	const profileName = String(
-		invoice_doc.value?.pos_profile || pos_profile.value?.name || "",
-	).trim();
+	const offlineAuthorization = getTransientCashSaleAuthorization(cashierSigningOfflineAuthorizationSlot);
+	if (offlineAuthorization) {
+		if (
+			payload?.settlementMode !== "pay" ||
+			String(payload?.modeOfPayment || "").trim() !==
+				String(offlineAuthorization.cash_mode_of_payment || "").trim()
+		) {
+			cashierSigningPinError.value = __(
+				"Offline signed sales must be paid in full with the prepared cash payment method.",
+			);
+			return;
+		}
+		cashierSigningPinValidating.value = true;
+		try {
+			await applyCashierSigningSettlement(payload);
+			settleCashierSigning({
+				...payload,
+				cashierPin: "",
+				offlineSaleAuthorization: offlineAuthorization,
+			});
+		} finally {
+			cashierSigningPinValidating.value = false;
+		}
+		return;
+	}
+	if (!payload?.cashierPin) {
+		return;
+	}
+	const profileName = String(invoice_doc.value?.pos_profile || pos_profile.value?.name || "").trim();
 	if (!profileName) {
 		cashierSigningPinError.value = __(
 			"Unable to verify the cashier PIN because the POS Profile is unavailable.",
@@ -2157,10 +2288,7 @@ const handleCashierSigningSubmit = async (payload) => {
 	cashierSigningPinValidating.value = true;
 	cashierSigningPinError.value = "";
 	try {
-		const validation = await validateCashierSignature(
-			profileName,
-			payload.cashierPin,
-		);
+		const validation = await validateCashierSignature(profileName, payload.cashierPin);
 		if (!validation?.valid) {
 			cashierSigningPinError.value = __("Invalid cashier PIN. Try again.");
 			return;
@@ -2168,13 +2296,30 @@ const handleCashierSigningSubmit = async (payload) => {
 	} catch (error) {
 		cashierSigningPinError.value = isCashierPinRejection(error)
 			? __("Invalid cashier PIN. Try again.")
-			: __(
-					"Unable to verify the cashier PIN. Check the connection and try again.",
-				);
+			: __("Unable to verify the cashier PIN. Check the connection and try again.");
 		return;
 	} finally {
 		cashierSigningPinValidating.value = false;
 	}
+	const offlineScope = getOfflineCashSaleAuthorizationScope();
+	const preparationSequence = ++offlineAuthorizationPreparationSequence;
+	void prepareOfflineCashSaleAuthorizations(
+		profileName,
+		payload.cashierPin,
+		resolvePosDocumentDoctype({
+			invoiceType: invoiceType.value,
+			posProfile: pos_profile.value,
+		}),
+	)
+		.then((prepared) => {
+			if (preparationSequence !== offlineAuthorizationPreparationSequence) {
+				return null;
+			}
+			return saveOfflineCashSaleAuthorizations(offlineScope, prepared?.tickets || []);
+		})
+		.catch((error) => {
+			console.warn("Unable to replenish offline cash-sale authorizations", error);
+		});
 
 	cashierSigningPinValidating.value = true;
 	const preparationReady = await awaitShortcutPreparation();
@@ -2258,8 +2403,7 @@ const handleManualRecoveryResolution = async (resolution) => {
 };
 
 const isCashierPinRejection = (error) =>
-	String(error?.code || error?.envelope?.error?.code || "").trim() ===
-	"CASHIER_PIN_REJECTED";
+	String(error?.code || error?.envelope?.error?.code || "").trim() === "CASHIER_PIN_REJECTED";
 
 const retryCashierSignedSubmission = async () => {
 	if (!submissionRecoveryCanReauthorizeCashier.value) {
@@ -2275,6 +2419,19 @@ const retryCashierSignedSubmission = async () => {
 	await submitInvoiceWrapper(false);
 };
 
+const releaseUnqueuedOfflineCashSaleAuthorization = async (signature) => {
+	const authorization = signature?.offlineSaleAuthorization;
+	if (!authorization) return;
+	try {
+		await releaseOfflineCashSaleAuthorization(
+			getOfflineCashSaleAuthorizationScope(),
+			authorization.client_request_id,
+		);
+	} catch (error) {
+		console.warn("Unable to release unused offline cash-sale authorization", error);
+	}
+};
+
 const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {}) => {
 	if (checkoutMutationLocked.value) {
 		return;
@@ -2284,9 +2441,10 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 	submissionInFlight.value = true;
 	uiStore.setCheckoutSubmissionInFlight?.(true);
 	let closeShortcutAfterUnlock = false;
+	let cashierSignature = null;
 	try {
 		const signingRequired = requiresCashierSigning();
-		let cashierSignature = await requestCashierSigning();
+		cashierSignature = await requestCashierSigning();
 		if (!signingRequired && !(await awaitShortcutPreparation())) {
 			closeShortcutAfterUnlock = paymentShortcutHostOpen.value;
 			return;
@@ -2299,11 +2457,9 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 			loading.value = true;
 			try {
 				await validateSubmission(options.paymentReceived || false);
-				await submitInvoice(
-					print,
-					buildSubmissionCallbacks(print, callbackOverrides),
-					{ cashierSignature },
-				);
+				await submitInvoice(print, buildSubmissionCallbacks(print, callbackOverrides), {
+					cashierSignature,
+				});
 				return;
 			} catch (error) {
 				if (signingRequired && isCashierPinRejection(error)) {
@@ -2319,6 +2475,9 @@ const submitInvoiceWrapper = async (print, callbackOverrides = {}, options = {})
 			}
 		}
 	} catch (error) {
+		if (cashierSignature?.offlineSaleAuthorization && !error?.posaOfflineSaleDurable) {
+			await releaseUnqueuedOfflineCashSaleAuthorization(cashierSignature);
+		}
 		console.error("Submission failed propagate:", error);
 		restorePaymentLinesAfterFailedSubmit();
 
@@ -2365,11 +2524,7 @@ const handlePaymentShortcut = (event) => {
 
 const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
 	const preparationInProgress = Boolean(shortcutPreparation);
-	if (
-		(!paymentVisible.value && !preparationInProgress) ||
-		checkoutMutationLocked.value ||
-		loading.value
-	) {
+	if ((!paymentVisible.value && !preparationInProgress) || checkoutMutationLocked.value || loading.value) {
 		return;
 	}
 	const submitShortcut = () => {
@@ -2379,6 +2534,9 @@ const handleSubmitPaymentShortcut = ({ print = false, amount = null } = {}) => {
 	if (amount !== null) {
 		const shortcutAmount = Number(amount);
 		if (preparationInProgress) {
+			shortcutSigningAmountOverride.value = Number.isFinite(shortcutAmount)
+				? Math.abs(shortcutAmount)
+				: null;
 			void shortcutPreparation.then((prepared) => {
 				if (!prepared || !Number.isFinite(shortcutAmount)) return;
 				applyPreferredPaymentAmount(
@@ -2429,8 +2587,7 @@ const queueShortcutSubmit = (payload = {}) => {
 		return;
 	}
 	shortcutPreparation = payload?.preparation || null;
-	shortcutPreparationAbortController =
-		payload?.preparationAbortController || null;
+	shortcutPreparationAbortController = payload?.preparationAbortController || null;
 	queuedShortcutSubmit.value = payload;
 	if (isPaymentOpen.value) {
 		nextTick(() => {

@@ -178,11 +178,7 @@ import EmployeeSwitchDialog from "./pos/employee/EmployeeSwitchDialog.vue";
 import posLogo from "./pos/pos.png";
 import { POS_BRAND_NAME } from "../config/branding";
 import { isOffline } from "../../offline/index";
-import {
-	getPosStateInventory,
-	repairPosAssets,
-	resetLocalPosOwnedState,
-} from "../../utils/clearAllCaches";
+import { getPosStateInventory, repairPosAssets, resetLocalPosOwnedState } from "../../utils/clearAllCaches";
 import { useRtl } from "../composables/core/useRtl";
 
 const ServerUsageGadget = defineAsyncComponent(() => import("./navbar/ServerUsageGadget.vue"));
@@ -361,6 +357,7 @@ export default {
 			syncNotificationPrimed: false,
 			employeeSwitchHandler: null,
 			lockPosHandler: null,
+			openShiftDetailsHandler: null,
 			terminalSecurityChannel: null,
 			terminalLockRetryHandle: null,
 			terminalLockRetryAttempt: 0,
@@ -585,6 +582,9 @@ export default {
 			}
 			if (this.lockPosHandler) {
 				this.eventBus.off("lock_pos_screen", this.lockPosHandler);
+			}
+			if (this.openShiftDetailsHandler) {
+				this.eventBus.off("open_shift_details", this.openShiftDetailsHandler);
 			}
 		}
 	},
@@ -866,8 +866,10 @@ export default {
 				this.eventBus.on("invoice_submission_failed", this.handleInvoiceSubmissionFailed);
 				this.employeeSwitchHandler = () => this.openEmployeeSwitch();
 				this.lockPosHandler = () => this.lockPosScreen();
+				this.openShiftDetailsHandler = () => this.openCloseShift();
 				this.eventBus.on("open_employee_switch", this.employeeSwitchHandler);
 				this.eventBus.on("lock_pos_screen", this.lockPosHandler);
+				this.eventBus.on("open_shift_details", this.openShiftDetailsHandler);
 			}
 		},
 		handleNavClick() {
@@ -1041,8 +1043,7 @@ export default {
 			try {
 				const [healthResponse, inventory] = await Promise.all([
 					frappe.call({
-						method:
-							"posawesome.posawesome.api.pos_maintenance.get_pos_operational_health",
+						method: "posawesome.posawesome.api.pos_maintenance.get_pos_operational_health",
 						args: { pos_profile: this.posProfileName },
 					}),
 					getPosStateInventory(),
@@ -1152,14 +1153,12 @@ export default {
 			};
 			try {
 				await frappe.call({
-					method:
-						"posawesome.posawesome.api.pos_maintenance.record_developer_reset",
+					method: "posawesome.posawesome.api.pos_maintenance.record_developer_reset",
 					args: { ...auditArgs, phase: "started" },
 				});
 				await resetLocalPosOwnedState();
 				await frappe.call({
-					method:
-						"posawesome.posawesome.api.pos_maintenance.record_developer_reset",
+					method: "posawesome.posawesome.api.pos_maintenance.record_developer_reset",
 					args: { ...auditArgs, phase: "completed" },
 				});
 				window.location.reload();
@@ -1167,8 +1166,7 @@ export default {
 				console.error("Failed to reset local POS state", error);
 				try {
 					await frappe.call({
-						method:
-							"posawesome.posawesome.api.pos_maintenance.record_developer_reset",
+						method: "posawesome.posawesome.api.pos_maintenance.record_developer_reset",
 						args: { ...auditArgs, phase: "failed" },
 					});
 				} catch {
@@ -1184,13 +1182,10 @@ export default {
 			if (!submission?.client_request_id) return;
 			try {
 				const response = await frappe.call({
-					method:
-						"posawesome.posawesome.api.invoice_processing.creation.repair_invoice_submission",
+					method: "posawesome.posawesome.api.invoice_processing.creation.repair_invoice_submission",
 					args: {
 						client_request_id: submission.client_request_id,
-						company:
-							this.posProfile?.company ||
-							this.operationalHealth?.company,
+						company: this.posProfile?.company || this.operationalHealth?.company,
 						pos_profile: this.posProfileName,
 						document_type: submission.document_type,
 					},

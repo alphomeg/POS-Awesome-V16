@@ -88,6 +88,7 @@ type ItemBatchEntry = {
 type SearchableItem = Record<string, any> & {
 	item_code?: string | null;
 	item_name?: string | null;
+	barcode?: string | null;
 	item_barcode?: string | ItemBarcodeEntry[] | null;
 	barcodes?: unknown[];
 	barcodes_lc?: unknown[];
@@ -120,6 +121,9 @@ export const deriveItemSearchFields = (
 
 	const getBarcodes = (): string[] => {
 		const values: unknown[] = [];
+		if (safeItem.barcode) {
+			values.push(String(safeItem.barcode));
+		}
 		if (Array.isArray(safeItem.item_barcode)) {
 			values.push(
 				...safeItem.item_barcode
@@ -379,6 +383,123 @@ async function resolveScopedCatalogCollection(scope: string) {
 		generation: null,
 		usesGeneration: false,
 	};
+}
+
+/**
+ * Resolve an identifier search without walking the entire active catalog.
+ *
+ * A scanned barcode or an exact item code is materially different from a
+ * free-text search: it has one intended target.  The catalog is keyed by
+ * scope + generation, so an exact lookup must retain that boundary even when
+ * the barcode index is shared by all cached generations.  `barcodes_lc` is a
+ * multi-entry IndexedDB index and cannot be compounded with scope, therefore
+ * the indexed candidates are always scope/generation-filtered before they
+ * leave this module.
+ */
+const itemMatchesExactSearchScope = (
+	item: Record<string, any> | null | undefined,
+	scope: string,
+	generation: string | null,
+	itemGroup: string,
+) => {
+	if (!item || !isMatchingScope(item, scope)) {
+		return false;
+	}
+	if (generation && item.catalog_generation !== generation) {
+		return false;
+	}
+	if (!itemGroup || itemGroup.toLowerCase() === "all") {
+		return true;
+	}
+	return (
+		String(item.item_group || "").toLowerCase() === itemGroup.toLowerCase()
+	);
+};
+
+const dedupeExactStoredItems = (items: Array<Record<string, any> | null>) => {
+	const seen = new Set<string>();
+	return items.filter((item): item is Record<string, any> => {
+		const itemCode = String(item?.item_code || "").trim();
+		if (!itemCode || seen.has(itemCode)) {
+			return false;
+		}
+		seen.add(itemCode);
+		return true;
+	});
+};
+
+export async function searchExactStoredItems({
+	search,
+	itemGroup,
+	scope,
+}: {
+	search: string;
+	itemGroup: string;
+	scope: string;
+}) {
+	const rawSearch = String(search || "").trim();
+	const normalizedSearch = normalizeSearchValue(rawSearch);
+	if (!rawSearch || !normalizedSearch || !scope) {
+		return [];
+	}
+
+	const state = await getItemCatalogState(scope);
+	const table = state
+		? db.table(ITEM_CATALOG_ROWS_TABLE)
+		: db.table("items");
+	const generation = state?.active_generation || null;
+	const exactCodeRows: Array<Record<string, any> | null> = [];
+	const exactBarcodeRows: Array<Record<string, any> | null> = [];
+
+	try {
+		if (generation) {
+			exactCodeRows.push(
+				await table.get([scope, generation, rawSearch]),
+			);
+			exactCodeRows.push(
+				...(await table
+					.where(
+						"[profile_scope+catalog_generation+item_code_lc]",
+					)
+					.equals([scope, generation, normalizedSearch])
+					.toArray()),
+			);
+		} else {
+			exactCodeRows.push(await table.get(rawSearch));
+			exactCodeRows.push(
+				...(await table
+					.where("item_code_lc")
+					.equals(normalizedSearch)
+					.toArray()),
+			);
+		}
+
+		// `barcodes_lc` is a multi-entry index. It narrows a barcode scan to the
+		// matching identifier; the explicit scope/generation filter below keeps
+		// data from another terminal generation out of the result.
+		exactBarcodeRows.push(
+			...(await table
+				.where("barcodes_lc")
+				.equals(normalizedSearch)
+				.toArray()),
+		);
+	} catch (error) {
+		// An interrupted browser upgrade must not make search unavailable. The
+		// normal ranked search remains a safe compatibility fallback until the
+		// schema is reopened at the latest version.
+		console.warn("Indexed exact item lookup unavailable", error);
+		return [];
+	}
+
+	const filterToActiveScope = (item: Record<string, any> | null) =>
+		itemMatchesExactSearchScope(item, scope, generation, itemGroup)
+			? item
+			: null;
+
+	return dedupeExactStoredItems([
+		...exactCodeRows.map(filterToActiveScope),
+		...exactBarcodeRows.map(filterToActiveScope),
+	]);
 }
 
 function normalizeCatalogRows(
@@ -730,6 +851,21 @@ export async function searchStoredItems({
 		if (normalizedSearch) {
 			const term = normalizeSearchValue(normalizedSearch);
 			const terms = term.split(/\s+/).filter(Boolean);
+			// Exact item-code and barcode searches are the common scanner path. Do
+			// not make a cashier wait for a 40k-row in-memory filter when an
+			// IndexedDB key/index can identify the intended cached item directly.
+			// Returning the exact identifier rows also prevents unrelated hot
+			// catalog suggestions from consuming the visible result limit.
+			if (normalizedScope && term) {
+				const exactMatches = await searchExactStoredItems({
+					search: normalizedSearch,
+					itemGroup: normalizedGroup,
+					scope: normalizedScope,
+				});
+				if (exactMatches.length > 0) {
+					return exactMatches.slice(offset, offset + limit);
+				}
+			}
 
 			const matchedItems = await collection
 				.filter((it) => itemMatchesStoredSearch(it, term, terms))
@@ -1351,17 +1487,71 @@ export function getTaxTemplate(name) {
 	}
 }
 
-export function getSalesPersonsStorage() {
-	return memory.sales_persons_storage || [];
+/**
+ * Returns cached sales-person options for one POS Profile only.
+ *
+ * The former cache used one global array. That could surface options belonging
+ * to another terminal/profile after a profile switch, so a legacy array is not
+ * trusted for scoped offline checkout reads. It is replaced the next time the
+ * active profile refreshes its options while online.
+ */
+export function getSalesPersonsStorage(profileName?: string) {
+	const storage = memory.sales_persons_storage;
+	if (!profileName) {
+		return Array.isArray(storage) ? storage : [];
+	}
+
+	if (!storage || Array.isArray(storage) || typeof storage !== "object") {
+		return [];
+	}
+
+	const profileStorage = storage[String(profileName)] || [];
+	return Array.isArray(profileStorage) ? profileStorage : [];
 }
 
-export function setSalesPersonsStorage(data) {
+/**
+ * Persist sales-person options under their POS Profile scope.
+ *
+ * `setSalesPersonsStorage(data)` remains a compatibility no-op for the legacy
+ * unscoped writer: retaining an unscoped result would reintroduce cross-profile
+ * data leakage. New callers must provide `(profileName, data)`.
+ */
+export function setSalesPersonsStorage(
+	profileNameOrData: string | unknown[],
+	data?: unknown[],
+) {
 	try {
-		memory.sales_persons_storage = JSON.parse(JSON.stringify(data));
+		if (typeof profileNameOrData !== "string") {
+			return;
+		}
+
+		const normalizedProfileName = String(profileNameOrData || "").trim();
+		if (!normalizedProfileName) {
+			return;
+		}
+
+		const existing = memory.sales_persons_storage;
+		const scopedStorage =
+			existing && !Array.isArray(existing) && typeof existing === "object"
+				? existing
+				: {};
+		const normalizedData = Array.isArray(data)
+			? JSON.parse(JSON.stringify(data))
+			: [];
+
+		memory.sales_persons_storage = {
+			...scopedStorage,
+			[normalizedProfileName]: normalizedData,
+		};
 		persist("sales_persons_storage");
-		refreshBootstrapSnapshotFromCacheState({
-			salesPersons: memory.sales_persons_storage,
-		});
+
+		// A cache update for profile A must never make profile B's bootstrap
+		// snapshot look ready. The snapshot itself is profile-scoped.
+		if (getBootstrapSnapshot()?.profile_name === normalizedProfileName) {
+			refreshBootstrapSnapshotFromCacheState({
+				salesPersons: normalizedData,
+			});
+		}
 	} catch (e) {
 		console.error("Failed to set sales persons storage", e);
 	}

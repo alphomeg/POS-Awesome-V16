@@ -19,7 +19,7 @@ type MemoryUsage = {
 };
 
 export function useItemsIntegration(options: IntegrationOptions = {}) {
-	const { enableDebounce = true, debounceDelay = 300 } = options;
+	const { enableDebounce = true, debounceDelay = 40 } = options;
 
 	// Get store instance
 	const itemsStore = useItemsStore();
@@ -39,6 +39,8 @@ export function useItemsIntegration(options: IntegrationOptions = {}) {
 		searchTerm,
 		itemGroup,
 		lastItemCatalogSyncTime,
+		lastLiveVerificationAt,
+		liveVerificationInFlight,
 		posProfile,
 		customer,
 		customerPriceList,
@@ -47,6 +49,7 @@ export function useItemsIntegration(options: IntegrationOptions = {}) {
 		cachedPagination,
 		hasMoreCachedItems,
 		activePriceList,
+		hybridVerifiedEnabled,
 		itemStats,
 		cacheStats,
 	} = storeToRefs(itemsStore);
@@ -290,6 +293,8 @@ export function useItemsIntegration(options: IntegrationOptions = {}) {
 		searchTerm,
 		itemGroup,
 		lastItemCatalogSyncTime,
+		lastLiveVerificationAt,
+		liveVerificationInFlight,
 		posProfile,
 		customer,
 		customerPriceList,
@@ -298,6 +303,7 @@ export function useItemsIntegration(options: IntegrationOptions = {}) {
 		cachedPagination,
 		hasMoreCachedItems,
 		activePriceList,
+		hybridVerifiedEnabled,
 		itemStats,
 		cacheStats,
 
@@ -323,6 +329,7 @@ export function useItemsIntegration(options: IntegrationOptions = {}) {
 		resetCachedItemsForGroup: itemsStore.resetCachedItemsForGroup,
 		backgroundSyncItems: itemsStore.backgroundSyncItems,
 		refreshModifiedItems,
+		hydrateLiveItems: itemsStore.hydrateLiveItems,
 		getItemByCode: itemsStore.getItemByCode,
 		getItemByBarcode: itemsStore.getItemByBarcode,
 		addScannedItem: itemsStore.addScannedItem,

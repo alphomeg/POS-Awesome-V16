@@ -78,7 +78,13 @@
 				</v-card-title>
 
 				<div class="invoice-tabs-shell">
-					<v-tabs v-model="activeTab" color="primary" grow class="invoice-tabs">
+					<v-tabs
+						v-model="activeTab"
+						color="primary"
+						grow
+						class="invoice-tabs"
+						@keydown.capture="handleInvoiceTabKeydown"
+					>
 						<v-tab value="history">
 							<div class="invoice-tab-label">
 								<span>{{ __("History") }}</span>
@@ -2000,6 +2006,7 @@ export default {
 		selectedSupervisorPosProfile: null,
 		supervisorPosProfiles: [],
 		suppressSupervisorProfileRefresh: false,
+		suppressTabRefresh: false,
 		draftSearch: "",
 		draftDateFrom: "",
 		draftDateTo: "",
@@ -2324,20 +2331,25 @@ export default {
 				});
 			}
 		},
-		invoiceManagementDialog(value) {
+		async invoiceManagementDialog(value) {
 			if (value) {
-				this.activeTab = this.invoiceManagementTargetTab || "history";
-				this.draftSource = getDefaultCommercialDocumentSource(
-					this.posProfile,
-					this.uiStore.invoiceManagementDraftSource || this.draftSource,
-				);
-				this.initializeSupervisorProfileScope();
-				this.loadSupervisorPosProfiles();
-				this.refreshAll();
+				this.suppressTabRefresh = true;
+				try {
+					this.activeTab = this.invoiceManagementTargetTab || "history";
+					this.draftSource = getDefaultCommercialDocumentSource(
+						this.posProfile,
+						this.uiStore.invoiceManagementDraftSource || this.draftSource,
+					);
+					this.initializeSupervisorProfileScope();
+					await this.loadSupervisorPosProfiles();
+				} finally {
+					this.suppressTabRefresh = false;
+				}
+				await this.refreshActiveTab();
 			} else this.resetPagination();
 		},
 		activeTab() {
-			this.refreshActiveTab();
+			if (!this.suppressTabRefresh) this.refreshActiveTab();
 		},
 		filteredHistoryInvoices() {
 			this.resetTabPage("history");
@@ -2358,7 +2370,7 @@ export default {
 				this.isSupervisorScope() &&
 				!this.suppressSupervisorProfileRefresh
 			) {
-				this.refreshAll();
+				this.refreshActiveTab();
 			}
 		},
 		posProfile: {
@@ -2381,7 +2393,7 @@ export default {
 				if (this.isSupervisorScope()) {
 					await this.loadSupervisorPosProfiles();
 				}
-				await this.refreshAll();
+				await this.refreshActiveTab();
 			},
 			deep: true,
 		},
@@ -2984,13 +2996,35 @@ export default {
 		},
 		async refreshAll() {
 			this.resetPagination();
-			await Promise.all([this.loadUnpaidInvoices(), this.loadHistory(), this.loadDrafts()]);
+			// Keep explicit full refreshes sequential. Each loader performs a
+			// metadata-rich query, and launching duplicate batches can saturate a
+			// small POS host and strand the visible tab behind unrelated work.
+			await this.loadUnpaidInvoices();
+			await this.loadHistory();
+			await this.loadDrafts();
 		},
 		async refreshActiveTab() {
 			if (!this.invoiceManagementDialog) return;
 			if (this.activeTab === "drafts") return this.loadDrafts();
 			if (this.activeTab === "partial") return this.loadUnpaidInvoices();
 			return this.loadHistory();
+		},
+		handleInvoiceTabKeydown(event) {
+			const tabs = ["history", "partial", "drafts", "returns"];
+			if (!tabs.includes(this.activeTab)) return;
+			let nextIndex = tabs.indexOf(this.activeTab);
+			if (event.key === "Home") nextIndex = 0;
+			else if (event.key === "End") nextIndex = tabs.length - 1;
+			else if (event.key === "ArrowRight") nextIndex = (nextIndex + 1) % tabs.length;
+			else if (event.key === "ArrowLeft") nextIndex = (nextIndex - 1 + tabs.length) % tabs.length;
+			else return;
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation?.();
+			this.activeTab = tabs[nextIndex];
+			this.$nextTick(() => {
+				this.$el?.querySelector?.(`.invoice-tabs [role="tab"][value="${this.activeTab}"]`)?.focus?.();
+			});
 		},
 		async loadUnpaidInvoices() {
 			if (!this.posProfile?.name) return void (this.unpaidInvoices = []);
@@ -3016,9 +3050,7 @@ export default {
 							? message
 									.map((entry) => ({ ...entry, doctype }))
 									.filter(
-										(entry) =>
-											doctype !== "POS Invoice" ||
-											!entry.consolidated_invoice,
+										(entry) => doctype !== "POS Invoice" || !entry.consolidated_invoice,
 									)
 							: [];
 					}),

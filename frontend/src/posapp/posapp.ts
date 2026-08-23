@@ -33,6 +33,7 @@ import {
 	scheduleAfterStableBoot,
 	scheduleChunkRecoveryStateReset,
 } from "./utils/chunkLoadRecovery";
+import { registerPosServiceWorker } from "./utils/serviceWorkerRegistration";
 import { finalizePendingBundleActivation } from "./utils/bundleVersionActivation";
 import { reconcileBuildChangeOnStartup } from "./utils/buildCacheReconciler";
 import {
@@ -70,6 +71,32 @@ export async function initPosStorage() {
 
 function getPosBuildVersion() {
 	return typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_VERSION__ : null;
+}
+
+let posServiceWorkerRegistration: Promise<ServiceWorkerRegistration | null> | null =
+	null;
+
+function ensurePosServiceWorkerRegistration() {
+	if (posServiceWorkerRegistration) {
+		return posServiceWorkerRegistration;
+	}
+
+	const serviceWorker =
+		typeof navigator !== "undefined" && "serviceWorker" in navigator
+			? navigator.serviceWorker
+			: null;
+	const location = typeof window !== "undefined" ? window.location : null;
+	posServiceWorkerRegistration = registerPosServiceWorker({
+		buildVersion: getPosBuildVersion(),
+		serviceWorker,
+		location,
+	}).then((registration) => {
+		if (!registration) {
+			posServiceWorkerRegistration = null;
+		}
+		return registration;
+	});
+	return posServiceWorkerRegistration;
 }
 
 let buildReconciliationChain: Promise<unknown> = Promise.resolve();
@@ -178,34 +205,6 @@ async function startOptionalRuntimeServices() {
 		link.href = "/manifest.json";
 		document.head.appendChild(link);
 	}
-
-	if (
-		("serviceWorker" in navigator &&
-			window.location.protocol === "https:") ||
-		window.location.hostname === "localhost" ||
-		window.location.hostname === "127.0.0.1"
-	) {
-		// Register at `/sw.js?v=<build>` so a new build forces a fresh
-		// SW registration. The sw.js bytes are stable across deploys
-		// (the file reads version.json at runtime), so without a
-		// per-build URL discriminator the browser keeps the old SW
-		// instance serving its old precache. Symptom in the field:
-		// "POS won't let me add items" — the operator sees the new
-		// Pinia store hooked up to the OLD bundle's DOM. Frappe drops
-		// the query string for static files, so the served bytes are
-		// identical; only the registration scope key differs.
-		const swBuildVersion =
-			typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_VERSION__ : "";
-		const swUrl = swBuildVersion
-			? `/sw.js?v=${encodeURIComponent(swBuildVersion)}`
-			: "/sw.js";
-		navigator.serviceWorker
-			.register(swUrl)
-			.then((registration) => {
-				console.log("SW registered successfully", registration);
-			})
-			.catch((err) => console.error("SW registration failed", err));
-	}
 }
 
 class PosAppController {
@@ -268,6 +267,9 @@ class PosAppController {
 
 		this.app.mount(this.$el[0]);
 		this.inputHelperCleanup = suppressBrowserInputHelpers(this.$el[0]);
+		// The shell registration must not wait for deferred updater/socket work.
+		// A first terminal reload can otherwise happen before this controller exists.
+		void ensurePosServiceWorkerRegistration();
 		clearChunkRecoveryState();
 		void this.router.isReady().finally(() => {
 			scheduleChunkRecoveryStateReset();

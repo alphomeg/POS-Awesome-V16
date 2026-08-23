@@ -4,6 +4,7 @@ import {
 	buildCustomerSearchText,
 	customerMatchesSearchParts,
 	customerMatchesSearchTerm,
+	findCustomerForKeyboardCommit,
 	normalizeCustomerSearchTerm,
 } from "../src/posapp/stores/customers/customerSearch";
 import type { CustomerSummary } from "../src/posapp/types/models";
@@ -51,5 +52,34 @@ describe("customer search helpers", () => {
 		expect(customerMatchesSearchParts(customer, ["jane", "tin-99"])).toBe(
 			true,
 		);
+	});
+
+	it("prefers an exact customer identity for keyboard commit", () => {
+		const customers: CustomerSummary[] = [
+			{
+				name: "VITAL PHARMACY (1423)",
+				customer_name: "VITAL PHARMACY",
+			},
+			{
+				name: "VITAL PHARMACY , BRANCH 2 (1413)",
+				customer_name: "VITAL PHARMACY , BRANCH 2 (1413)",
+			},
+		];
+
+		expect(
+			findCustomerForKeyboardCommit(
+				customers,
+				"VITAL PHARMACY , BRANCH 2 (1413)",
+			)?.name,
+		).toBe("VITAL PHARMACY , BRANCH 2 (1413)");
+	});
+
+	it("does not commit an empty keyboard query", () => {
+		expect(
+			findCustomerForKeyboardCommit(
+				[{ name: "CUST-001", customer_name: "Jane Doe" }],
+				"   ",
+			),
+		).toBeUndefined();
 	});
 });

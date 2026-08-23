@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "fake-indexeddb/auto";
-import { db, KEY_TABLE_MAP } from "../src/offline/db";
+import { db, KEY_TABLE_MAP, memory, flushPersistQueue } from "../src/offline/db";
 import * as cache from "../src/offline/cache";
 
 function installLocalStorageMock() {
@@ -47,11 +47,15 @@ describe("offline prerequisite caches", () => {
 		installLocalStorageMock();
 		localStorage.clear();
 		await clearOfflineDb();
+		memory.sales_persons_storage = {};
+		cache.setBootstrapSnapshot(null);
 	});
 
 	afterEach(async () => {
 		localStorage.clear();
 		await clearOfflineDb();
+		memory.sales_persons_storage = {};
+		cache.setBootstrapSnapshot(null);
 	});
 
 	it("maps new prerequisite caches into offline storage", () => {
@@ -96,5 +100,53 @@ describe("offline prerequisite caches", () => {
 		expect(usage.localStorage).toBeGreaterThan(0);
 		expect(usage.indexedDB).toBeGreaterThan(0);
 		expect(usage.total).toBeGreaterThan(0);
+	});
+
+	it("keeps sales-person cache records scoped to the active POS Profile", async () => {
+		cache.setBootstrapSnapshot({
+			build_version: "test",
+			profile_name: "POS-A",
+			profile_modified: "2026-08-01 00:00:00",
+			opening_shift_name: "OPEN-A",
+			opening_shift_user: "cashier@example.com",
+			prerequisites: {},
+		});
+
+		cache.setSalesPersonsStorage("POS-B", [
+			{ name: "SP-B", sales_person_name: "Sales Person B" },
+		]);
+		cache.setSalesPersonsStorage("POS-A", [
+			{ name: "SP-A", sales_person_name: "Sales Person A" },
+		]);
+		await flushPersistQueue();
+
+		expect(cache.getSalesPersonsStorage("POS-A")).toEqual([
+			{ name: "SP-A", sales_person_name: "Sales Person A" },
+		]);
+		expect(cache.getSalesPersonsStorage("POS-B")).toEqual([
+			{ name: "SP-B", sales_person_name: "Sales Person B" },
+		]);
+		expect(cache.getSalesPersonsStorage("POS-C")).toEqual([]);
+		// No unscoped reader may accidentally select another terminal's list.
+		expect(cache.getSalesPersonsStorage()).toEqual([]);
+		expect(cache.getBootstrapSnapshot()?.prerequisites.sales_persons).toBe(
+			"ready",
+		);
+	});
+
+	it("does not trust a legacy unscoped sales-person array for a scoped offline read", () => {
+		memory.sales_persons_storage = [
+			{ name: "LEGACY-SP", sales_person_name: "Legacy Sales Person" },
+		];
+
+		expect(cache.getSalesPersonsStorage("POS-A")).toEqual([]);
+	});
+
+	it("does not recreate an unscoped cache when a legacy writer is invoked", () => {
+		cache.setSalesPersonsStorage([
+			{ name: "LEGACY-SP", sales_person_name: "Legacy Sales Person" },
+		]);
+
+		expect(memory.sales_persons_storage).toEqual({});
 	});
 });

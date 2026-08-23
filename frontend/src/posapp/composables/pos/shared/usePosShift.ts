@@ -16,6 +16,7 @@ import {
 } from "../../../../offline/index";
 import { getValidCachedOpeningForCurrentUser } from "../../../utils/openingCache";
 import { createBootstrapSnapshotFromRegisterData } from "../../../../offline/bootstrapSnapshot";
+import { warmSalesPersonOptions } from "../../../services/salesPersonService";
 
 declare const __BUILD_VERSION__: string;
 declare const frappe: any;
@@ -30,6 +31,28 @@ type ClosingShiftPreparationResponse = {
 	closing_shift?: any;
 	skipped_printed_invoices?: SkippedPrintedInvoice[];
 };
+
+type ClosingSubmissionStatus = {
+	ready: boolean;
+	pending_count: number;
+	failed_count: number;
+	pending?: Array<Record<string, any>>;
+	failed?: Array<Record<string, any>>;
+	timed_out?: boolean;
+};
+
+type ClosingSubmissionWaitOptions = {
+	timeoutMs?: number;
+	intervalMs?: number;
+	call?: (openingShift: string) => Promise<any>;
+	sleep?: (delayMs: number) => Promise<void>;
+	onStatus?: (status: ClosingSubmissionStatus) => void;
+};
+
+const CLOSING_SUBMISSION_STATUS_METHOD =
+	"posawesome.posawesome.doctype.pos_closing_shift.pos_closing_shift.get_closing_submission_status";
+const CLOSING_SUBMISSION_WAIT_MS = 45_000;
+const CLOSING_SUBMISSION_POLL_MS = 350;
 
 const translateMessage = (value: string) => (typeof window !== "undefined" && window.__
 	? window.__(value)
@@ -78,6 +101,38 @@ function normalizeClosingShiftPreparationResponse(
 	};
 }
 
+export async function waitForClosingShiftSubmissions(
+	openingShift: string,
+	options: ClosingSubmissionWaitOptions = {},
+): Promise<ClosingSubmissionStatus> {
+	const timeoutMs = options.timeoutMs ?? CLOSING_SUBMISSION_WAIT_MS;
+	const intervalMs = options.intervalMs ?? CLOSING_SUBMISSION_POLL_MS;
+	const call = options.call || (async (name: string) =>
+		frappe.call(CLOSING_SUBMISSION_STATUS_METHOD, {
+			opening_shift: name,
+		}));
+	const sleep = options.sleep || ((delayMs: number) =>
+		new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+	const deadline = Date.now() + timeoutMs;
+	let lastStatus: ClosingSubmissionStatus = {
+		ready: false,
+		pending_count: 0,
+		failed_count: 0,
+	};
+
+	while (Date.now() <= deadline) {
+		const response = await call(openingShift);
+		lastStatus = (response?.message || response || lastStatus) as ClosingSubmissionStatus;
+		options.onStatus?.(lastStatus);
+		if (lastStatus.ready || lastStatus.failed_count > 0) {
+			return lastStatus;
+		}
+		await sleep(intervalMs);
+	}
+
+	return { ...lastStatus, timed_out: true };
+}
+
 export function usePosShift(openDialog?: () => void) {
 	const instance = getCurrentInstance();
 	const proxy: any = instance?.proxy;
@@ -89,6 +144,71 @@ export function usePosShift(openDialog?: () => void) {
 
 	const pos_profile = ref<any>(null);
 	const pos_opening_shift = ref<any>(null);
+
+	async function waitForClosingSubmissionsWithToast(openingShift: string) {
+		let announced = false;
+		const status = await waitForClosingShiftSubmissions(openingShift, {
+			onStatus: (current) => {
+				if (!current.ready && !current.failed_count && !announced) {
+					announced = true;
+					toastStore.show({
+						key: `shift-close-finalization::${openingShift}`,
+						title: translateMessage("Finishing recent sales"),
+						detail: translateMessage(
+							"The shift will be ready to close as soon as acknowledged sales finish processing.",
+						),
+						color: "info",
+						timeout: -1,
+						loading: true,
+					});
+				}
+			},
+		});
+
+		if (status.ready) {
+			if (announced) {
+				toastStore.show({
+					key: `shift-close-finalization::${openingShift}`,
+					title: translateMessage("Recent sales finalized"),
+					color: "success",
+					timeout: 2500,
+					loading: false,
+				});
+			}
+			return true;
+		}
+
+		if (status.failed_count > 0) {
+			const invoices = (status.failed || [])
+				.map((row) => row.invoice || row.client_request_id)
+				.filter(Boolean)
+				.slice(0, 3)
+				.join(", ");
+			toastStore.show({
+				key: `shift-close-finalization::${openingShift}`,
+				title: translateMessage("Shift close needs supervisor review"),
+				detail: invoices
+					? `${translateMessage("Unresolved sales")}: ${invoices}`
+					: translateMessage("Resolve failed submissions in Device & Submission Diagnostics."),
+				color: "error",
+				timeout: 8000,
+				loading: false,
+			});
+			return false;
+		}
+
+		toastStore.show({
+			key: `shift-close-finalization::${openingShift}`,
+			title: translateMessage("Recent sales are still processing"),
+			detail: translateMessage(
+				"Keep the POS online and try closing the shift again in a few seconds.",
+			),
+			color: "warning",
+			timeout: 8000,
+			loading: false,
+		});
+		return false;
+	}
 
 	function applyRegisterData(data: any) {
 		if (!data) {
@@ -104,6 +224,13 @@ export function usePosShift(openDialog?: () => void) {
 				{ buildVersion },
 			),
 		);
+		// Refresh optional payment metadata in the background while the terminal is
+		// online. The helper is profile-scoped, durable before it reports success,
+		// and deliberately performs no RPC when this cached opening is restored
+		// offline.
+		void warmSalesPersonOptions(data.pos_profile).catch((error) => {
+			console.warn("Unable to warm POS sales-person options", error);
+		});
 
 		try {
 			frappe.realtime.emit("pos_profile_registered");
@@ -180,7 +307,7 @@ export function usePosShift(openDialog?: () => void) {
 			});
 	}
 
-	function get_closing_data() {
+	async function get_closing_data() {
 		const cachedOpeningShift = (getOpeningStorage() as any)
 			?.pos_opening_shift;
 		const resolvedShift =
@@ -190,6 +317,10 @@ export function usePosShift(openDialog?: () => void) {
 			null;
 		if (!resolvedShift) {
 			return Promise.resolve();
+		}
+		const openingName = String(resolvedShift.name || "").trim();
+		if (!openingName || !(await waitForClosingSubmissionsWithToast(openingName))) {
+			return;
 		}
 		return frappe
 			.call(
@@ -221,9 +352,13 @@ export function usePosShift(openDialog?: () => void) {
 			});
 	}
 
-	function submit_closing_pos(data: any) {
+	async function submit_closing_pos(data: any) {
 		console.log("Submitting closing shift", data);
-		frappe
+		const openingName = String(data?.pos_opening_shift || "").trim();
+		if (openingName && !(await waitForClosingSubmissionsWithToast(openingName))) {
+			return;
+		}
+		return frappe
 			.call(
 				"posawesome.posawesome.doctype.pos_closing_shift.pos_closing_shift.submit_closing_shift",
 				{

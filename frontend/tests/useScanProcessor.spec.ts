@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { computed, ref } from "vue";
 
-vi.mock("../src/offline/index", () => ({
+const offlineMocks = vi.hoisted(() => ({
+	isOffline: vi.fn(() => false),
+	searchStoredItems: vi.fn(async () => []),
 	saveItems: vi.fn(async () => {}),
 	savePriceListItems: vi.fn(async () => {}),
+}));
+
+vi.mock("../src/offline/index", () => ({
+	...offlineMocks,
 }));
 
 vi.mock("../src/posapp/stores/toastStore", () => ({
@@ -42,6 +48,7 @@ const makeContext = (
 	return {
 		items: ref<any[]>([]),
 		pos_profile: ref({
+			name: "POS-TEST",
 			currency: "USD",
 			warehouse: "Main Warehouse",
 			company: "Test Co",
@@ -102,6 +109,11 @@ const makeContext = (
 
 describe("useScanProcessor serial scan handling", () => {
 	beforeEach(() => {
+		offlineMocks.isOffline.mockReturnValue(false);
+		offlineMocks.searchStoredItems.mockReset();
+		offlineMocks.searchStoredItems.mockResolvedValue([]);
+		offlineMocks.saveItems.mockClear();
+		offlineMocks.savePriceListItems.mockClear();
 		(globalThis as any).__ = (text: string) => text;
 		(globalThis as any).frappe = {
 			call: vi.fn(async ({ method }: { method: string }) => {
@@ -112,6 +124,111 @@ describe("useScanProcessor serial scan handling", () => {
 			}),
 			show_alert: vi.fn(),
 		};
+	});
+
+	it("resolves a cold offline hardware barcode from the scoped durable catalog without a Frappe call", async () => {
+		const ctx = makeContext();
+		const cachedItem = createScannableItem({
+			item_code: "CACHED-BARCODE",
+			barcode: "COLD-BC-001",
+			item_barcode: [{ barcode: "COLD-BC-001", uom: "Nos" }],
+		});
+		offlineMocks.isOffline.mockReturnValue(true);
+		offlineMocks.searchStoredItems.mockResolvedValue([cachedItem]);
+		(globalThis as any).frappe.call = vi.fn();
+
+		const { processScannedItem } = useScanProcessor(ctx as any);
+		await processScannedItem("COLD-BC-001");
+
+		expect(offlineMocks.searchStoredItems).toHaveBeenCalledWith({
+			search: "COLD-BC-001",
+			itemGroup: "ALL",
+			limit: 12,
+			offset: 0,
+			scope: "POS-TEST_Main Warehouse",
+		});
+		expect((globalThis as any).frappe.call).not.toHaveBeenCalled();
+		expect(ctx.barcodeIndex.indexItem).toHaveBeenCalledWith(cachedItem);
+		expect(ctx.itemAddition.addItem).toHaveBeenCalledTimes(1);
+		expect(ctx.itemAddition.addItem.mock.calls[0][0]).toMatchObject({
+			item_code: "CACHED-BARCODE",
+			_scanned_barcode: "COLD-BC-001",
+		});
+	});
+
+	it("accepts only an exact cached item code when the durable lookup includes compatibility search candidates", async () => {
+		const ctx = makeContext();
+		const fuzzyCandidate = createScannableItem({
+			item_code: "OFFLINE-001-ALT",
+			item_name: "Similar cached item",
+		});
+		const exactCachedItem = createScannableItem({
+			item_code: "offline-001",
+			item_name: "Exact cached item",
+		});
+		offlineMocks.isOffline.mockReturnValue(true);
+		offlineMocks.searchStoredItems.mockResolvedValue([
+			fuzzyCandidate,
+			exactCachedItem,
+		]);
+		(globalThis as any).frappe.call = vi.fn();
+
+		const { processScannedItem } = useScanProcessor(ctx as any);
+		await processScannedItem("OFFLINE-001");
+
+		expect((globalThis as any).frappe.call).not.toHaveBeenCalled();
+		expect(ctx.itemAddition.addItem).toHaveBeenCalledTimes(1);
+		expect(ctx.itemAddition.addItem.mock.calls[0][0].item_code).toBe(
+			"offline-001",
+		);
+	});
+
+	it("fails closed offline when the scanned identifier is not in this terminal catalog", async () => {
+		const ctx = makeContext();
+		offlineMocks.isOffline.mockReturnValue(true);
+		(globalThis as any).frappe.call = vi.fn();
+
+		const { processScannedItem } = useScanProcessor(ctx as any);
+		await processScannedItem("UNKNOWN-OFFLINE-001");
+
+		expect((globalThis as any).frappe.call).not.toHaveBeenCalled();
+		expect(ctx.itemAddition.addItem).not.toHaveBeenCalled();
+		expect(ctx.scannerInput.scanErrorDialog.value).toBe(true);
+		expect(ctx.scannerInput.scanErrorMessage.value).toContain(
+			"offline catalog",
+		);
+	});
+
+	it("uses the cached UOM conversion offline instead of waiting for a UOM price request", async () => {
+		const ctx = makeContext();
+		const cachedItem = createScannableItem({
+			item_code: "CACHED-BOX",
+			barcode: "COLD-BOX-001",
+			item_barcode: [{ barcode: "COLD-BOX-001", uom: "Box" }],
+			item_uoms: [
+				{ uom: "Nos", conversion_factor: 1 },
+				{ uom: "Box", conversion_factor: 12 },
+			],
+			rate: 10,
+			price_list_rate: 10,
+			base_rate: 10,
+			base_price_list_rate: 10,
+		});
+		offlineMocks.isOffline.mockReturnValue(true);
+		offlineMocks.searchStoredItems.mockResolvedValue([cachedItem]);
+		(globalThis as any).frappe.call = vi.fn();
+
+		const { processScannedItem } = useScanProcessor(ctx as any);
+		await processScannedItem("COLD-BOX-001");
+
+		expect((globalThis as any).frappe.call).not.toHaveBeenCalled();
+		const addedItem = ctx.itemAddition.addItem.mock.calls[0][0];
+		expect(addedItem).toMatchObject({
+			uom: "Box",
+			rate: 120,
+			base_rate: 10,
+			conversion_factor: 12,
+		});
 	});
 
 	it("adds item and auto-sets serial when scanned code matches serial_no_data locally", async () => {

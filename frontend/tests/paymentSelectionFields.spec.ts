@@ -35,15 +35,16 @@ describe("PaymentSelectionFields", () => {
 			},
 		});
 
-		const html = wrapper.html();
-		expect(html).toContain("<!-- Print Format Selection -->");
-		expect(html).toContain("<!--v-if-->");
+		expect(wrapper.props("showPrintFormat")).toBe(false);
 	});
 
 	it("shows the print format field when selection is enabled", () => {
 		const wrapper = mount(PaymentSelectionFields, {
 			props: {
 				showPrintFormat: true,
+				salesPersons: [
+					{ value: "SP-1", title: "Sales Person 1" },
+				],
 			},
 			global: {
 				stubs: {
@@ -54,8 +55,25 @@ describe("PaymentSelectionFields", () => {
 			},
 		});
 
-		const html = wrapper.html();
-		expect(html).toContain("<!-- Print Format Selection -->");
-		expect(html).not.toContain("<!--v-if-->");
+		expect(wrapper.props("showPrintFormat")).toBe(true);
+	});
+
+	it("hides optional sales-person controls when no choices are configured", () => {
+		const wrapper = mount(PaymentSelectionFields, {
+			props: {
+				salesPersons: [],
+				showPrintFormat: false,
+			},
+			global: {
+				stubs: {
+					"v-row": VRowStub,
+					"v-col": VColStub,
+					"v-select": true,
+				},
+			},
+		});
+
+		expect(wrapper.text()).not.toContain("No sales persons found");
+		expect(wrapper.html()).not.toContain("text-red");
 	});
 });

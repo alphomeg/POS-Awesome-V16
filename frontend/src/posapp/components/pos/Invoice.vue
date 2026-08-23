@@ -406,6 +406,7 @@ import {
 	registerInvoiceShortcutListener,
 	unregisterInvoiceShortcutListener,
 } from "../../utils/invoiceShortcutListener";
+import { resolveProfileRegistrationCustomer } from "../../utils/profileRegistration";
 
 export default {
 	name: "POSInvoice",
@@ -1085,9 +1086,16 @@ export default {
 		},
 
 		handleRegisterPosProfile(data) {
+			const customer = resolveProfileRegistrationCustomer({
+				previousProfileName: this.pos_profile?.name,
+				nextProfileName: data.pos_profile?.name,
+				currentCustomer: this.customer,
+				selectedCustomer: this.selectedCustomer,
+				defaultCustomer: data.pos_profile?.customer,
+			});
 			this.pos_profile = data.pos_profile;
 			this.company = data.company || null;
-			this.customer = data.pos_profile.customer;
+			this.customer = customer;
 			this.pos_opening_shift = data.pos_opening_shift;
 			this.stock_settings = data.stock_settings;
 

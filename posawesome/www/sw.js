@@ -3,9 +3,16 @@ const CACHE_COMPLETE_KEY = "/__posawesome_cache_complete__";
 const VERSION_URL = "/assets/posawesome/dist/js/version.json";
 const DEFAULT_CACHE_VERSION = "default";
 const MAX_CACHE_ITEMS = 1000;
+// `/app/posapp` is a Frappe route alias which redirects to the Desk page.
+// A redirected response can be cached, but Chromium cannot safely replay it
+// as an offline navigation response. Cache the direct Desk page instead and
+// use it as the app-shell fallback for both route forms.
+const POS_APP_SHELL_URL = "/desk/posapp";
+const POS_APP_LEGACY_ROUTE = "/app/posapp";
 
 const STATIC_PRECACHE_URLS = [
-	"/app/posapp",
+	POS_APP_SHELL_URL,
+	VERSION_URL,
 	"/assets/posawesome/dist/js/posapp/workers/itemWorker.js",
 	"/assets/posawesome/dist/js/libs/dexie.min.js",
 	"/manifest.json",
@@ -62,6 +69,35 @@ function requestUrl(value) {
 		return new URL(value, self.location.origin).href;
 	}
 	return value?.url || "";
+}
+
+function isPosAppRoute(url) {
+	try {
+		const pathname = new URL(requestUrl(url), self.location.origin).pathname;
+		return (
+			pathname === POS_APP_SHELL_URL ||
+			pathname.startsWith(`${POS_APP_SHELL_URL}/`) ||
+			pathname === POS_APP_LEGACY_ROUTE ||
+			pathname.startsWith(`${POS_APP_LEGACY_ROUTE}/`)
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isUsableNavigationResponse(response) {
+	return Boolean(response && response.type !== "error" && !response.redirected);
+}
+
+function isUsablePosAppShellResponse(response) {
+	if (!isUsableNavigationResponse(response) || !response.ok) return false;
+	if (!response.url) return true;
+
+	try {
+		return new URL(response.url, self.location.origin).pathname === POS_APP_SHELL_URL;
+	} catch {
+		return false;
+	}
 }
 
 let candidateSequence = 0;
@@ -133,13 +169,17 @@ async function isCompleteVersionCache(cacheName, version, urls) {
 	if (!Array.isArray(requiredUrls) || !requiredUrls.length) return false;
 
 	const cache = await caches.open(cacheName);
-	const entries = await Promise.all(
-		requiredUrls.map((url) => cache.match(url)),
-	);
-	return entries.every(Boolean);
+	const entries = await Promise.all(requiredUrls.map((url) => cache.match(url)));
+	return entries.every((response, index) => {
+		if (!response) return false;
+		return (
+			requiredUrls[index] !== POS_APP_SHELL_URL ||
+			isUsablePosAppShellResponse(response)
+		);
+	});
 }
 
-async function listCompleteCaches(version = null) {
+async function listCompleteCaches(version = null, requiredUrls = null) {
 	const keys = (await caches.keys()).filter((key) => key.startsWith(CACHE_PREFIX));
 	const candidates = await Promise.all(
 		keys.map(async (cacheName) => ({
@@ -149,13 +189,17 @@ async function listCompleteCaches(version = null) {
 	);
 	const valid = [];
 	for (const candidate of candidates) {
+		const urls =
+			requiredUrls && (!version || candidate.marker?.version === version)
+				? requiredUrls
+				: candidate.marker?.urls;
 		if (
 			candidate.marker &&
 			(!version || candidate.marker.version === version) &&
 			(await isCompleteVersionCache(
 				candidate.cacheName,
 				candidate.marker.version,
-				candidate.marker.urls,
+				urls,
 			))
 		) {
 			valid.push(candidate);
@@ -167,8 +211,8 @@ async function listCompleteCaches(version = null) {
 	);
 }
 
-async function findLatestCompleteCache(version = null) {
-	const [latest] = await listCompleteCaches(version);
+async function findLatestCompleteCache(version = null, requiredUrls = null) {
+	const [latest] = await listCompleteCaches(version, requiredUrls);
 	if (!latest) return null;
 	return {
 		cacheName: latest.cacheName,
@@ -205,7 +249,11 @@ async function populateCandidateCache(metadata) {
 		const fetched = await Promise.all(
 			urls.map(async (url) => {
 				const response = await fetch(url, { cache: "no-store" });
-				if (!response?.ok) {
+				if (
+					!response?.ok ||
+					(url === POS_APP_SHELL_URL &&
+						!isUsablePosAppShellResponse(response))
+				) {
 					throw new Error(`Required POS asset failed to cache: ${url}`);
 				}
 				return [url, response];
@@ -247,8 +295,12 @@ async function populateCandidateCache(metadata) {
 }
 
 async function prepareVersionCache(metadata, options = {}) {
+	const expectedUrls = getPrecacheUrls(metadata.version, metadata.assets);
 	if (!options.forceNew) {
-		const existing = await findLatestCompleteCache(metadata.version);
+		const existing = await findLatestCompleteCache(
+			metadata.version,
+			expectedUrls,
+		);
 		if (existing) return existing;
 	}
 	return populateCandidateCache(metadata);
@@ -512,19 +564,33 @@ self.addEventListener("fetch", (event) => {
 		event.respondWith(
 			(async () => {
 				try {
-					return await fetch(event.request);
+					const response = await fetch(event.request);
+					// Chromium can surface an offline navigation as Response.error()
+					// instead of rejecting fetch(). Never hand that response to the
+					// browser when a complete POS shell is available.
+					if (response?.type !== "error") {
+						return response;
+					}
 				} catch {
-					const cached = await matchActiveCache(event.request, {
-						ignoreSearch: true,
-					});
-					if (cached) return cached;
-					const appShell = await matchActiveCache("/app/posapp");
-					if (appShell) return appShell;
-					const offlinePage = await matchActiveCache("/offline.html");
-					if (offlinePage) return offlinePage;
-					const recoveryPage = await caches.match("/offline.html");
-					return recoveryPage || Response.error();
 				}
+
+				const cached = await matchActiveCache(event.request, {
+					ignoreSearch: true,
+				});
+				if (isUsableNavigationResponse(cached)) return cached;
+
+				if (isPosAppRoute(event.request)) {
+					const appShell = await matchActiveCache(POS_APP_SHELL_URL);
+					if (isUsablePosAppShellResponse(appShell)) return appShell;
+				}
+
+				const offlinePage = await matchActiveCache("/offline.html");
+				if (isUsableNavigationResponse(offlinePage)) return offlinePage;
+				const recoveryPage = await caches.match("/offline.html");
+				return (
+					(isUsableNavigationResponse(recoveryPage) && recoveryPage) ||
+					Response.error()
+				);
 			})(),
 		);
 		return;

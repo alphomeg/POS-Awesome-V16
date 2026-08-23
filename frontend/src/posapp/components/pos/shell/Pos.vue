@@ -376,6 +376,7 @@ import { isCounterGridTemplate } from "../../../utils/posUiTemplate";
 import { collectUnavailableCartItems } from "../../../utils/alternateCart";
 import { getActiveInvoiceSubmissionRecovery } from "../../../composables/pos/payments/recoveryState";
 import { shouldUsePaymentDialog } from "../../../utils/paymentHostOwnership";
+import { warmSalesPersonOptions } from "../../../services/salesPersonService";
 
 export default {
 	setup() {
@@ -1108,6 +1109,11 @@ export default {
 
 			// Update Store
 			this.uiStore.setRegisterData(data);
+			// New opening shifts do not pass through usePosShift's cached-opening
+			// path, so warm the same profile-scoped payment metadata here as well.
+			void warmSalesPersonOptions(data.pos_profile).catch((error) => {
+				console.warn("Unable to warm POS sales-person options", error);
+			});
 		},
 		closeOpeningDialog() {
 			this.dialog = false;

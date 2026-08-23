@@ -2,6 +2,9 @@ import json
 
 import frappe
 
+from posawesome.posawesome.api.cashier_pin_security import (
+    redact_cashier_pin_request_context,
+)
 from posawesome.posawesome.api.invoice_processing.creation import (
     repair_invoice_submission,
     submit_invoice,
@@ -96,8 +99,29 @@ def _require_acknowledged_invoice(response, client_request_id, expected_doctype)
     return response, identity
 
 
-@frappe.whitelist()
-def submit_invoice_outbox_entry(client_request_id, invoice, data=None):
+def _offline_cash_sale_resolution(error):
+    """Translate only explicit authorization outcomes into an outbox pause."""
+
+    try:
+        from posawesome.posawesome.api.offline_sale_authorizations import (
+            extract_offline_cash_sale_failure,
+        )
+
+        return extract_offline_cash_sale_failure(error)
+    except Exception:
+        return None
+
+
+@frappe.whitelist(methods=["POST"])
+def submit_invoice_outbox_entry(
+    client_request_id,
+    invoice,
+    data=None,
+    offline_sale_authorization=None,
+):
+    # This endpoint carries an opaque authorization envelope. Redact it before
+    # any parsing/validation can enter a recorder or error report.
+    redact_cashier_pin_request_context()
     client_request_id = (client_request_id or "").strip()
     if not client_request_id:
         frappe.throw("client_request_id is required")
@@ -111,16 +135,36 @@ def submit_invoice_outbox_entry(client_request_id, invoice, data=None):
         client_request_id=client_request_id,
     )
 
-    with trusted_invoice_shift_reassignment(
-        invoice_payload,
-        data_payload,
-        "offline_sync",
-    ):
-        response = submit_invoice(
-            json.dumps(invoice_payload),
-            json.dumps(data_payload),
-            submit_in_background=0,
-        )
+    try:
+        with trusted_invoice_shift_reassignment(
+            invoice_payload,
+            data_payload,
+            "offline_sync",
+        ):
+            response = submit_invoice(
+                json.dumps(invoice_payload),
+                json.dumps(data_payload),
+                submit_in_background=0,
+                offline_sale_authorization=offline_sale_authorization,
+            )
+    except Exception as error:
+        resolution = _offline_cash_sale_resolution(error)
+        if resolution:
+            response = {
+                "acknowledged": False,
+                "client_request_id": client_request_id,
+                "resolution": resolution["resolution"],
+                "message": resolution["message"],
+                "definitive_rejection": True,
+            }
+            # A stable sub-reason distinguishes a supervisor-PIN recovery from
+            # a current-policy state that can only be resolved in back office.
+            # Omit it for legacy/general outcomes so older clients retain their
+            # existing behavior.
+            if resolution.get("reason"):
+                response["reason"] = resolution["reason"]
+            return response
+        raise
 
     response, identity = _require_acknowledged_invoice(
         response,
@@ -137,7 +181,7 @@ def submit_invoice_outbox_entry(client_request_id, invoice, data=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reconcile_invoice_outbox_entry(
     client_request_id,
     company,
@@ -177,7 +221,7 @@ def reconcile_invoice_outbox_entry(
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def repair_invoice_outbox_entry(
     client_request_id,
     company,

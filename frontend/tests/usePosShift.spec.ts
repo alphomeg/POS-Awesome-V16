@@ -30,6 +30,7 @@ vi.mock("../src/offline/bootstrapSnapshot", () => ({
 import {
 	buildSkippedClosingInvoicesPrompt,
 	usePosShift,
+	waitForClosingShiftSubmissions,
 } from "../src/posapp/composables/pos/shared/usePosShift";
 import { useInvoiceStore } from "../src/posapp/stores/invoiceStore";
 import { useUIStore } from "../src/posapp/stores/uiStore";
@@ -78,11 +79,11 @@ describe("usePosShift closing warnings", () => {
 	it("uses shared opening shift state when local close-shift state is empty", async () => {
 		const uiStore = useUIStore();
 		uiStore.posOpeningShift = { name: "POS-OPEN-0002" };
-		(globalThis as any).frappe.call = vi.fn(() =>
+		(globalThis as any).frappe.call = vi.fn((method: string) =>
 			Promise.resolve({
-				message: {
-					name: "POS-CLOSE-0002",
-				},
+				message: method.includes("get_closing_submission_status")
+					? { ready: true, pending_count: 0, failed_count: 0 }
+					: { name: "POS-CLOSE-0002" },
 			}),
 		);
 
@@ -95,6 +96,47 @@ describe("usePosShift closing warnings", () => {
 		);
 	});
 
+	it("waits for background sale ledgers before preparing a closing shift", async () => {
+		const statuses = [
+			{ ready: false, pending_count: 1, failed_count: 0 },
+			{ ready: false, pending_count: 1, failed_count: 0 },
+			{ ready: true, pending_count: 0, failed_count: 0 },
+		];
+		const call = vi.fn(async () => ({ message: statuses.shift() }));
+		const sleep = vi.fn(async () => undefined);
+
+		const result = await waitForClosingShiftSubmissions("POS-OPEN-0004", {
+			call,
+			sleep,
+			timeoutMs: 10_000,
+		});
+
+		expect(result.ready).toBe(true);
+		expect(call).toHaveBeenCalledTimes(3);
+		expect(sleep).toHaveBeenCalledTimes(2);
+	});
+
+	it("stops waiting when a background sale requires supervisor review", async () => {
+		const call = vi.fn(async () => ({
+			message: {
+				ready: false,
+				pending_count: 0,
+				failed_count: 1,
+				failed: [{ invoice: "ACC-PSINV-0001", state: "FAILED" }],
+			},
+		}));
+		const sleep = vi.fn(async () => undefined);
+
+		const result = await waitForClosingShiftSubmissions("POS-OPEN-0005", {
+			call,
+			sleep,
+		});
+
+		expect(result.failed_count).toBe(1);
+		expect(call).toHaveBeenCalledTimes(1);
+		expect(sleep).not.toHaveBeenCalled();
+	});
+
 	it("clears shared opening shift and invoice state after closing shift submit", async () => {
 		const uiStore = useUIStore();
 		const invoiceStore = useInvoiceStore();
@@ -104,6 +146,11 @@ describe("usePosShift closing warnings", () => {
 			pos_opening_shift: { name: "POS-OPEN-0003" },
 		};
 		(globalThis as any).frappe.call = vi.fn((method: string) => {
+			if (method.includes("get_closing_submission_status")) {
+				return Promise.resolve({
+					message: { ready: true, pending_count: 0, failed_count: 0 },
+				});
+			}
 			if (method.includes("submit_closing_shift")) {
 				return Promise.resolve({
 					message: {

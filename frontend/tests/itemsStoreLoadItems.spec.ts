@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 const itemServiceMocks = vi.hoisted(() => ({
 	getItemsData: vi.fn(),
 	getHotItemsData: vi.fn(),
+	getLiveItemStateData: vi.fn(),
 }));
 
 const offlineMocks = vi.hoisted(() => ({
@@ -11,6 +12,7 @@ const offlineMocks = vi.hoisted(() => ({
 	getStoredItemsCountByScope: vi.fn(async () => 0),
 	getAllStoredItems: vi.fn(async () => []),
 	searchStoredItems: vi.fn(async () => []),
+	searchExactStoredItems: vi.fn(async () => []),
 	clearStoredItems: vi.fn(async () => undefined),
 	getCachedPriceListItems: vi.fn(async () => null),
 	getItemsLastSync: vi.fn(() => null),
@@ -39,6 +41,7 @@ vi.mock("../src/posapp/services/itemService", () => ({
 	default: {
 		getItemsData: itemServiceMocks.getItemsData,
 		getHotItemsData: itemServiceMocks.getHotItemsData,
+		getLiveItemStateData: itemServiceMocks.getLiveItemStateData,
 		getItemGroupsData: vi.fn(async () => []),
 		getItemsFromBarcodeData: vi.fn(async () => null),
 	},
@@ -50,6 +53,7 @@ vi.mock("../src/offline/index", () => ({
 	getStoredItemsCountByScope: offlineMocks.getStoredItemsCountByScope,
 	getAllStoredItems: offlineMocks.getAllStoredItems,
 	searchStoredItems: offlineMocks.searchStoredItems,
+	searchExactStoredItems: offlineMocks.searchExactStoredItems,
 	clearStoredItems: offlineMocks.clearStoredItems,
 	getCachedPriceListItems: offlineMocks.getCachedPriceListItems,
 	getItemsLastSync: offlineMocks.getItemsLastSync,
@@ -221,6 +225,7 @@ describe("itemsStore loadItems", () => {
 		offlineMocks.getStoredItemsCountByScope.mockResolvedValue(0);
 		offlineMocks.getAllStoredItems.mockResolvedValue([]);
 		offlineMocks.searchStoredItems.mockResolvedValue([]);
+		offlineMocks.searchExactStoredItems.mockResolvedValue([]);
 		offlineMocks.isOffline.mockReturnValue(false);
 		offlineMocks.isOfflineStorageReady.mockReturnValue(true);
 		cacheMocks.getCachedItems.mockResolvedValue(null);
@@ -229,6 +234,22 @@ describe("itemsStore loadItems", () => {
 			(_term: string, items: any[]) => items,
 		);
 		itemServiceMocks.getHotItemsData.mockResolvedValue([]);
+		itemServiceMocks.getLiveItemStateData.mockImplementation(
+			async ({ item_codes }: { item_codes: string[] }) => ({
+				items: item_codes.map((item_code) => ({
+					item_code,
+					actual_qty: 7,
+					rate: 120,
+					price_list_rate: 120,
+				})),
+				unavailable_item_codes: [],
+				as_of: "2026-08-17 12:00:00",
+				stock_versions: {},
+				catalog_version: null,
+				price_version: null,
+				verified: true,
+			}),
+		);
 		itemServiceMocks.getItemsData.mockResolvedValue([
 			{
 				item_code: "ITEM-1",
@@ -359,6 +380,46 @@ describe("itemsStore loadItems", () => {
 		expect(store.filteredItems.map((item) => item.item_code)).toEqual([
 			"HOT-BAR",
 		]);
+		expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
+	});
+
+	it("resolves an exact online identifier from the durable browser catalog before server fallback", async () => {
+		const store = useItemsStore();
+		offlineMocks.getStoredItemsCountByScope.mockResolvedValue(6000);
+		offlineMocks.searchExactStoredItems.mockResolvedValue([
+			{
+				item_code: "CACHED-EXACT-1",
+				item_name: "Durable Cached Item",
+				item_group: "Medicines",
+			},
+		]);
+
+		await store.initialize({
+			name: "POS-CACHED",
+			warehouse: "Main Store",
+			selling_price_list: "Retail",
+			currency: "PKR",
+			item_groups: [],
+			posa_fast_counter_mode: 1,
+			posa_local_storage: 1,
+			posa_use_limit_search: 1,
+			posa_force_server_items: 0,
+		} as any);
+		itemServiceMocks.getItemsData.mockClear();
+
+		const result = await store.searchItems("CACHED-EXACT-1", {
+			serverFallbackDelayMs: 0,
+			resultLimit: 20,
+		});
+
+		expect(result.map((item) => item.item_code)).toEqual([
+			"CACHED-EXACT-1",
+		]);
+		expect(offlineMocks.searchExactStoredItems).toHaveBeenCalledWith({
+			search: "CACHED-EXACT-1",
+			itemGroup: "ALL",
+			scope: "POS-CACHED_Main Store",
+		});
 		expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
 	});
 
@@ -660,6 +721,44 @@ describe("itemsStore loadItems", () => {
 		).toHaveBeenCalledWith({ itemsCount: 40_500 });
 	});
 
+	it("keeps an exact offline catalog match ahead of unrelated hot suggestions", async () => {
+		const store = useItemsStore();
+		offlineMocks.isOffline.mockReturnValue(true);
+		offlineMocks.getStoredItemsCountByScope.mockResolvedValue(40_500);
+		offlineMocks.searchStoredItems.mockResolvedValue([
+			{
+				item_code: "01009",
+				item_name: "Exact Cached Scanner Item",
+				item_group: "Medicines",
+			},
+		]);
+		itemServiceMocks.getHotItemsData.mockResolvedValue([
+			{
+				item_code: "HOT-SUGGESTION",
+				item_name: "Unrelated Hot Suggestion",
+				item_group: "Medicines",
+			},
+		]);
+
+		await store.initialize({
+			name: "POS-COUNTER",
+			warehouse: "Main Store",
+			selling_price_list: "Retail",
+			currency: "PKR",
+			item_groups: [],
+			posa_fast_counter_mode: 1,
+			posa_use_limit_search: 1,
+			posa_force_server_items: 1,
+		} as any);
+
+		const result = await store.searchItems("01009", { resultLimit: 1 });
+
+		expect(result.map((item) => item.item_code)).toEqual(["01009"]);
+		expect(store.filteredItems.map((item) => item.item_code)).toEqual([
+			"01009",
+		]);
+	});
+
 	it("does not let a slower offline lookup replace a newer cashier query", async () => {
 		const store = useItemsStore();
 		offlineMocks.isOffline.mockReturnValue(true);
@@ -805,7 +904,7 @@ describe("itemsStore loadItems", () => {
 		}
 	});
 
-	it("debounces server fallback after a local search miss", async () => {
+	it("uses a short debounce before server fallback after a local miss", async () => {
 		vi.useFakeTimers();
 		try {
 			const store = useItemsStore();
@@ -824,7 +923,7 @@ describe("itemsStore loadItems", () => {
 
 			const searchPromise = store.searchItems("typo");
 
-			await vi.advanceTimersByTimeAsync(449);
+			await vi.advanceTimersByTimeAsync(39);
 			expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
 
 			await vi.advanceTimersByTimeAsync(1);
@@ -947,6 +1046,63 @@ describe("itemsStore loadItems", () => {
 			await store.searchItems("zzzz");
 
 			expect(itemServiceMocks.getItemsData).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("bypasses positive and miss caches when the POS Profile forces server search", async () => {
+		vi.useFakeTimers();
+		try {
+			const store = useItemsStore();
+			await store.initialize({
+				name: "POS-FORCE-SERVER",
+				warehouse: "Main WH",
+				selling_price_list: "Retail",
+				currency: "PKR",
+				item_groups: [],
+				posa_use_limit_search: 1,
+				posa_force_server_items: 1,
+			} as any);
+			itemServiceMocks.getItemsData.mockClear();
+
+			const firstSearch = store.searchItems("panadol", {
+				serverFallbackDelayMs: 0,
+				resultLimit: 20,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await firstSearch;
+
+			const secondSearch = store.searchItems("panadol", {
+				serverFallbackDelayMs: 0,
+				resultLimit: 20,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await secondSearch;
+
+			expect(itemServiceMocks.getItemsData).toHaveBeenCalledTimes(2);
+			expect(itemServiceMocks.getItemsData).toHaveBeenNthCalledWith(
+				2,
+				expect.objectContaining({
+					search_value: "panadol",
+					limit: 20,
+				}),
+				expect.any(AbortSignal),
+			);
+
+			itemServiceMocks.getItemsData.mockResolvedValue([]);
+			const firstMiss = store.searchItems("zzzz", {
+				serverFallbackDelayMs: 0,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await firstMiss;
+			const secondMiss = store.searchItems("zzzz", {
+				serverFallbackDelayMs: 0,
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await secondMiss;
+
+			expect(itemServiceMocks.getItemsData).toHaveBeenCalledTimes(4);
 		} finally {
 			vi.useRealTimers();
 		}

@@ -17,13 +17,21 @@ CASHIER_PIN_KEYS = frozenset(
         "posa_pos_pin",
     }
 )
+OFFLINE_SALE_AUTHORIZATION_KEYS = frozenset(
+    {
+        "offline_sale_authorization",
+        "offlineSaleAuthorization",
+        "_posa_offline_sale_authorization",
+    }
+)
+SENSITIVE_TRANSIENT_KEYS = CASHIER_PIN_KEYS | OFFLINE_SALE_AUTHORIZATION_KEYS
 REDACTED_PIN = "********"
 
 
 def _redact_value(value):
     if isinstance(value, dict):
         for key in list(value):
-            if key in CASHIER_PIN_KEYS:
+            if key in SENSITIVE_TRANSIENT_KEYS:
                 value[key] = REDACTED_PIN
             else:
                 value[key] = _redact_value(value.get(key))
