@@ -3,8 +3,11 @@
 		<v-card class="qz-dialog-card">
 			<v-card-title class="d-flex align-center">
 				<v-icon start color="primary">mdi-printer-wireless</v-icon>
-				{{ __("QZ Tray Setup") }}
+				{{ __("Printer Setup") }}
 			</v-card-title>
+			<v-card-subtitle>
+				{{ __("Autodetect, test, and configure this POS terminal without leaving POS Awesome.") }}
+			</v-card-subtitle>
 
 			<v-card-text>
 				<v-alert
@@ -14,6 +17,42 @@
 					density="comfortable"
 				>
 					{{ connectionStatusText }}
+				</v-alert>
+
+				<v-alert
+					v-if="printerDetected"
+					type="success"
+					variant="tonal"
+					density="comfortable"
+					class="mb-4"
+					data-test="qz-connected-printer"
+				>
+					<div class="font-weight-bold">
+						{{ __("Connected printer: {0}", [activePrinterName]) }}
+					</div>
+					<div class="text-caption mt-1">
+						{{ printerProfileStatusText }}
+					</div>
+				</v-alert>
+
+				<v-alert
+					v-else-if="configuredPrinterName"
+					type="warning"
+					variant="tonal"
+					density="comfortable"
+					class="mb-4"
+					data-test="qz-configured-printer-not-detected"
+				>
+					<div class="font-weight-bold">
+						{{ __("Configured printer: {0}", [configuredPrinterName]) }}
+					</div>
+					<div class="text-caption mt-1">
+						{{
+							__(
+								"This queue is saved on the active POS Profile but is not currently detected through QZ Tray.",
+							)
+						}}
+					</div>
 				</v-alert>
 
 				<div class="d-flex flex-wrap ga-2 mb-4">
@@ -259,6 +298,34 @@ const currentProfile = computed(() => {
 const profileName = computed(() => {
 	const name = currentProfile.value?.name;
 	return typeof name === "string" ? name.trim() : "";
+});
+
+const configuredPrinterName = computed(() => {
+	const name = currentProfile.value?.posa_qz_printer_name;
+	return typeof name === "string" ? name.trim() : "";
+});
+
+const activePrinterName = computed(() => selectedPrinter.value || configuredPrinterName.value || "");
+
+const printerDetected = computed(
+	() =>
+		qzConnected.value &&
+		Boolean(activePrinterName.value) &&
+		qzPrinters.value.includes(activePrinterName.value),
+);
+
+const profileSilentPrintEnabled = computed(() => {
+	const value = currentProfile.value?.posa_silent_print;
+	if (typeof value === "string") {
+		return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+	}
+	return value === 1 || value === true;
+});
+
+const printerProfileStatusText = computed(() => {
+	const profile = profileName.value || __("Active POS Profile");
+	const silentStatus = profileSilentPrintEnabled.value ? __("enabled") : __("not enabled");
+	return __("Available through QZ Tray. POS Profile: {0}. Silent printing: {1}.", [profile, silentStatus]);
 });
 
 const discoveryAmbiguous = computed(() => Boolean(discovery.value?.ambiguous));

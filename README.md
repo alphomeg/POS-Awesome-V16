@@ -222,7 +222,7 @@ Supported raw print paths:
 #### Setup
 
 1. Install and run **QZ Tray** on each POS terminal.
-2. In POS Awesome, open **Terminal → Printer Setup**. This remains available before silent printing is enabled.
+2. In POS Awesome, open **Settings → Terminal & Devices → Printer Setup** (or the compact user-menu Printer Setup shortcut). The settings card shows the connected/configured queue and remains available before silent printing is enabled.
 3. Generate/download the QZ certificate from POS Awesome, trust it in QZ Tray, then restart QZ Tray.
 4. Use printer detection. POS Awesome filters known virtual queues and recommends the configured, terminal-saved, physical thermal, or operating-system default printer when the result is unambiguous.
 5. Select the receipt printer, print the 80mm test, and confirm that it used the correct queue, fits the roll, and displayed no browser/QZ prompt.

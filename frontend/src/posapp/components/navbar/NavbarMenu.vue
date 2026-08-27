@@ -280,8 +280,6 @@
 		</v-card>
 	</v-dialog>
 
-	<QzTrayDialog v-model="showQzTrayDialog" />
-
 	<!-- Notification Snackbars -->
 	<v-snackbar
 		v-model="notification.show"
@@ -309,19 +307,16 @@ const FALLBACK_LANGUAGES = [
 import { useLastInvoicePrinting } from "../../composables/core/useLastInvoicePrinting";
 import { useEmployeeStore } from "../../stores/employeeStore";
 import { storeToRefs } from "pinia";
-import QzTrayDialog from "./QzTrayDialog.vue";
 
 export default {
 	name: "NavbarMenu",
-	components: {
-		QzTrayDialog,
-	},
 	props: {
 		posProfile: { type: Object, default: () => ({}) },
 		cashierName: { type: String, default: "" },
 		manualOffline: Boolean,
 		networkOnline: Boolean,
 		serverOnline: Boolean,
+		printerStatus: { type: String, default: "" },
 	},
 	setup() {
 		const { printLastInvoice } = useLastInvoicePrinting();
@@ -334,7 +329,6 @@ export default {
 			menuOpen: false,
 			activePanel: "main",
 			showLanguageDialog: false,
-			showQzTrayDialog: false,
 			selectedLanguage: "en",
 			currentLanguage: "en",
 			availableLanguages: FALLBACK_LANGUAGES,
@@ -500,7 +494,8 @@ export default {
 							{
 								id: "qz-tray-setup",
 								label: __("Printer Setup"),
-								subtitle: __("Detect and configure silent printing"),
+								subtitle:
+									this.printerStatus || __("Autodetect and configure silent receipt printing"),
 								icon: "mdi-printer-wireless",
 								tone: "primary",
 								handler: "openQzTraySetup",
@@ -654,7 +649,7 @@ export default {
 					break;
 				case "openQzTraySetup":
 					this.closeMenu();
-					this.showQzTrayDialog = true;
+					this.$emit("open-printer-setup");
 					break;
 				case "showAboutAction":
 					this.closeMenu();
@@ -831,6 +826,7 @@ export default {
 		"lock-pos",
 		"share-last-invoice",
 		"open-customer-display",
+		"open-printer-setup",
 		"toggle-offline",
 		"show-about",
 		"toggle-theme",

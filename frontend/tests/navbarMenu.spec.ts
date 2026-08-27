@@ -161,6 +161,15 @@ describe("NavbarMenu cashier pin management", () => {
 				}),
 			]),
 		);
+
+		const printerAction = terminal.actions.find((action: any) => action.id === "qz-tray-setup");
+		expect(printerAction.handler).toBe("openQzTraySetup");
+		const emit = vi.fn();
+		(NavbarMenu as any).methods.handleAction.call(
+			{ closeMenu: vi.fn(), $emit: emit },
+			printerAction,
+		);
+		expect(emit).toHaveBeenCalledWith("open-printer-setup");
 	});
 
 	it("shows restricted supervisor tools only for POS supervisors", async () => {

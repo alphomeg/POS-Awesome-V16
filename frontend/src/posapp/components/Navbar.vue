@@ -78,12 +78,14 @@
 					:manual-offline="manualOffline"
 					:network-online="networkOnline"
 					:server-online="serverOnline"
+					:printer-status="printerSettingsSubtitle"
 					@close-shift="openCloseShift"
 					@sync-invoices="syncPendingInvoices"
 					@open-employee-switch="openEmployeeSwitch"
 					@lock-pos="lockPosScreen"
 					@share-last-invoice="$emit('share-last-invoice')"
 					@open-customer-display="$emit('open-customer-display')"
+					@open-printer-setup="openPrinterSetup"
 					@show-about="showAboutDialog = true"
 					@toggle-theme="toggleTheme"
 					@logout="logOut"
@@ -120,6 +122,7 @@
 			@reset-local-pos="resetLocalPos"
 			@resume-submission="resumeInvoiceSubmission"
 		/>
+		<QzTrayDialog v-model="printerSetupOpen" />
 
 		<!-- Use the modular AboutDialog component -->
 		<AboutDialog v-model="showAboutDialog" />
@@ -168,6 +171,7 @@ import NavbarDrawer from "./navbar/NavbarDrawer.vue";
 import NavbarMenu from "./navbar/NavbarMenu.vue";
 import NavbarSettingsPanel from "./navbar/NavbarSettingsPanel.vue";
 import PosMaintenanceDialog from "./navbar/PosMaintenanceDialog.vue";
+import QzTrayDialog from "./navbar/QzTrayDialog.vue";
 import NotificationBell from "./navbar/NotificationBell.vue";
 import OfflineStatusPanel from "./navbar/OfflineStatusPanel.vue";
 import StatusIndicator from "./navbar/StatusIndicator.vue";
@@ -189,6 +193,7 @@ import { useUIStore } from "../stores/uiStore";
 import { useEmployeeStore } from "../stores/employeeStore";
 import { useOfflineSyncStore } from "../stores/offlineSyncStore";
 import { storeToRefs } from "pinia";
+import { qzConnected, qzPrinters, selectedQzPrinter } from "../services/qzTray";
 
 const TERMINAL_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -253,6 +258,9 @@ export default {
 			currentCashier,
 			currentCashierDisplay,
 			offlinePanelOpen,
+			qzConnected,
+			qzPrinters,
+			selectedQzPrinter,
 		};
 	},
 	components: {
@@ -261,6 +269,7 @@ export default {
 		NavbarMenu,
 		NavbarSettingsPanel,
 		PosMaintenanceDialog,
+		QzTrayDialog,
 		NotificationBell,
 		OfflineStatusPanel,
 		StatusIndicator,
@@ -349,6 +358,7 @@ export default {
 			showAboutDialog: false,
 			showOfflineInvoices: false,
 			settingsPanelOpen: false,
+			printerSetupOpen: false,
 			maintenanceDialogOpen: false,
 			maintenanceLoading: false,
 			operationalHealth: null,
@@ -473,7 +483,15 @@ export default {
 				},
 			];
 
-			const terminalActions = [];
+			const terminalActions = [
+				{
+					id: "configure-printer",
+					label: this.__("Printer Setup"),
+					subtitle: this.printerSettingsSubtitle,
+					icon: "mdi-printer-wireless",
+					tone: this.qzConnected ? "success" : "primary",
+				},
+			];
 			if (this.posProfile?.posa_enable_customer_display) {
 				terminalActions.push({
 					id: "open-customer-display",
@@ -544,6 +562,25 @@ export default {
 					actions: systemActions,
 				},
 			].filter((section) => section.actions.length);
+		},
+		printerSettingsSubtitle() {
+			const selectedPrinter = String(this.selectedQzPrinter || "").trim();
+			const configuredPrinter = String(this.posProfile?.posa_qz_printer_name || "").trim();
+			const detectedPrinter =
+				this.qzConnected && this.qzPrinters.includes(selectedPrinter) ? selectedPrinter : "";
+			if (detectedPrinter) {
+				return this.__("Connected printer: {0}", [detectedPrinter]);
+			}
+			if (configuredPrinter) {
+				const availability = this.qzConnected
+					? this.__("not detected")
+					: this.__("QZ Tray disconnected");
+				return this.__("Configured printer: {0} — {1}", [configuredPrinter, availability]);
+			}
+			if (this.qzConnected) {
+				return this.__("QZ Tray connected — detect a printer");
+			}
+			return this.__("Autodetect and configure silent receipt printing");
 		},
 	},
 	mounted() {
@@ -886,6 +923,10 @@ export default {
 		closeSettingsPanel() {
 			this.settingsPanelOpen = false;
 		},
+		openPrinterSetup() {
+			this.closeSettingsPanel();
+			this.printerSetupOpen = true;
+		},
 		goDesk() {
 			window.location.href = "/app";
 		},
@@ -956,6 +997,9 @@ export default {
 				case "open-customer-display":
 					this.closeSettingsPanel();
 					this.$emit("open-customer-display");
+					break;
+				case "configure-printer":
+					this.openPrinterSetup();
 					break;
 				case "toggle-theme":
 					this.closeSettingsPanel();

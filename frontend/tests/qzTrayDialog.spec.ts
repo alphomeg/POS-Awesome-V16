@@ -129,6 +129,7 @@ const globalComponents = {
 	VDialog: VDialogStub,
 	VCard: BoxStub,
 	VCardTitle: BoxStub,
+	VCardSubtitle: BoxStub,
 	VCardText: BoxStub,
 	VCardActions: BoxStub,
 	VSpacer: BoxStub,
@@ -151,7 +152,10 @@ const mountDialog = () =>
 
 describe("QzTrayDialog", () => {
 	beforeEach(() => {
-		(globalThis as any).__ = (value: string) => value;
+		(globalThis as any).__ = (value: string, ...rawArgs: any[]) => {
+			const args = Array.isArray(rawArgs[0]) ? rawArgs[0] : rawArgs;
+			return value.replace(/\{(\d+)\}/g, (_, index) => `${args[Number(index)] ?? ""}`);
+		};
 		toastShow.mockReset();
 		uiStoreState.posProfile.value = {
 			name: "Main POS",
@@ -192,6 +196,9 @@ describe("QzTrayDialog", () => {
 		const wrapper = mountDialog();
 		await flushPromises();
 
+		expect(wrapper.get('[data-test="qz-connected-printer"]').text()).toContain(
+			"Connected printer",
+		);
 		expect(wrapper.get('[data-test="qz-enable-silent-print"]').attributes("disabled")).toBeDefined();
 
 		await wrapper.get('[data-test="qz-test-print"]').trigger("click");

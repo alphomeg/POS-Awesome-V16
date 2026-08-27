@@ -36,11 +36,18 @@ vi.mock("../src/utils/clearAllCaches", () => ({
 import Navbar from "../src/posapp/components/Navbar.vue";
 import { useEmployeeStore } from "../src/posapp/stores/employeeStore";
 import { repairPosAssets } from "../src/utils/clearAllCaches";
+import { qzConnected, qzPrinters, selectedQzPrinter } from "../src/posapp/services/qzTray";
 
 describe("Navbar supervisor access", () => {
 	beforeEach(() => {
 		setActivePinia(createPinia());
-		vi.stubGlobal("__", (value: string) => value);
+		qzConnected.value = false;
+		qzPrinters.value = [];
+		selectedQzPrinter.value = "";
+		vi.stubGlobal("__", (value: string, ...rawArgs: any[]) => {
+			const args = Array.isArray(rawArgs[0]) ? rawArgs[0] : rawArgs;
+			return value.replace(/\{(\d+)\}/g, (_, index) => `${args[Number(index)] ?? ""}`);
+		});
 		vi.stubGlobal("frappe", {
 			session: {
 				user: "cashier@example.com",
@@ -204,6 +211,7 @@ describe("Navbar supervisor access", () => {
 					__: (value: string) => value,
 				},
 				stubs: {
+					QzTrayDialog: true,
 					NotificationBell: true,
 					AboutDialog: true,
 					EmployeeSwitchDialog: true,
@@ -236,6 +244,27 @@ describe("Navbar supervisor access", () => {
 
 		expect((wrapper.vm as any).drawer).toBe(false);
 		expect((wrapper.vm as any).settingsPanelOpen).toBe(true);
+
+		qzConnected.value = true;
+		qzPrinters.value = ["Counter Thermal 80mm"];
+		selectedQzPrinter.value = "Counter Thermal 80mm";
+		await nextTick();
+		const terminalSection = (wrapper.vm as any).settingsSections.find(
+			(section: any) => section.id === "terminal-devices",
+		);
+		expect(terminalSection.actions).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "configure-printer",
+					label: "Printer Setup",
+					subtitle: "Connected printer: Counter Thermal 80mm",
+				}),
+			]),
+		);
+
+		(wrapper.vm as any).handleSettingsPanelAction("configure-printer");
+		expect((wrapper.vm as any).settingsPanelOpen).toBe(false);
+		expect((wrapper.vm as any).printerSetupOpen).toBe(true);
 	});
 
 	it("shows an error toast instead of a false success toast when asset repair fails", async () => {
