@@ -38,12 +38,20 @@ vi.mock("../src/posapp/services/qzTray", async () => {
 		checkQzCertificateOnce: vi.fn(async () => undefined),
 		connectQzTray: vi.fn(async () => true),
 		disconnectQzTray: vi.fn(async () => undefined),
-		findQzPrinters: vi.fn(async () => ["Counter Printer"]),
+		discoverQzPrinters: vi.fn(async () => ({
+			printers: ["Counter Printer"],
+			details: [{ name: "Counter Printer", physical: true }],
+			defaultPrinter: "Counter Printer",
+			recommendedPrinter: "Counter Printer",
+			recommendationReason: "default",
+			ambiguous: false,
+		})),
 		getQzCertificateDownload: vi.fn(async () => ({ pem: "", company: "" })),
 		getQzCertificateFilename: vi.fn(() => "qz.pem"),
+		printQzSetupTestPage: vi.fn(async () => undefined),
 		setupQzCertificate: vi.fn(async () => ({ status: "created" })),
 		qzCertReady: ref(false),
-		qzCertStatus: ref("missing"),
+		qzCertStatus: ref("trusted"),
 		qzConnected: ref(true),
 		qzConnecting: ref(false),
 		qzPrinters: ref(["Counter Printer"]),
@@ -152,6 +160,7 @@ describe("QzTrayDialog", () => {
 		uiStoreState.setPosProfile.mockClear();
 		qzTrayService.qzConnected.value = true;
 		qzTrayService.qzConnecting.value = false;
+		qzTrayService.qzCertStatus.value = "trusted";
 		qzTrayService.qzReconnectPaused.value = false;
 		qzTrayService.qzPrinters.value = ["Counter Printer"];
 		qzTrayService.selectedQzPrinter.value = "Counter Printer";
@@ -160,7 +169,15 @@ describe("QzTrayDialog", () => {
 			call: vi.fn(async () => ({
 				message: {
 					name: "Main POS",
-					posa_qz_printer_name: "Counter Printer",
+					settings: {
+						print_format: "RetailMind Thermal Receipt 80mm",
+						print_receipt_on_order_complete: 1,
+						posa_qz_printer_name: "Counter Printer",
+						posa_silent_print: 1,
+						posa_open_print_in_new_tab: 0,
+						posa_raw_printing: 0,
+						posa_raw_print_width: 42,
+					},
 				},
 			})),
 		};
@@ -171,22 +188,34 @@ describe("QzTrayDialog", () => {
 		});
 	});
 
-	it("saves the selected printer as the POS Profile default", async () => {
+	it("requires a confirmed test before enabling silent profile printing", async () => {
 		const wrapper = mountDialog();
 		await flushPromises();
 
-		await wrapper.get('[data-test="qz-save-profile-printer"]').trigger("click");
+		expect(wrapper.get('[data-test="qz-enable-silent-print"]').attributes("disabled")).toBeDefined();
+
+		await wrapper.get('[data-test="qz-test-print"]').trigger("click");
+		await flushPromises();
+		expect(qzTrayService.printQzSetupTestPage).toHaveBeenCalledWith("Counter Printer");
+
+		await wrapper.get('[data-test="qz-confirm-test-print"]').trigger("click");
+		await flushPromises();
+		expect(wrapper.get('[data-test="qz-enable-silent-print"]').attributes("disabled")).toBeUndefined();
+
+		await wrapper.get('[data-test="qz-enable-silent-print"]').trigger("click");
+		await flushPromises();
 
 		expect((globalThis as any).frappe.call).toHaveBeenCalledWith({
-			method: "frappe.client.set_value",
+			method: "posawesome.posawesome.api.qz.configure_pos_profile_silent_print",
 			args: {
-				doctype: "POS Profile",
-				name: "Main POS",
-				fieldname: "posa_qz_printer_name",
-				value: "Counter Printer",
+				pos_profile: "Main POS",
+				printer_name: "Counter Printer",
+				test_print_confirmed: 1,
 			},
 		});
 		expect(uiStoreState.posProfile.value.posa_qz_printer_name).toBe("Counter Printer");
+		expect(uiStoreState.posProfile.value.posa_silent_print).toBe(1);
+		expect(uiStoreState.posProfile.value.posa_raw_printing).toBe(0);
 		expect(toastShow).toHaveBeenCalledWith(
 			expect.objectContaining({
 				color: "success",

@@ -16,6 +16,8 @@ const qzMock = vi.hoisted(() => {
 		}),
 		setClosedCallbacks: vi.fn(),
 		findPrinters: vi.fn(async () => [] as string[]),
+		getDefaultPrinter: vi.fn(async () => ""),
+		detailPrinters: vi.fn(async () => [] as Record<string, any>[]),
 		setCertificatePromise: vi.fn(),
 		setSignatureAlgorithm: vi.fn(),
 		setSignaturePromise: vi.fn(),
@@ -42,6 +44,8 @@ vi.mock("qz-tray", () => ({
 		},
 		printers: {
 			find: qzMock.findPrinters,
+			getDefault: qzMock.getDefaultPrinter,
+			details: qzMock.detailPrinters,
 		},
 		security: {
 			setCertificatePromise: qzMock.setCertificatePromise,
@@ -69,6 +73,8 @@ describe("qzTray service", () => {
 		qzMock.setActive(false);
 		qzMock.posProfile.value = null;
 		qzMock.findPrinters.mockResolvedValue([]);
+		qzMock.getDefaultPrinter.mockResolvedValue("");
+		qzMock.detailPrinters.mockResolvedValue([]);
 		(globalThis as any).frappe = {
 			call: vi.fn(),
 		};
@@ -107,6 +113,7 @@ describe("qzTray service", () => {
 
 	it("uses the POS Profile default printer until this browser saves a manual override", async () => {
 		qzMock.posProfile.value = {
+			name: "Main POS",
 			posa_qz_printer_name: "Profile Printer",
 		};
 		qzMock.setActive(true);
@@ -120,10 +127,10 @@ describe("qzTray service", () => {
 		await qzTray.findQzPrinters();
 
 		expect(qzTray.selectedQzPrinter.value).toBe("Profile Printer");
-		expect(window.localStorage.getItem("posa_qz_printer_name")).toBeNull();
+		expect(window.localStorage.getItem("posa_qz_printer_name:Main%20POS")).toBeNull();
 
 		qzTray.setSelectedQzPrinter("Counter Printer");
-		expect(window.localStorage.getItem("posa_qz_printer_name")).toBe(
+		expect(window.localStorage.getItem("posa_qz_printer_name:Main%20POS")).toBe(
 			"Counter Printer",
 		);
 
@@ -131,10 +138,66 @@ describe("qzTray service", () => {
 		expect(qzTray.selectedQzPrinter.value).toBe("Counter Printer");
 
 		qzTray.setSelectedQzPrinter("");
-		expect(window.localStorage.getItem("posa_qz_printer_name")).toBeNull();
+		expect(window.localStorage.getItem("posa_qz_printer_name:Main%20POS")).toBeNull();
 
 		await qzTray.findQzPrinters();
 		expect(qzTray.selectedQzPrinter.value).toBe("Profile Printer");
+	});
+
+	it("keeps browser printer choices scoped to the active POS Profile", async () => {
+		qzMock.posProfile.value = { name: "Counter A" };
+		const qzTray = await import("../src/posapp/services/qzTray");
+
+		qzTray.setSelectedQzPrinter("Printer A");
+		expect(qzTray.getSavedPrinterName()).toBe("Printer A");
+
+		qzMock.posProfile.value = { name: "Counter B" };
+		expect(qzTray.getSavedPrinterName()).toBe("");
+		qzTray.setSelectedQzPrinter("Printer B");
+
+		expect(window.localStorage.getItem("posa_qz_printer_name:Counter%20A")).toBe("Printer A");
+		expect(window.localStorage.getItem("posa_qz_printer_name:Counter%20B")).toBe("Printer B");
+	});
+
+	it("recommends a physical thermal printer and excludes virtual queues", async () => {
+		qzMock.posProfile.value = { name: "Main POS", posa_qz_printer_name: "" };
+		qzMock.setActive(true);
+		qzMock.findPrinters.mockResolvedValue([
+			"Microsoft Print to PDF",
+			"Front Counter Thermal 80mm",
+			"Office Laser",
+		]);
+		qzMock.getDefaultPrinter.mockResolvedValue("Office Laser");
+		qzMock.detailPrinters.mockResolvedValue([
+			{ name: "Microsoft Print to PDF", physical: false, driver: "PDF" },
+			{ name: "Front Counter Thermal 80mm", physical: true, driver: "Receipt" },
+			{ name: "Office Laser", physical: true, driver: "PCL" },
+		]);
+
+		const qzTray = await import("../src/posapp/services/qzTray");
+		const discovery = await qzTray.discoverQzPrinters();
+
+		expect(discovery.recommendedPrinter).toBe("Front Counter Thermal 80mm");
+		expect(discovery.recommendationReason).toBe("receipt");
+		expect(discovery.ambiguous).toBe(false);
+		expect(qzTray.selectedQzPrinter.value).toBe("Front Counter Thermal 80mm");
+	});
+
+	it("requires an explicit choice when several generic physical printers are equally plausible", async () => {
+		qzMock.posProfile.value = { name: "Main POS" };
+		qzMock.setActive(true);
+		qzMock.findPrinters.mockResolvedValue(["Printer A", "Printer B"]);
+		qzMock.detailPrinters.mockResolvedValue([
+			{ name: "Printer A", physical: true },
+			{ name: "Printer B", physical: true },
+		]);
+
+		const qzTray = await import("../src/posapp/services/qzTray");
+		const discovery = await qzTray.discoverQzPrinters();
+
+		expect(discovery.recommendedPrinter).toBe("");
+		expect(discovery.ambiguous).toBe(true);
+		expect(qzTray.selectedQzPrinter.value).toBe("");
 	});
 
 	it("prefers the POS Profile default over a transient selected printer", async () => {
@@ -183,6 +246,31 @@ describe("qzTray service", () => {
 					flavor: "plain",
 					data: "\x1B@Hello\n",
 				},
+			],
+		);
+	});
+
+	it("prints an explicit 80 mm setup receipt to the selected queue", async () => {
+		qzMock.setActive(true);
+		const qzTray = await import("../src/posapp/services/qzTray");
+
+		await qzTray.printQzSetupTestPage("Counter <One>");
+
+		expect(qzMock.createConfig).toHaveBeenCalledWith(
+			"Counter <One>",
+			expect.objectContaining({
+				size: { width: 80, height: null },
+				units: "mm",
+			}),
+		);
+		expect(qzMock.print).toHaveBeenCalledWith(
+			expect.any(Object),
+			[
+				expect.objectContaining({
+					type: "pixel",
+					format: "html",
+					data: expect.stringContaining("Counter &lt;One&gt;"),
+				}),
 			],
 		);
 	});

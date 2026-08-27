@@ -6,6 +6,25 @@ declare const frappe: any;
 
 export type QzCertStatus = "unknown" | "trusted" | "untrusted";
 
+export interface QzPrinterDetail {
+	name: string;
+	driver?: string;
+	density?: number | number[];
+	trays?: string[];
+	physical?: boolean;
+	type?: string;
+	default?: boolean;
+}
+
+export interface QzPrinterDiscoveryResult {
+	printers: string[];
+	details: QzPrinterDetail[];
+	defaultPrinter: string;
+	recommendedPrinter: string;
+	recommendationReason: "configured" | "terminal" | "receipt" | "default" | "only-physical" | "";
+	ambiguous: boolean;
+}
+
 export interface QzPrintHtmlOptions {
 	printerName?: string;
 	widthMm?: number;
@@ -25,11 +44,16 @@ const CERT_READY_STORAGE_KEY = "posa_qz_cert_ready";
 const MANUAL_DISCONNECT_STORAGE_KEY = "posa_qz_manual_disconnect";
 const DEFAULT_PRINT_FORMAT = "Standard";
 const PROFILE_PRINTER_FIELD = "posa_qz_printer_name";
+const RECEIPT_PRINTER_PATTERN = /(?:\breceipt\b|\bthermal\b|\bpos\b|80\s?mm|black\s?copper|epson\s+tm|star\s+tsp|xprinter|rongta|bixolon|citizen\s+ct)/i;
+const VIRTUAL_PRINTER_PATTERN = /(?:pdf|xps|onenote|fax|document\s+writer|send\s+to|microsoft\s+print)/i;
 
 export const qzConnected = ref(false);
 export const qzConnecting = ref(false);
 export const qzCertStatus = ref<QzCertStatus>("unknown");
 export const qzPrinters = ref<string[]>([]);
+export const qzPrinterDetails = ref<QzPrinterDetail[]>([]);
+export const qzDefaultPrinter = ref("");
+export const qzRecommendedPrinter = ref("");
 export const selectedQzPrinter = ref(getSavedPrinterName());
 export const qzCertReady = ref(loadCertReady());
 export const qzReconnectPaused = ref(loadReconnectPaused());
@@ -116,7 +140,7 @@ function setReconnectPaused(value: boolean) {
 	saveReconnectPaused(value);
 }
 
-function getProfileDefaultPrinterName() {
+function getCurrentPosProfile(): Record<string, any> | null {
 	try {
 		const uiStore = useUIStore();
 		const profile =
@@ -124,16 +148,22 @@ function getProfileDefaultPrinterName() {
 				? uiStore.posProfile.value
 				: uiStore?.posProfile;
 
-		if (!profile || typeof profile !== "object") {
-			return "";
-		}
-
-		const value = profile[PROFILE_PRINTER_FIELD];
-		if (typeof value === "string" && value.trim()) {
-			return value.trim();
-		}
+		return profile && typeof profile === "object" ? profile : null;
 	} catch {
 		// ignore store access issues outside app context
+	}
+	return null;
+}
+
+function getCurrentPosProfileName() {
+	const value = getCurrentPosProfile()?.name;
+	return typeof value === "string" ? value.trim() : "";
+}
+
+function getProfileDefaultPrinterName() {
+	const value = getCurrentPosProfile()?.[PROFILE_PRINTER_FIELD];
+	if (typeof value === "string" && value.trim()) {
+		return value.trim();
 	}
 
 	return "";
@@ -143,7 +173,7 @@ function setResolvedQzPrinter(name: string) {
 	selectedQzPrinter.value = name || "";
 }
 
-function resolvePreferredPrinter(printers: string[]) {
+function resolvePreferredPrinter(printers: string[], allowFirstFallback = true) {
 	const saved = getSavedPrinterName();
 	if (saved && printers.includes(saved)) {
 		return saved;
@@ -158,7 +188,7 @@ function resolvePreferredPrinter(printers: string[]) {
 		return selectedQzPrinter.value;
 	}
 
-	return printers[0] || "";
+	return allowFirstFallback ? printers[0] || "" : "";
 }
 
 export function resolveProfilePrinterName(profilePrinterName: string | undefined, printers: string[]): string {
@@ -166,6 +196,106 @@ export function resolveProfilePrinterName(profilePrinterName: string | undefined
 		return profilePrinterName;
 	}
 	return resolvePreferredPrinter(printers);
+}
+
+function normalizedPrinterText(detail: QzPrinterDetail) {
+	return `${detail.name || ""} ${detail.driver || ""}`.trim();
+}
+
+export function isVirtualQzPrinter(detail: QzPrinterDetail) {
+	if (detail.physical === false) return true;
+	return VIRTUAL_PRINTER_PATTERN.test(normalizedPrinterText(detail));
+}
+
+function uniquePrinterNames(values: unknown[]) {
+	const names = values
+		.map((value) => (typeof value === "string" ? value.trim() : ""))
+		.filter(Boolean);
+	return Array.from(new Set(names));
+}
+
+function normalizePrinterDetails(value: unknown): QzPrinterDetail[] {
+	const rows = Array.isArray(value) ? value : value && typeof value === "object" ? [value] : [];
+	return rows
+		.map((row: any) => ({
+			...row,
+			name: typeof row?.name === "string" ? row.name.trim() : "",
+			driver: typeof row?.driver === "string" ? row.driver.trim() : "",
+		}))
+		.filter((row) => Boolean(row.name));
+}
+
+export function recommendQzPrinter(
+	printers: string[],
+	details: QzPrinterDetail[],
+	defaultPrinter = "",
+	configuredPrinter = "",
+	terminalPrinter = "",
+): Pick<QzPrinterDiscoveryResult, "recommendedPrinter" | "recommendationReason" | "ambiguous"> {
+	const available = new Set(printers);
+	const detailByName = new Map(details.map((detail) => [detail.name, detail]));
+	const candidates = printers.filter((name) => {
+		const detail = detailByName.get(name) || { name };
+		return !isVirtualQzPrinter(detail);
+	});
+
+	if (!candidates.length) {
+		return { recommendedPrinter: "", recommendationReason: "", ambiguous: false };
+	}
+
+	if (configuredPrinter && available.has(configuredPrinter) && candidates.includes(configuredPrinter)) {
+		return {
+			recommendedPrinter: configuredPrinter,
+			recommendationReason: "configured",
+			ambiguous: false,
+		};
+	}
+
+	if (terminalPrinter && available.has(terminalPrinter) && candidates.includes(terminalPrinter)) {
+		return {
+			recommendedPrinter: terminalPrinter,
+			recommendationReason: "terminal",
+			ambiguous: false,
+		};
+	}
+
+	if (candidates.length === 1) {
+		return {
+			recommendedPrinter: candidates[0] || "",
+			recommendationReason: "only-physical",
+			ambiguous: false,
+		};
+	}
+
+	const ranked = candidates
+		.map((name) => {
+			const detail = detailByName.get(name) || { name };
+			let score = 0;
+			let reason: QzPrinterDiscoveryResult["recommendationReason"] = "";
+			if (RECEIPT_PRINTER_PATTERN.test(normalizedPrinterText(detail))) {
+				score += 70;
+				reason = "receipt";
+			}
+			if (name === defaultPrinter || detail.default === true) {
+				score += 50;
+				if (!reason) reason = "default";
+			}
+			if (detail.physical === true) score += 10;
+			return { name, score, reason };
+		})
+		.sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
+
+	const first = ranked[0];
+	const second = ranked[1];
+	if (!first || first.score < 50 || first.score === second?.score) {
+		return { recommendedPrinter: "", recommendationReason: "", ambiguous: true };
+	}
+
+	return {
+		recommendedPrinter: first.name,
+		recommendationReason: first.reason,
+		ambiguous: false,
+	};
 }
 
 function setupSecurity() {
@@ -227,19 +357,28 @@ function setupSecurity() {
 
 export function getSavedPrinterName() {
 	try {
-		return localStorage.getItem(PRINTER_STORAGE_KEY) || "";
+		return localStorage.getItem(getPrinterStorageKey()) || "";
 	} catch {
 		return "";
 	}
 }
 
+export function getPrinterStorageKey() {
+	const profileName = getCurrentPosProfileName();
+	return profileName
+		? `${PRINTER_STORAGE_KEY}:${encodeURIComponent(profileName)}`
+		: PRINTER_STORAGE_KEY;
+}
+
 export function savePrinterName(name: string) {
 	try {
+		const storageKey = getPrinterStorageKey();
 		if (name) {
-			localStorage.setItem(PRINTER_STORAGE_KEY, name);
+			localStorage.setItem(storageKey, name);
 		} else {
-			localStorage.removeItem(PRINTER_STORAGE_KEY);
+			localStorage.removeItem(storageKey);
 		}
+		if (storageKey !== PRINTER_STORAGE_KEY) localStorage.removeItem(PRINTER_STORAGE_KEY);
 	} catch {
 		// ignore localStorage errors
 	}
@@ -354,6 +493,68 @@ export async function findQzPrinters(): Promise<string[]> {
 	}
 }
 
+export async function discoverQzPrinters(): Promise<QzPrinterDiscoveryResult> {
+	if (!qz.websocket.isActive()) {
+		if (qzReconnectPaused.value) {
+			return {
+				printers: qzPrinters.value,
+				details: qzPrinterDetails.value,
+				defaultPrinter: qzDefaultPrinter.value,
+				recommendedPrinter: qzRecommendedPrinter.value,
+				recommendationReason: "",
+				ambiguous: false,
+			};
+		}
+		const connected = await connectQzTray();
+		if (!connected) {
+			return {
+				printers: [],
+				details: [],
+				defaultPrinter: "",
+				recommendedPrinter: "",
+				recommendationReason: "",
+				ambiguous: false,
+			};
+		}
+	}
+
+	const [printerResult, defaultResult, detailResult] = await Promise.all([
+		qz.printers.find().catch(() => undefined),
+		qz.printers.getDefault?.().catch(() => undefined),
+		qz.printers.details?.().catch(() => undefined),
+	]);
+	const details = normalizePrinterDetails(detailResult);
+	const foundPrinters = Array.isArray(printerResult)
+		? printerResult
+		: printerResult
+			? [String(printerResult)]
+			: [];
+	const printers = uniquePrinterNames([...foundPrinters, ...details.map((detail) => detail.name)]);
+	const defaultPrinter = typeof defaultResult === "string" ? defaultResult.trim() : "";
+	const recommendation = recommendQzPrinter(
+		printers,
+		details,
+		defaultPrinter,
+		getProfileDefaultPrinterName(),
+		getSavedPrinterName(),
+	);
+
+	qzPrinters.value = printers;
+	qzPrinterDetails.value = details;
+	qzDefaultPrinter.value = defaultPrinter;
+	qzRecommendedPrinter.value = recommendation.recommendedPrinter;
+
+	const existingPreference = resolvePreferredPrinter(printers, false);
+	setResolvedQzPrinter(existingPreference || recommendation.recommendedPrinter);
+
+	return {
+		printers,
+		details,
+		defaultPrinter,
+		...recommendation,
+	};
+}
+
 export async function checkQzCertificateOnce() {
 	if (certificateChecked) {
 		return qzCertReady.value;
@@ -436,6 +637,49 @@ export async function printHtmlViaQz(html: string, options: QzPrintHtmlOptions =
 	];
 
 	await qz.print(config, data);
+}
+
+function escapePrinterTestText(value: string) {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+export async function printQzSetupTestPage(printerName: string) {
+	const safePrinterName = escapePrinterTestText(printerName || "");
+	const html = `<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<style>
+		@page { size: 80mm auto; margin: 0; }
+		* { box-sizing: border-box; }
+		body { width: 80mm; margin: 0; padding: 3mm; font-family: Arial, sans-serif; color: #000; }
+		.receipt { width: 74mm; font-size: 11px; line-height: 1.35; }
+		h1 { margin: 0 0 2mm; font-size: 16px; text-align: center; }
+		.rule { border-top: 1px dashed #000; margin: 2mm 0; }
+		.edge { display: flex; justify-content: space-between; font-weight: 700; }
+	</style>
+</head>
+<body>
+	<div class="receipt">
+		<h1>RetailMind Printer Test</h1>
+		<div class="rule"></div>
+		<div>Printer: ${safePrinterName}</div>
+		<div>Paper: 80 mm / safe content: 74 mm</div>
+		<div class="rule"></div>
+		<div class="edge"><span>| LEFT EDGE</span><span>RIGHT EDGE |</span></div>
+		<div class="rule"></div>
+		<div style="text-align:center">Confirm text fits, the correct queue printed, and no browser or QZ prompt appeared.</div>
+		<br><br>
+	</div>
+</body>
+</html>`;
+
+	await printHtmlViaQz(html, { printerName, widthMm: 80 });
 }
 
 export async function sendRawToQz(data: string, printerName?: string) {

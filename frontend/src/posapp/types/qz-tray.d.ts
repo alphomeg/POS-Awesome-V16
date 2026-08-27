@@ -32,6 +32,16 @@ declare module "qz-tray" {
 		readonly printer: string;
 	}
 
+	interface QzPrinterDetail {
+		name: string;
+		driver?: string;
+		density?: number | number[];
+		trays?: string[];
+		physical?: boolean;
+		type?: string;
+		default?: boolean;
+	}
+
 	interface QzTrayApi {
 		security: {
 			setCertificatePromise(factory: QzCertificatePromiseFactory): void;
@@ -46,6 +56,8 @@ declare module "qz-tray" {
 		};
 		printers: {
 			find(): Promise<string | string[] | undefined>;
+			getDefault?(): Promise<string | undefined>;
+			details?(): Promise<QzPrinterDetail | QzPrinterDetail[] | undefined>;
 		};
 		configs: {
 			create(printer: string, config?: QzPrinterConfig): QzConfigHandle;

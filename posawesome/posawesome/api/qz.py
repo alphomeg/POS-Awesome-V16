@@ -7,10 +7,22 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import frappe
 from frappe import _
+from frappe.utils import cint, cstr
+
+from posawesome.posawesome.api.pos_access import (
+    get_authenticated_pos_user,
+    get_authorized_pos_profile,
+    user_is_pos_profile_manager,
+)
+
+
+RETAILMIND_THERMAL_PRINT_FORMAT = "RetailMind Thermal Receipt 80mm"
+MAX_PRINTER_NAME_LENGTH = 255
 
 
 def _qz_dir() -> str:
@@ -51,6 +63,81 @@ def _require_cryptography():
         )
 
     return x509, hashes, serialization, padding, rsa, NameOID
+
+
+def _permission_denied(message: str):
+    frappe.throw(message, frappe.PermissionError)
+
+
+def _validate_printer_name(printer_name: str) -> str:
+    printer_name = cstr(printer_name).strip()
+    if not printer_name:
+        frappe.throw(_("Select a printer before enabling silent printing."))
+    if len(printer_name) > MAX_PRINTER_NAME_LENGTH:
+        frappe.throw(_("Printer name is too long."))
+    if re.search(r"[\x00-\x1f\x7f]", printer_name):
+        frappe.throw(_("Printer name contains invalid control characters."))
+    return printer_name
+
+
+def _resolve_receipt_print_format(profile) -> str:
+    document_type = (
+        "POS Invoice"
+        if cint(profile.get("create_pos_invoice_instead_of_sales_invoice"))
+        else "Sales Invoice"
+    )
+    preferred_filters = {
+        "name": RETAILMIND_THERMAL_PRINT_FORMAT,
+        "doc_type": document_type,
+        "disabled": 0,
+    }
+    if frappe.db.exists("Print Format", preferred_filters):
+        return RETAILMIND_THERMAL_PRINT_FORMAT
+
+    current_format = cstr(profile.get("print_format")).strip()
+    if current_format == "Standard":
+        return current_format
+    if current_format and frappe.db.exists(
+        "Print Format",
+        {"name": current_format, "doc_type": document_type, "disabled": 0},
+    ):
+        return current_format
+    return "Standard"
+
+
+@frappe.whitelist()
+def configure_pos_profile_silent_print(
+    pos_profile: str,
+    printer_name: str,
+    test_print_confirmed=0,
+) -> dict:
+    """Enable safe 80 mm HTML/QZ printing after an operator-confirmed test."""
+
+    user = get_authenticated_pos_user()
+    if not user_is_pos_profile_manager(user):
+        _permission_denied(_("A POS Profile manager is required to enable silent printing."))
+    if not cint(test_print_confirmed):
+        frappe.throw(_("Confirm the 80 mm test print before enabling silent printing."))
+
+    profile = get_authorized_pos_profile(pos_profile)
+    profile.check_permission("write")
+    printer_name = _validate_printer_name(printer_name)
+    settings = {
+        "print_format": _resolve_receipt_print_format(profile),
+        "print_receipt_on_order_complete": 1,
+        "posa_qz_printer_name": printer_name,
+        "posa_silent_print": 1,
+        "posa_open_print_in_new_tab": 0,
+        "posa_raw_printing": 0,
+        "posa_raw_print_width": 42,
+    }
+    profile.update(settings)
+    profile.save()
+
+    return {
+        "name": profile.name,
+        "settings": settings,
+    }
 
 
 @frappe.whitelist()

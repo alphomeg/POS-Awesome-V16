@@ -44,28 +44,44 @@
 					:items="printerOptions"
 					:label="__('Printer')"
 					:placeholder="__('Select printer')"
+					data-test="qz-printer-select"
 					variant="outlined"
 					density="compact"
 					clearable
 					:disabled="loadingPrinters"
 				/>
-				<div class="d-flex flex-wrap align-center justify-space-between ga-2 mt-3">
-					<div class="text-caption text-medium-emphasis">
-						{{
-							__(
-								"Save the selected printer as the POS Profile default so it shows automatically on this setup.",
-							)
-						}}
-					</div>
+
+				<v-alert
+					v-if="recommendationText"
+					type="info"
+					variant="tonal"
+					density="compact"
+					class="mt-3"
+					data-test="qz-printer-recommendation"
+				>
+					{{ recommendationText }}
+				</v-alert>
+
+				<v-alert
+					v-if="discoveryAmbiguous"
+					type="warning"
+					variant="tonal"
+					density="compact"
+					class="mt-3"
+				>
+					{{ __("Multiple possible printers were found. Select the receipt printer explicitly.") }}
+				</v-alert>
+
+				<div class="d-flex flex-wrap ga-2 mt-3">
 					<v-btn
-						data-test="qz-save-profile-printer"
-						color="primary"
+						data-test="qz-test-print"
+						color="secondary"
 						variant="tonal"
-						:loading="savingProfilePrinter"
-						:disabled="!selectedPrinter || !profileName"
-						@click="handleSaveProfilePrinter"
+						:loading="testingPrinter"
+						:disabled="!selectedPrinter || !qzConnected || testingPrinter"
+						@click="handleTestPrint"
 					>
-						{{ __("Save as POS Profile Default") }}
+						{{ __("Print 80 mm Test") }}
 					</v-btn>
 				</div>
 
@@ -78,6 +94,61 @@
 				>
 					{{ __("Select a printer to use QZ silent printing.") }}
 				</v-alert>
+
+				<v-alert
+					v-if="testPrintSent"
+					type="warning"
+					variant="tonal"
+					density="comfortable"
+					class="mt-3"
+					data-test="qz-test-confirmation"
+				>
+					<div>
+						{{
+							__(
+								"Confirm that the test printed from the correct printer, fits the roll, and showed no Chrome or QZ prompt.",
+							)
+						}}
+					</div>
+					<v-btn
+						class="mt-2"
+						data-test="qz-confirm-test-print"
+						color="success"
+						variant="tonal"
+						@click="handleConfirmTestPrint"
+					>
+						{{ __("Test Printed Correctly") }}
+					</v-btn>
+				</v-alert>
+
+				<v-alert
+					v-if="testPrintConfirmed"
+					type="success"
+					variant="tonal"
+					density="compact"
+					class="mt-3"
+				>
+					{{ __("Printer test confirmed. Silent HTML printing can now be enabled.") }}
+				</v-alert>
+
+				<div class="d-flex flex-wrap align-center justify-space-between ga-2 mt-3">
+					<div class="text-caption text-medium-emphasis">
+						{{
+							__(
+								"This saves the queue on the active POS Profile, selects the 80 mm receipt format, and keeps raw printing disabled.",
+							)
+						}}
+					</div>
+					<v-btn
+						data-test="qz-enable-silent-print"
+						color="primary"
+						:loading="savingProfilePrinter"
+						:disabled="!canConfigureSilentPrint"
+						@click="handleConfigureSilentPrint"
+					>
+						{{ __("Enable Silent Printing") }}
+					</v-btn>
+				</div>
 
 				<v-divider class="my-4"></v-divider>
 
@@ -121,7 +192,7 @@ import {
 	checkQzCertificateOnce,
 	connectQzTray,
 	disconnectQzTray,
-	findQzPrinters,
+	discoverQzPrinters,
 	getQzCertificateDownload,
 	getQzCertificateFilename,
 	qzCertReady,
@@ -130,10 +201,12 @@ import {
 	qzConnecting,
 	qzPrinters,
 	qzReconnectPaused,
+	printQzSetupTestPage,
 	selectedQzPrinter,
 	setSelectedQzPrinter,
 	setupQzCertificate,
 	type QzCertStatus,
+	type QzPrinterDiscoveryResult,
 } from "../../services/qzTray";
 
 const props = defineProps<{
@@ -149,6 +222,10 @@ const uiStore = useUIStore();
 const loadingPrinters = ref(false);
 const certificateLoading = ref(false);
 const savingProfilePrinter = ref(false);
+const testingPrinter = ref(false);
+const testPrintSent = ref(false);
+const testPrintConfirmed = ref(false);
+const discovery = ref<QzPrinterDiscoveryResult | null>(null);
 
 const dialogModel = computed({
 	get: () => props.modelValue,
@@ -157,7 +234,10 @@ const dialogModel = computed({
 
 const selectedPrinter = computed({
 	get: () => selectedQzPrinter.value || null,
-	set: (value: string | null) => setSelectedQzPrinter(value || ""),
+	set: (value: string | null) => {
+		setSelectedQzPrinter(value || "");
+		resetTestConfirmation();
+	},
 });
 
 const printerOptions = computed(() =>
@@ -180,6 +260,29 @@ const profileName = computed(() => {
 	const name = currentProfile.value?.name;
 	return typeof name === "string" ? name.trim() : "";
 });
+
+const discoveryAmbiguous = computed(() => Boolean(discovery.value?.ambiguous));
+
+const recommendationText = computed(() => {
+	const printer = discovery.value?.recommendedPrinter;
+	if (!printer) return "";
+	const reason = discovery.value?.recommendationReason;
+	if (reason === "configured")
+		return __("Using the printer already configured on this POS Profile: {0}", [printer]);
+	if (reason === "terminal") return __("Using this terminal's saved printer: {0}", [printer]);
+	if (reason === "receipt") return __("Recommended thermal/receipt printer: {0}", [printer]);
+	if (reason === "default") return __("Recommended operating-system default printer: {0}", [printer]);
+	return __("Only physical printer detected: {0}", [printer]);
+});
+
+const canConfigureSilentPrint = computed(
+	() =>
+		Boolean(selectedPrinter.value) &&
+		Boolean(profileName.value) &&
+		testPrintConfirmed.value &&
+		qzConnected.value &&
+		qzCertStatus.value === "trusted",
+);
 
 const certAlertType = computed(() => {
 	if (qzCertStatus.value === "trusted") return "success";
@@ -220,6 +323,11 @@ function __(text: string, args?: string[]) {
 
 function notify(title: string, color = "info") {
 	toastStore.show({ title: __(title), color });
+}
+
+function resetTestConfirmation() {
+	testPrintSent.value = false;
+	testPrintConfirmed.value = false;
 }
 
 async function handleConnect(showNotification = true) {
@@ -264,7 +372,9 @@ async function refreshPrinters(showNotification = true) {
 
 	loadingPrinters.value = true;
 	try {
-		const printers = await findQzPrinters();
+		discovery.value = await discoverQzPrinters();
+		const printers = discovery.value.printers;
+		resetTestConfirmation();
 		if (showNotification) {
 			if (printers.length) {
 				notify("Printer list updated.", "success");
@@ -285,39 +395,72 @@ async function refreshPrinters(showNotification = true) {
 	}
 }
 
-async function handleSaveProfilePrinter() {
+async function handleTestPrint() {
 	if (!selectedPrinter.value) {
-		notify("Select a printer before saving it to the POS Profile.", "warning");
+		notify("Select a printer before printing the test receipt.", "warning");
+		return;
+	}
+	testingPrinter.value = true;
+	try {
+		await printQzSetupTestPage(selectedPrinter.value);
+		testPrintSent.value = true;
+		testPrintConfirmed.value = false;
+		notify("80 mm test receipt sent. Confirm the physical result below.", "success");
+	} catch (error: any) {
+		console.error("Failed to print QZ setup test", error);
+		resetTestConfirmation();
+		notify(error?.message || "Failed to print the 80 mm test receipt.", "error");
+	} finally {
+		testingPrinter.value = false;
+	}
+}
+
+function handleConfirmTestPrint() {
+	testPrintConfirmed.value = true;
+	notify("Printer test confirmed.", "success");
+}
+
+async function handleConfigureSilentPrint() {
+	if (!selectedPrinter.value) {
+		notify("Select a printer before enabling silent printing.", "warning");
 		return;
 	}
 	if (!profileName.value) {
 		notify("POS Profile is not loaded yet. Try again in a moment.", "warning");
 		return;
 	}
+	if (!testPrintConfirmed.value) {
+		notify("Print and confirm the 80 mm test receipt first.", "warning");
+		return;
+	}
+	if (qzCertStatus.value !== "trusted") {
+		notify("Trust the RetailMind certificate in QZ Tray, reconnect, and repeat the test.", "warning");
+		return;
+	}
 
 	try {
 		savingProfilePrinter.value = true;
 		const response = await frappe.call({
-			method: "frappe.client.set_value",
+			method: "posawesome.posawesome.api.qz.configure_pos_profile_silent_print",
 			args: {
-				doctype: "POS Profile",
-				name: profileName.value,
-				fieldname: "posa_qz_printer_name",
-				value: selectedPrinter.value,
+				pos_profile: profileName.value,
+				printer_name: selectedPrinter.value,
+				test_print_confirmed: 1,
 			},
 		});
+		const settings = response?.message?.settings || {};
 		const updatedProfile = {
 			...(currentProfile.value || {}),
-			...(response?.message && typeof response.message === "object" ? response.message : {}),
-			posa_qz_printer_name: selectedPrinter.value,
+			...(settings && typeof settings === "object" ? settings : {}),
 		};
 		if (typeof uiStore?.setPosProfile === "function") {
 			uiStore.setPosProfile(updatedProfile as any);
 		}
-		notify("Selected printer saved as the POS Profile default.", "success");
+		setSelectedQzPrinter(selectedPrinter.value);
+		notify("Silent 80 mm receipt printing enabled for this POS Profile.", "success");
 	} catch (error: any) {
-		console.error("Failed to save QZ profile printer", error);
-		notify(error?.message || "Failed to save POS Profile printer.", "error");
+		console.error("Failed to configure QZ silent printing", error);
+		notify(error?.message || "Failed to enable silent printing.", "error");
 	} finally {
 		savingProfilePrinter.value = false;
 	}
@@ -372,8 +515,7 @@ watch(
 		await checkQzCertificateOnce();
 		if (!qzConnected.value && !qzReconnectPaused.value) {
 			await handleConnect(false);
-		}
-		if (qzConnected.value && !qzPrinters.value.length) {
+		} else if (qzConnected.value) {
 			await refreshPrinters(false);
 		}
 	},

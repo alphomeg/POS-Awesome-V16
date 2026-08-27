@@ -141,6 +141,28 @@ describe("NavbarMenu cashier pin management", () => {
 		expect((wrapper.vm as any).supervisorSections).toEqual([]);
 	});
 
+	it("keeps printer setup reachable before silent printing is enabled", async () => {
+		const wrapper = mountMenu({
+			posProfile: {
+				posa_silent_print: 0,
+			},
+		});
+		await flushPromises();
+		await (wrapper.vm as any).openSettingsPanel();
+
+		const terminal = (wrapper.vm as any).settingsSections.find(
+			(section: any) => section.id === "terminal",
+		);
+		expect(terminal.actions).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "qz-tray-setup",
+					label: "Printer Setup",
+				}),
+			]),
+		);
+	});
+
 	it("shows restricted supervisor tools only for POS supervisors", async () => {
 		const employeeStore = useEmployeeStore();
 		employeeStore.setCurrentCashier({

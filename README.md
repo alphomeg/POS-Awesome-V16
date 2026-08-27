@@ -222,14 +222,14 @@ Supported raw print paths:
 #### Setup
 
 1. Install and run **QZ Tray** on each POS terminal.
-2. In POS Awesome, open the QZ Tray setup dialog and connect QZ Tray.
+2. In POS Awesome, open **Terminal → Printer Setup**. This remains available before silent printing is enabled.
 3. Generate/download the QZ certificate from POS Awesome, trust it in QZ Tray, then restart QZ Tray.
-4. Select the receipt printer and save it as the POS Profile default if this terminal should always use it.
-5. Open **POS Profile** and configure:
-    - `Enable Silent Print`: optional for HTML QZ printing; raw receipt printing can use QZ directly without this option
-    - `QZ Tray Printer Name`: exact printer name detected by QZ Tray
-    - `Use Raw Receipt Printing`: enabled
-    - `Raw Receipt Width`: `42` for most 80mm printers, `32` for most 58mm printers
+4. Use printer detection. POS Awesome filters known virtual queues and recommends the configured, terminal-saved, physical thermal, or operating-system default printer when the result is unambiguous.
+5. Select the receipt printer, print the 80mm test, and confirm that it used the correct queue, fits the roll, and displayed no browser/QZ prompt.
+6. A POS Profile manager can then enable silent printing. The server atomically saves the detected queue, enables automatic QZ HTML printing, disables new-tab and raw printing, keeps the 42-character raw fallback, and selects `RetailMind Thermal Receipt 80mm` when that format is installed for the profile's invoice doctype.
+7. Enable `Use Raw Receipt Printing` separately only after an ESC/POS hardware/layout acceptance test. Use `42` characters for most 80mm printers and `32` for most 58mm printers.
+
+Printer detection lists queues already visible to QZ Tray on the POS computer. USB printers and installed/mapped LAN printer queues are included. Discovering an uninstalled LAN printer, creating its Windows port/queue, or installing its driver remains an operating-system provisioning task and is not performed by the browser.
 
 #### How To Use
 
