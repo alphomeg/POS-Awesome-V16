@@ -159,6 +159,19 @@ function createPersistenceError(operation: string, cause?: unknown) {
 	return error;
 }
 
+function createActiveRecoveryConflictError(
+	activeRequestId: string,
+	requestedRequestId: string,
+) {
+	const error = new Error(
+		"Another POS tab or restored sale already owns invoice submission recovery. Resolve it before starting a new submission.",
+	);
+	(error as any).code = "POSA_ACTIVE_RECOVERY_CONFLICT";
+	(error as any).activeRequestId = activeRequestId;
+	(error as any).requestedRequestId = requestedRequestId;
+	return error;
+}
+
 function persistAndVerify(key: string, serialized: string, operation: string) {
 	const storage = getStorage();
 	if (!storage) {
@@ -197,6 +210,16 @@ export function persistActiveInvoiceSubmissionRecovery(
 	const requestId = normalizeRequestId(recovery?.requestId);
 	if (!requestId) {
 		throw new Error("Active invoice recovery requires a request ID");
+	}
+	const activeRecovery = getActiveInvoiceSubmissionRecovery();
+	if (activeRecovery?.requestId && activeRecovery.requestId !== requestId) {
+		// localStorage is shared by every same-origin tab. Never overwrite the
+		// unresolved write-ahead pointer belonging to another cart/tab; doing so
+		// would make the first ambiguous submission undiscoverable after reload.
+		throw createActiveRecoveryConflictError(
+			activeRecovery.requestId,
+			requestId,
+		);
 	}
 	const normalized: ActiveInvoiceSubmissionRecovery = {
 		requestId,

@@ -28,92 +28,127 @@ export function getProvisionedTerminalCashier(page: Page) {
 }
 
 async function provisionTemporaryCashier(page: Page, profileName: string) {
+	const configuredUser = process.env.POSA_E2E_PROVISIONED_CASHIER?.trim();
 	const user =
-		process.env.POSA_E2E_PROVISIONED_CASHIER?.trim() ||
+		configuredUser ||
 		`posa-e2e-${Date.now()}-${randomInt(100000, 1000000)}@retailmind.invalid`;
 	const pin = String(randomInt(1000, 10000));
 
-	const provisionResult = await page.evaluate(
-		async ({ posProfile, cashierUser, cashierPin }) => {
-			const call = async (
-				method: string,
-				args: Record<string, unknown>,
-			) => {
-				try {
-					return await (window as any).frappe.call({ method, args });
-				} catch (error: any) {
-					const message =
-						error?._server_messages ||
-						error?.message ||
-						error?.exc ||
-						error?.exception ||
-						JSON.stringify(error);
-					throw new Error(String(message));
-				}
-			};
-			let userDoc: any = null;
-			const existingUsers = (
-				await call("frappe.client.get_list", {
-					doctype: "User",
-					filters: { name: cashierUser },
-					fields: ["name"],
-					limit_page_length: 1,
-				})
-			)?.message;
-			if (existingUsers?.[0]?.name) {
-				userDoc = (
-					await call("frappe.client.get", {
-						doctype: "User",
-						name: cashierUser,
-					})
-				)?.message;
-			}
-			let createdUser = false;
-			const originalPin = userDoc?.posa_pos_pin
-				? String(userDoc.posa_pos_pin)
-				: null;
+	let provisionResult: {
+		previousPin: string | null;
+		createdUser: boolean;
+	} | null = null;
+	let lastError: unknown = null;
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		try {
+			provisionResult = await page.evaluate(
+				async ({ posProfile, cashierUser, cashierPin }) => {
+					const call = async (
+						method: string,
+						args: Record<string, unknown>,
+					) => {
+						try {
+							return await (window as any).frappe.call({
+								method,
+								args,
+							});
+						} catch (error: any) {
+							const message =
+								error?._server_messages ||
+								error?.message ||
+								error?.exc ||
+								error?.exception ||
+								JSON.stringify(error);
+							throw new Error(String(message));
+						}
+					};
+					let userDoc: any = null;
+					const existingUsers = (
+						await call("frappe.client.get_list", {
+							doctype: "User",
+							filters: { name: cashierUser },
+							fields: ["name"],
+							limit_page_length: 1,
+						})
+					)?.message;
+					if (existingUsers?.[0]?.name) {
+						userDoc = (
+							await call("frappe.client.get", {
+								doctype: "User",
+								name: cashierUser,
+							})
+						)?.message;
+					}
+					let createdUser = false;
+					const originalPin = userDoc?.posa_pos_pin
+						? String(userDoc.posa_pos_pin)
+						: null;
 
-			if (!userDoc) {
-				createdUser = true;
-				await call("frappe.client.insert", {
-					doc: {
-						doctype: "User",
-						email: cashierUser,
-						first_name: "POS E2E Cashier",
-						enabled: 1,
-						send_welcome_email: 0,
-						posa_pos_pin: cashierPin,
-						roles: [{ role: "POS Awesome Supervisor" }],
-					},
-				});
-			} else {
-				userDoc.enabled = 1;
-				userDoc.send_welcome_email = 0;
-				userDoc.posa_pos_pin = cashierPin;
-				await call("frappe.client.save", { doc: userDoc });
-			}
+					if (!userDoc) {
+						createdUser = true;
+						await call("frappe.client.insert", {
+							doc: {
+								doctype: "User",
+								email: cashierUser,
+								first_name: "POS E2E Cashier",
+								enabled: 1,
+								send_welcome_email: 0,
+								posa_pos_pin: cashierPin,
+								roles: [{ role: "POS Awesome Supervisor" }],
+							},
+						});
+					} else {
+						userDoc.enabled = 1;
+						userDoc.send_welcome_email = 0;
+						userDoc.posa_pos_pin = cashierPin;
+						await call("frappe.client.save", { doc: userDoc });
+					}
 
-			await call("frappe.client.insert", {
-				doc: {
-					doctype: "POS Profile User",
-					parent: posProfile,
-					parenttype: "POS Profile",
-					parentfield: "applicable_for_users",
-					user: cashierUser,
-					default: 1,
+					const existingAssignments = (
+						await call("frappe.client.get_list", {
+							doctype: "POS Profile User",
+							filters: { parent: posProfile, user: cashierUser },
+							fields: ["name"],
+							limit_page_length: 1,
+						})
+					)?.message;
+					if (!existingAssignments?.[0]?.name) {
+						await call("frappe.client.insert", {
+							doc: {
+								doctype: "POS Profile User",
+								parent: posProfile,
+								parenttype: "POS Profile",
+								parentfield: "applicable_for_users",
+								user: cashierUser,
+								default: 1,
+							},
+						});
+					}
+					return { previousPin: originalPin, createdUser };
 				},
-			});
-			return { previousPin: originalPin, createdUser };
-		},
-		{ posProfile: profileName, cashierUser: user, cashierPin: pin },
-	);
+				{ posProfile: profileName, cashierUser: user, cashierPin: pin },
+			);
+			break;
+		} catch (error) {
+			lastError = error;
+			if (
+				!String(error).includes("TimestampMismatchError") ||
+				attempt === 3
+			) {
+				throw error;
+			}
+			await page.waitForTimeout(100 * (attempt + 1));
+		}
+	}
+	if (!provisionResult)
+		throw lastError || new Error("Cashier provisioning failed");
 
 	provisionedCashiers.set(page, {
 		profileName,
 		user,
 		pin,
 		previousPin: provisionResult.previousPin,
-		createdUser: provisionResult.createdUser,
+		createdUser: !configuredUser || provisionResult.createdUser,
 	});
 	return { user, pin };
 }

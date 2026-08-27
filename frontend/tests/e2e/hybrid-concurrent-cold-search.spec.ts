@@ -6,6 +6,11 @@ import {
 	type Page,
 } from "@playwright/test";
 
+import {
+	cleanupProvisionedTerminalCashier,
+	ensureAuthoritativeTerminalUnlock,
+} from "./helpers/terminalAuth";
+
 const ENABLED = process.env.POSA_HYBRID_CONCURRENT_COLD_E2E === "1";
 const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const ITEM_CODE = process.env.POSA_HYBRID_VERIFIED_ITEM || "AI167";
@@ -59,13 +64,23 @@ async function prepareColdTerminal(page: Page) {
 			"Concurrent cold-search acceptance requires authenticated sessions.",
 		);
 	}
+	const sessionUser = await page.evaluate(() =>
+		String((window as any).frappe?.session?.user || ""),
+	);
+	if (!sessionUser || sessionUser === "Guest") {
+		throw new Error(
+			"Concurrent cold-search acceptance requires a live authenticated user per terminal.",
+		);
+	}
 	await hotCatalogueReady;
+	await ensureAuthoritativeTerminalUnlock(page);
 	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
 		timeout: 90_000,
 	});
 	await expect(page.locator(".loading-overlay")).toHaveCount(0, {
 		timeout: 90_000,
 	});
+	return sessionUser;
 }
 
 async function runExactSearch(page: Page) {
@@ -118,14 +133,24 @@ test("three independent cold terminals keep exact search within the concurrency 
 	}
 
 	const contexts: BrowserContext[] = [];
+	const pages: Page[] = [];
 	try {
 		for (const sid of CONCURRENT_SIDS) {
 			contexts.push(await createAuthenticatedContext(browser, sid));
 		}
-		const pages = await Promise.all(
-			contexts.map(async (context) => context.newPage()),
+		pages.push(
+			...(await Promise.all(
+				contexts.map(async (context) => context.newPage()),
+			)),
 		);
-		await Promise.all(pages.map((page) => prepareColdTerminal(page)));
+		const sessionUsers = await Promise.all(
+			pages.map((page) => prepareColdTerminal(page)),
+		);
+		if (new Set(sessionUsers).size !== 3) {
+			throw new Error(
+				"Concurrent cold-search acceptance requires three distinct authenticated users; distinct SID strings alone are insufficient.",
+			);
+		}
 		const latencies = await Promise.all(
 			pages.map((page) => runExactSearch(page)),
 		);
@@ -138,6 +163,11 @@ test("three independent cold terminals keep exact search within the concurrency 
 				.join(",")}ms budget=${CONCURRENT_SEARCH_BUDGET_MS}ms`,
 		);
 	} finally {
+		await Promise.all(
+			pages.map((page) =>
+				cleanupProvisionedTerminalCashier(page).catch(() => undefined),
+			),
+		);
 		await Promise.all(contexts.map((context) => context.close()));
 	}
 });

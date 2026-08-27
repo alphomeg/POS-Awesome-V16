@@ -120,6 +120,25 @@ describe("durable invoice recovery state", () => {
 		}
 	});
 
+	it("prevents another tab from overwriting an unresolved active sale", () => {
+		persistActiveInvoiceSubmissionRecovery({
+			requestId: "req-tab-one",
+			invoiceName: "LOCAL-TAB-ONE",
+			printRequested: false,
+		});
+
+		expect(() =>
+			persistActiveInvoiceSubmissionRecovery({
+				requestId: "req-tab-two",
+				invoiceName: "LOCAL-TAB-TWO",
+				printRequested: false,
+			}),
+		).toThrow(/another POS tab or restored sale/i);
+		expect(getActiveInvoiceSubmissionRecovery()?.requestId).toBe(
+			"req-tab-one",
+		);
+	});
+
 	it("fails closed when the effects claim cannot be persisted", () => {
 		const setItem = Storage.prototype.setItem;
 		const storageSpy = vi

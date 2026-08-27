@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 
 import { expect, test, type Page, type Request } from "@playwright/test";
 
+import {
+	cleanupProvisionedTerminalCashier,
+	ensureAuthoritativeTerminalUnlock,
+} from "./helpers/terminalAuth";
+
 const ENABLED = process.env.POSA_HYBRID_REALTIME_GAP_E2E === "1";
 const POS_PATH = process.env.POSA_SMOKE_PATH || "/desk/posapp";
 const PROFILE =
@@ -22,7 +27,10 @@ function isMethodRequest(request: Request, method: string) {
 	return request.url().includes(method);
 }
 
-function executeBench(method: string, options: { args?: unknown[]; kwargs?: unknown } = {}) {
+function executeBench(
+	method: string,
+	options: { args?: unknown[]; kwargs?: unknown } = {},
+) {
 	const commandArgs = [
 		"exec",
 		BACKEND_CONTAINER,
@@ -76,12 +84,12 @@ async function prepareUnlockedPos(page: Page) {
 		PROFILE,
 		{ timeout: 45_000 },
 	);
-	// The terminal is pre-unlocked for this browser session before navigation.
-	// A test-only terminal reload during cold catalogue hydration is not a valid
-	// realtime recovery exercise and can create its own bootstrap race.
-	await expect(page.locator('[data-test="terminal-lock-dialog"]')).toBeHidden({
-		timeout: 30_000,
-	});
+	await ensureAuthoritativeTerminalUnlock(page);
+	await expect(page.locator('[data-test="terminal-lock-dialog"]')).toBeHidden(
+		{
+			timeout: 30_000,
+		},
+	);
 	await startZeroBalanceShiftIfNeeded(page);
 	await expect(page.getByTestId("counter-grid-pos")).toBeVisible({
 		timeout: 90_000,
@@ -108,10 +116,14 @@ test("a server-published stock version gap forces a fresh live snapshot without 
 	await entry.fill(ITEM_CODE);
 	await entry.press("Enter");
 	const searchSurface = page.locator(".items-selector-shell--counter-dialog");
-	const itemRow = searchSurface.locator(`[data-item-code="${ITEM_CODE}"]`).first();
+	const itemRow = searchSurface
+		.locator(`[data-item-code="${ITEM_CODE}"]`)
+		.first();
 	await expect(itemRow).toBeVisible({ timeout: 15_000 });
 	await expect(
-		itemRow.locator('.live-state-verified[title="Live stock and price verified"]'),
+		itemRow.locator(
+			'.live-state-verified[title="Live stock and price verified"]',
+		),
 	).toBeVisible({ timeout: 20_000 });
 	await expect.poll(() => liveRequests.length).toBeGreaterThan(0);
 	await page.evaluate(() => {
@@ -120,11 +132,14 @@ test("a server-published stock version gap forces a fresh live snapshot without 
 			(window as any).frappe.realtime.socket?._callbacks?.[
 				"$posa_stock_changed"
 			]?.length || 0;
-		(window as any).frappe.realtime.on("posa_stock_changed", (payload: any) => {
-			if (payload?.source_doctype === "Hybrid Verified E2E") {
-				(window as any).__posaHybridGapEvent = payload;
-			}
-		});
+		(window as any).frappe.realtime.on(
+			"posa_stock_changed",
+			(payload: any) => {
+				if (payload?.source_doctype === "Hybrid Verified E2E") {
+					(window as any).__posaHybridGapEvent = payload;
+				}
+			},
+		);
 	});
 	await expect
 		.poll(() =>
@@ -186,10 +201,9 @@ test("a server-published stock version gap forces a fresh live snapshot without 
 	});
 
 	await expect
-		.poll(() =>
-			page.evaluate(() => (window as any).__posaHybridGapEvent),
-			{ timeout: 15_000 },
-		)
+		.poll(() => page.evaluate(() => (window as any).__posaHybridGapEvent), {
+			timeout: 15_000,
+		})
 		.toMatchObject({
 			source_doctype: "Hybrid Verified E2E",
 			stock_versions: { [WAREHOUSE]: version },
@@ -198,10 +212,16 @@ test("a server-published stock version gap forces a fresh live snapshot without 
 		.poll(() => liveRequests.length, { timeout: 25_000 })
 		.toBeGreaterThan(beforeGapRequestCount);
 	await expect(
-		itemRow.locator('.live-state-verified[title="Live stock and price verified"]'),
+		itemRow.locator(
+			'.live-state-verified[title="Live stock and price verified"]',
+		),
 	).toBeVisible({ timeout: 25_000 });
 
 	await page.keyboard.press("Escape");
 	await expect(searchSurface).toBeHidden({ timeout: 15_000 });
 	await expect(entry).toBeFocused({ timeout: 15_000 });
+});
+
+test.afterEach(async ({ page }) => {
+	await cleanupProvisionedTerminalCashier(page).catch(() => undefined);
 });
