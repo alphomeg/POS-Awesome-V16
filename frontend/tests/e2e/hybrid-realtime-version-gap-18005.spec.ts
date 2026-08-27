@@ -33,6 +33,8 @@ function executeBench(
 ) {
 	const commandArgs = [
 		"exec",
+		"--user",
+		"frappe",
 		BACKEND_CONTAINER,
 		"bench",
 		"--site",
