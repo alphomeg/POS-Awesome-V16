@@ -258,6 +258,7 @@ import format, { normalizeDateForBackend } from "../../../format";
 import { useUIStore } from "../../../stores/uiStore.js";
 import { getOpeningStorage } from "../../../../offline/index";
 import { useToastStore } from "../../../stores/toastStore";
+import { usePosShift } from "../../../composables/pos/shared/usePosShift";
 import { usePurchaseOrder } from "../../../composables/pos/payments/usePurchaseOrder";
 import ItemsSelector from "../items/ItemsSelector.vue";
 import PurchaseDraftDialog from "./PurchaseDraftDialog.vue";
@@ -284,6 +285,7 @@ export default {
 	setup() {
 		const uiStore = useUIStore();
 		const toastStore = useToastStore();
+		const { check_opening_entry: checkOpeningEntry } = usePosShift();
 		const eventBus = inject("eventBus");
 		const workspaceRoot = ref(null);
 		const purchaseItemsTable = ref(null);
@@ -745,6 +747,11 @@ export default {
 				pos_profile.value = cachedProfile;
 				uiStore.setPosProfile(cachedProfile);
 			}
+
+			// Purchasing can be opened as the first POS route in a fresh browser.
+			// Hydrate the active shift/profile here instead of relying on the Selling
+			// workspace to have populated the shared register store beforehand.
+			await checkOpeningEntry();
 
 			watch(
 				() => uiStore.posProfile,

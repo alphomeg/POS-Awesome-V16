@@ -39,6 +39,7 @@ describe("Purchasing workspace contract", () => {
 		expect(workspace).toContain('__("Save Draft")');
 		expect(workspace).not.toContain('__("PAY")');
 		expect(workspace).toContain("get_purchase_entitlement");
+		expect(workspace).toContain("await checkOpeningEntry()");
 		expect(workspace).toContain('__("Purchasing is read-only")');
 		expect(workspace).not.toContain("itemsStore.updatePriceList");
 		const selector = source(
